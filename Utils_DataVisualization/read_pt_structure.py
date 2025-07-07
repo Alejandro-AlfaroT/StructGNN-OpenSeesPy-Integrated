@@ -99,6 +99,42 @@ def print_diagnostics(structure_graph):
         print(f"Target values shape: {structure_graph.y.shape}")
         print(f"Target values: {structure_graph.y.tolist()}")
 
+        print("\nNo target outputs found in this structure graph.")
+        return
+
+    print(f"\n{'[TARGET OUTPUTS]':^50}")
+    y = structure_graph.y
+    print(f"Target shape: {y.shape}")
+
+    try:
+        print("\nDisplacement:")
+        print(f"  disp_x: {y[:, 0]}")
+        print(f"  disp_z: {y[:, 1]}")
+
+        print("\nMomentY (cols 2–7):")
+        print(y[:, 2:8])
+
+        print("\nMomentZ (cols 8–13):")
+        print(y[:, 8:14])
+
+        print("\nShearY (cols 14–19):")
+        print(y[:, 14:20])
+
+        print("\nShearZ (cols 20–25):")
+        print(y[:, 20:26])
+
+        if y.shape[1] > 26:
+            print("\nAxialForce (cols 26–31):")
+            print(y[:, 26:32])
+        if y.shape[1] > 32:
+            print("\nTorsion (cols 32–37):")
+            print(y[:, 32:38])
+        if y.shape[1] > 38:
+            print("\n[EXTRA COLUMN] (col 38):")
+            print(y[:, 38])
+    except Exception as e:
+        print(f"Error extracting target components: {e}")
+
 
 if __name__ == "__main__":
     # Ask user to choose data source
