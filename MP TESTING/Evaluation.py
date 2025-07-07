@@ -41,7 +41,7 @@ model.to(device)
 model.eval()
 
 # Step 4: Load the input graph data using a path relative to the repo root
-data_relative_path = os.path.join('Data', 'Static_Linear_Analysis', 'structure_1', 'structure_graph_NodeAsNode_pseudo.pt')
+data_relative_path = os.path.join('Data', 'Static_Linear_Analysis', 'structure_1', 'structure_graph_NodeAsNode.pt')
 data_path = os.path.normpath(os.path.join(script_dir, '..', data_relative_path))
 print(f"Loading graph data from: {data_path}")
 data = torch.load(data_path, weights_only=False)
@@ -76,7 +76,7 @@ def get_node_prediction(output: torch.Tensor, node_index: int):
     return prediction
 
 # Example: Get prediction for node 12
-node_index = 5
+node_index = 0
 prediction = get_node_prediction(output, node_index)
 print(f"\nFormatted prediction for node {node_index}:")
 for key, value in prediction.items():

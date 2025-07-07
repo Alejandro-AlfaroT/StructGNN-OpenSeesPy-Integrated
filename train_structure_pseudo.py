@@ -37,7 +37,7 @@ parser.add_argument('--normalization', dest='normalization', default=True, type=
 # GNN
 parser.add_argument('--model', dest='model', default='Structure_GraphNetwork_pseudo', type=str, help='model class name. E.g., GCN, Tony_GNN, ...')
 parser.add_argument('--aggr_type', dest='aggr', default='mean', type=str)
-parser.add_argument('--hidden_dim', dest='hidden_dim', default=256, type=int)
+parser.add_argument('--hidden_dim', dest='hidden_dim', default=512, type=int)
 parser.add_argument('--dropout_p', dest='dropout_p', default=0.0, type=float)
 parser.add_argument('--gnn_dropout', dest='gnn_dropout', default='True', type=bool, help='whether dropout, default 0.5')
 parser.add_argument('--gnn_act', dest='gnn_act', default='True', type=bool, help='whether activation, default RELU')
