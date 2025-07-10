@@ -152,7 +152,21 @@ class DiagnosticsDashboard(tk.Toplevel):
 
     def create_node_features_section(self, parent):
         data = self.structure_graph.x.tolist()
-        columns = ["Node #"] + [f"F{i}" for i in range(self.structure_graph.x.shape[1])]
+        
+        # Define the new descriptive column headers for node features
+        node_feature_names = [
+            "# Spans X", "# Spans Y", "# Spans Z",
+            "X Coord", "Y Coord", "Z Coord",
+            "Support", "Joint", "Nodal Mass",
+            "Force X", "Force Z"
+        ]
+        
+        # Use the descriptive names if the count matches, otherwise fallback to generic names
+        if len(node_feature_names) == self.structure_graph.x.shape[1]:
+            columns = ["Node #"] + node_feature_names
+        else:
+            columns = ["Node #"] + [f"F{i}" for i in range(self.structure_graph.x.shape[1])]
+            
         table_data = [[i] + row for i, row in enumerate(data)]
         return self.create_table_section(parent, "Node Features", table_data, columns)
 
@@ -160,7 +174,16 @@ class DiagnosticsDashboard(tk.Toplevel):
         if not hasattr(self.structure_graph, 'edge_attr') or self.structure_graph.edge_attr is None:
             return None
         data = self.structure_graph.edge_attr.tolist()
-        columns = ["Edge #"] + [f"F{i}" for i in range(self.structure_graph.edge_attr.shape[1])]
+        
+        # Define the new descriptive column headers for edge features
+        edge_feature_names = ["Beam", "Column", "Length"]
+
+        # Use the descriptive names if the count matches, otherwise fallback to generic names
+        if len(edge_feature_names) == self.structure_graph.edge_attr.shape[1]:
+            columns = ["Edge #"] + edge_feature_names
+        else:
+            columns = ["Edge #"] + [f"F{i}" for i in range(self.structure_graph.edge_attr.shape[1])]
+            
         table_data = [[i] + row for i, row in enumerate(data)]
         return self.create_table_section(parent, "Edge Features", table_data, columns)
 
@@ -184,6 +207,7 @@ class DiagnosticsDashboard(tk.Toplevel):
         return self.create_table_section(parent, "Target Values (y)", table_data, columns)
 
 if __name__ == "__main__":
+    # This execution block remains unchanged
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
 

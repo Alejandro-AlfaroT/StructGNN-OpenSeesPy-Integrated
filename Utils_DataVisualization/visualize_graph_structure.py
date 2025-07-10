@@ -1,8 +1,9 @@
 import os
 import torch
-import networkx as nx
+import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Line3DCollection # Import for efficient line drawing
 import tkinter as tk
 from tkinter import ttk, messagebox
 import re
@@ -16,18 +17,55 @@ def load_structure(data_path):
     return torch.load(data_path, weights_only=False)
 
 def visualize_graph(structure_graph, structure_id):
-    """Generate 3D visualization of a structure graph."""
-    positions = {i: (structure_graph.x[i, 3].item(), structure_graph.x[i, 4].item(), structure_graph.x[i, 5].item()) for i in range(structure_graph.num_nodes)}
-    G = nx.Graph(list(structure_graph.edge_index.numpy().T))
+    """
+    Generate an optimized 3D visualization of a structure graph with node labels.
+    """
+    # Extract node positions into a dictionary for easy lookup
+    positions = {i: (
+        structure_graph.x[i, 3].item(), 
+        structure_graph.x[i, 4].item(), 
+        structure_graph.x[i, 5].item()
+    ) for i in range(structure_graph.num_nodes)}
+    
+    # Get the list of edges directly from the graph data
+    edge_list = structure_graph.edge_index.numpy().T
+    
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
-    for u, v in G.edges():
-        ax.plot(*zip(positions[u], positions[v]), color="b", lw=0.8)
-    xs, ys, zs = zip(*positions.values())
-    ax.scatter(xs, ys, zs, c='r', s=20, edgecolors='k', zorder=5)
-    ax.set_xlabel('X Axis'); ax.set_ylabel('Y Axis'); ax.set_zlabel('Z Axis')
+
+    # --- 🚀 Performance Improvement ---
+    # Use Line3DCollection to draw all edges in a single, fast operation
+    # instead of a slow Python loop.
+    edge_segments = [(positions[u], positions[v]) for u, v in edge_list]
+    edge_collection = Line3DCollection(edge_segments, colors="b", linewidths=0.8, zorder=1)
+    ax.add_collection3d(edge_collection)
+
+    # Plot nodes with a single efficient scatter call
+    node_coords = np.array(list(positions.values()))
+    ax.scatter(node_coords[:, 0], node_coords[:, 1], node_coords[:, 2], c='r', s=25, edgecolors='k', zorder=5)
+
+    # --- ✅ Fix: Restore Node Labels ---
+    # Iterate through nodes to add a text label for each one.
+    for node_id, pos in positions.items():
+        ax.text(pos[0], pos[1], pos[2], str(node_id), fontsize=7, zorder=6, color='#333333')
+
+    # Manually set axis limits to ensure the entire structure is visible and centered
+    if node_coords.size > 0:
+        min_vals = np.min(node_coords, axis=0)
+        max_vals = np.max(node_coords, axis=0)
+        center = (min_vals + max_vals) / 2
+        span = np.max(max_vals - min_vals) * 0.6  # 0.6 provides a nice padding
+        ax.set_xlim(center[0] - span, center[0] + span)
+        ax.set_ylim(center[1] - span, center[1] + span)
+        ax.set_zlim(center[2] - span, center[2] + span)
+    
+    ax.set_xlabel('X Axis')
+    ax.set_ylabel('Y Axis')
+    ax.set_zlabel('Z Axis')
     ax.set_title(f'3D Structural Graph (ID: {structure_id})', pad=20, fontsize=14)
-    plt.tight_layout(); plt.show()
+    ax.view_init(elev=25, azim=-75) # Set a nice default viewing angle
+    plt.tight_layout()
+    plt.show()
 
 class StructureVisualizerGUI:
     def __init__(self, root):
@@ -35,9 +73,12 @@ class StructureVisualizerGUI:
         self.root.title("Structure Visualizer")
         self.root.geometry("450x220")
         self.root.resizable(False, False)
-        self.project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if not self.project_root or not os.path.isdir(self.project_root):
-             self.project_root = os.path.dirname(os.path.abspath(__file__))
+        # Correctly find the project root directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.project_root = os.path.dirname(script_dir)
+        if not os.path.isdir(os.path.join(self.project_root, 'data')): # Heuristic to check if root is correct
+             self.project_root = script_dir
+
         self.set_modern_theme()
         self.file_path_var = tk.StringVar(value="No file selected...")
         self.file_browser_window = None
@@ -83,6 +124,8 @@ class StructureVisualizerGUI:
         if filepath:
             self.file_path_var.set(os.path.normpath(filepath))
             self.visualize_btn.config(state="normal")
+            if self.file_browser_window:
+                self.file_browser_window.destroy()
             self.file_browser_window = None
 
     def on_visualize(self):
@@ -95,8 +138,9 @@ class StructureVisualizerGUI:
         try:
             structure_graph = load_structure(file_path)
             print(f"\nGraph Metadata: Nodes: {structure_graph.num_nodes}, Edges: {structure_graph.num_edges}")
-            self.root.destroy()
+            self.root.iconify() # Minimize the GUI window instead of destroying it
             visualize_graph(structure_graph, structure_id)
+            self.root.deiconify() # Restore the GUI window after the plot is closed
         except Exception as e:
             messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}\n\nCheck console for details.")
             print(e)
