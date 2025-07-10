@@ -15,6 +15,7 @@ SapModel.InitializeNewModel(kip_ft_F)
 # Template types:
 #   1 = SteelDeck, 2 = ConcreteSlab, 3 = BeamSlab (what you're using), etc.
 BeamSlab = 3
+
 # Use template to create 3D frame
 # Format: New3DFrame(template_type, spansZ, LengthZ, spansX, LengthX, SpansY, LengthY)
 ret = SapModel.File.New3DFrame(BeamSlab, 2, 12, 2, 20, 2, 20)
@@ -22,35 +23,54 @@ ret = SapModel.File.New3DFrame(BeamSlab, 2, 12, 2, 20, 2, 20)
 # Optionally save and close
 ModelPath = os.path.join(os.getcwd(), '3DFrame.sdb')
 
-# ------------------------------------------------------
-# Add Load Pattern and Apply Point Loads at Top
-# ------------------------------------------------------
+# Apply a point load of 5 kip in global X direction
+def apply_top_level_load(SapModel, load_pattern="TopLoad", horizontal_load=5.0):
+    """
+    Applies a horizontal point load to all joints at the top level (highest Z-coordinate).
 
-LTYPE_OTHER = 8
-SapModel.LoadPatterns.Add("8", LTYPE_OTHER, 0, True)
+    Parameters:
+    - SapModel: The active SAP2000 model object.
+    - load_pattern (str): Name of the load pattern to create/use.
+    - horizontal_load (float): Load magnitude in the Z direction (negative = downward).
+    """
+    from ctypes import c_int, c_double, POINTER, pointer
+    from comtypes import BSTR
 
-# Get all joint names (fixed line)
-ret, NumberNames, JointNames = SapModel.PointObj.GetNameList()
+    # Get all point names
+    NumberNames = c_int()
+    PointNames = POINTER(BSTR)()
+    SapModel.PointObj.GetNameList(pointer(NumberNames), pointer(PointNames))
+    names = [PointNames[i] for i in range(NumberNames.value)]
 
-# Identify top story joints (Z > threshold, here ~24 ft assuming 2 stories × 12 ft)
-TopJointNames = []
-for name in JointNames:
-    ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
-    if z >= 24:
-        TopJointNames.append((name, x, y))  # Keep coordinates for sorting
+    # Find max Z and store coordinates
+    top_z = -float('inf')
+    point_coords = {}
 
-# Sort top joints by X-coordinate to consistently pick left/mid/right
-TopJointNames.sort(key=lambda tup: tup[1])  # Sort by x
+    for name in names:
+        x = c_double()
+        y = c_double()
+        z = c_double()
+        SapModel.PointObj.GetCoordCartesian(name, pointer(x), pointer(y), pointer(z))
+        point_coords[name] = (x.value, y.value, z.value)
+        if z.value > top_z:
+            top_z = z.value
 
-# Select 3 joints (left, center, right in X)
-SelectedJoints = [tup[0] for tup in TopJointNames[:1] + TopJointNames[len(TopJointNames)//2:len(TopJointNames)//2+1] + TopJointNames[-1:]]
+    # Identify top-level joints
+    tolerance = 1e-6
+    top_level_points = [name for name, (x, y, z) in point_coords.items() if abs(z - top_z) < tolerance]
 
-# Apply point load of 5 kip in +X direction to selected joints under pattern "8"
-# [Force in X, Force in Y, Force in Z, Moment X, Moment Y, Moment Z]
-for joint in SelectedJoints:
-    SapModel.PointObj.SetLoadForce(joint, "8", [5.0, 0, 0, 0, 0, 0])
+    # Create load pattern if not existing
+    existing_patterns = [SapModel.LoadPatterns.GetName(i)[0] for i in range(SapModel.LoadPatterns.Count())]
+    if load_pattern not in existing_patterns:
+        LTYPE_OTHER = 8
+        SapModel.LoadPatterns.Add(load_pattern, LTYPE_OTHER, 0, True)
 
-# ------------------------------------------------------
+    # Apply horizontal point load at each top-level joint
+    for pt in top_level_points:
+        SapModel.PointObj.SetLoadForce(pt, load_pattern, [0, 0, horizontal_load, 0, 0, 0])
+
+    print(f"Applied {horizontal_load} kip horizontal load to {len(top_level_points)} top-level joints under pattern '{load_pattern}'.")
+
 
 # Save and Run Analysis
 SapModel.File.Save(ModelPath)
