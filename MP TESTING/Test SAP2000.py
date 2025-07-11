@@ -29,7 +29,17 @@ LTYPE_OTHER = 8
 SapModel.LoadPatterns.Add("OTHER", LTYPE_OTHER)
 
 #SetLoadForce (Joint Location, LoadType, [ForceX, ForceY, ForceZ, MomentX, MomentY, MomentZ]
-SapModel.PointObj.SetLoadForce("3","OTHER", [0, 0, -50, 0, 0, 0])
+
+#Apply Load in X Direction
+SapModel.PointObj.SetLoadForce("3","OTHER", [150, 0, 0, 0, 0, 0])
+SapModel.PointObj.SetLoadForce("6","OTHER", [150, 0, 0, 0, 0, 0])
+SapModel.PointObj.SetLoadForce("9","OTHER", [150, 0, 0, 0, 0, 0])
+
+#Apply Load in Y Direction
+SapModel.PointObj.SetLoadForce("3","OTHER", [0, 90, 0, 0, 0, 0])
+SapModel.PointObj.SetLoadForce("12","OTHER", [0, 90, 0, 0, 0, 0])
+SapModel.PointObj.SetLoadForce("21","OTHER", [0, 90, 0, 0, 0, 0])
+
 
 # Save and Run Analysis
 SapModel.File.Save(ModelPath)
