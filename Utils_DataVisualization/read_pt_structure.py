@@ -1,8 +1,7 @@
 import os
 import torch
 import tkinter as tk
-from tkinter import ttk, messagebox
-from file_explorer_tk import ask_for_file
+from tkinter import ttk, messagebox, filedialog # Import filedialog
 
 def load_structure_from_path(data_path):
     """Load PyTorch Geometric data directly from a file path."""
@@ -34,8 +33,7 @@ class DiagnosticsDashboard(tk.Toplevel):
         self.canvas.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         scrollbar.pack(side="right", fill="y")
 
-        # FIX: Bind mousewheel scrolling to the canvas and the inner frame
-        # This makes scrolling work when the cursor is over empty space in the dashboard
+        # Bind mousewheel scrolling to the canvas and the inner frame
         for widget in [self.canvas, self.scrollable_frame]:
             widget.bind_all("<MouseWheel>", self._on_mousewheel)
         
@@ -110,24 +108,25 @@ class DiagnosticsDashboard(tk.Toplevel):
         frame.pack(fill='x', expand=True, padx=10, pady=5)
         
         table_frame = ttk.Frame(frame)
-        table_frame.pack(fill='x', expand=True, pady=5)
+        table_frame.pack(fill='both', expand=True, pady=5)
 
         tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=10)
         
         for col in columns:
             tree.heading(col, text=col, command=lambda _col=col: self.sort_table(tree, _col, False))
-            tree.column(col, width=100, anchor='center', stretch=False)
+            tree.column(col, minwidth=50, width=120, anchor='center', stretch=False)
         
         for row_data in data:
             tree.insert('', 'end', values=tuple(f"{v:.4f}" if isinstance(v, float) else v for v in row_data))
 
-        # FIX: Correctly implemented horizontal and vertical scrollbars
         vsb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
-        hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=tree.xview)
-        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
         vsb.pack(side='right', fill='y')
+        tree.configure(yscrollcommand=vsb.set)
+
+        hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=tree.xview)
         hsb.pack(side='bottom', fill='x')
+        tree.configure(xscrollcommand=hsb.set)
+
         tree.pack(side='left', fill='both', expand=True)
 
         header = "\t".join(columns)
@@ -145,7 +144,7 @@ class DiagnosticsDashboard(tk.Toplevel):
         try:
             data.sort(key=lambda t: float(t[0]), reverse=reverse)
         except ValueError:
-            data.sort(reverse=reverse)
+            data.sort(key=lambda t: t[0], reverse=reverse)
         for index, (val, item) in enumerate(data):
             tree.move(item, '', index)
         tree.heading(col, command=lambda: self.sort_table(tree, col, not reverse))
@@ -153,7 +152,6 @@ class DiagnosticsDashboard(tk.Toplevel):
     def create_node_features_section(self, parent):
         data = self.structure_graph.x.tolist()
         
-        # Define the new descriptive column headers for node features
         node_feature_names = [
             "# Spans X", "# Spans Y", "# Spans Z",
             "X Coord", "Y Coord", "Z Coord",
@@ -161,7 +159,6 @@ class DiagnosticsDashboard(tk.Toplevel):
             "Force X", "Force Z"
         ]
         
-        # Use the descriptive names if the count matches, otherwise fallback to generic names
         if len(node_feature_names) == self.structure_graph.x.shape[1]:
             columns = ["Node #"] + node_feature_names
         else:
@@ -175,10 +172,8 @@ class DiagnosticsDashboard(tk.Toplevel):
             return None
         data = self.structure_graph.edge_attr.tolist()
         
-        # Define the new descriptive column headers for edge features
         edge_feature_names = ["Beam", "Column", "Length"]
 
-        # Use the descriptive names if the count matches, otherwise fallback to generic names
         if len(edge_feature_names) == self.structure_graph.edge_attr.shape[1]:
             columns = ["Edge #"] + edge_feature_names
         else:
@@ -198,7 +193,21 @@ class DiagnosticsDashboard(tk.Toplevel):
             return None
         data = self.structure_graph.y.tolist()
         num_targets = self.structure_graph.y.shape[1] if self.structure_graph.y.dim() > 1 else 1
-        columns = ["Node #"] + [f"Target {i}" for i in range(num_targets)]
+        
+        target_names = ["Disp X", "Disp Y"]
+        for i in range(6):
+            target_names.append(f"Moment Y {i+1}")
+        for i in range(6):
+            target_names.append(f"Moment Z {i+1}")
+        for i in range(6):
+            target_names.append(f"Shear Y {i+1}")
+        for i in range(6):
+            target_names.append(f"Shear Z {i+1}")
+
+        if len(target_names) == num_targets:
+            columns = ["Node #"] + target_names
+        else:
+            columns = ["Node #"] + [f"Target {i}" for i in range(num_targets)]
         
         if num_targets == 1:
             table_data = [[i, val] for i, val in enumerate(data)]
@@ -207,19 +216,30 @@ class DiagnosticsDashboard(tk.Toplevel):
         return self.create_table_section(parent, "Target Values (y)", table_data, columns)
 
 if __name__ == "__main__":
-    # This execution block remains unchanged
+    # Create a dummy Tkinter root window
+    # This is necessary for filedialog to work correctly without a mainloop
+    # and to ensure a Tkinter context exists.
+    root_dummy = tk.Tk()
+    root_dummy.withdraw() # Hide the main window
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
 
     print("Opening file explorer to select a structure file...")
-    file_path = ask_for_file(initial_dir=project_root)
+    # Use Tkinter's built-in file dialog
+    file_path = filedialog.askopenfilename(
+        initialdir=project_root,
+        title="Select a PyTorch Geometric .pt file",
+        filetypes=(("PyTorch Geometric files", "*.pt"), ("All files", "*.*"))
+    )
 
     if file_path:
         try:
             structure_graph = load_structure_from_path(file_path)
             
+            # The actual dashboard window
             root = tk.Tk()
-            root.withdraw()
+            root.withdraw() # Hide this root too, as dashboard is a Toplevel
             
             style = ttk.Style(root)
             if 'clam' in style.theme_names(): style.theme_use('clam')
@@ -229,7 +249,7 @@ if __name__ == "__main__":
             dashboard = DiagnosticsDashboard(root, structure_graph, os.path.basename(file_path))
             dashboard.protocol("WM_DELETE_WINDOW", root.destroy)
             
-            root.mainloop()
+            root.mainloop() # Start mainloop for the dashboard window
 
         except FileNotFoundError as e:
             messagebox.showerror("Error", str(e))
@@ -237,3 +257,6 @@ if __name__ == "__main__":
             messagebox.showerror("Unexpected Error", f"An error occurred while loading the file:\n{e}")
     else:
         print("No file selected. Exiting.")
+    
+    # Destroy the initial dummy root window after everything is done
+    root_dummy.destroy()
