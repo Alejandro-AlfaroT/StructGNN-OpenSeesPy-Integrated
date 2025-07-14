@@ -8,3 +8,6 @@ MP TESTING/predicted_output.pt
 
 # Ignore installers
 Miniconda3-*.sh
+
+# Ignore all 3DFrame.* files in MP TESTING
+MP TESTING/3DFrame.*
