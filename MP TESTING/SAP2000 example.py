@@ -1,7 +1,6 @@
 import os
 import sys
 import comtypes.client
-import comtypes.gen.SAP2000v1
 from ctypes import c_int, POINTER, c_double, pointer, cast, c_long
 from comtypes import BSTR
 
