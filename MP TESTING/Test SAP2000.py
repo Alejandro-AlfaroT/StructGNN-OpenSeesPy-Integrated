@@ -3,7 +3,6 @@ import os
 
 # Set up SAP2000 helper and instance
 helper = comtypes.client.CreateObject('SAP2000v1.Helper')
-helper = helper.QueryInterface(comtypes.gen.SAP2000v1.cHelper)
 mySapObject = helper.CreateObjectProgID("CSI.SAP2000.API.SapObject")
 mySapObject.ApplicationStart()
 SapModel = mySapObject.SapModel
@@ -12,35 +11,39 @@ SapModel = mySapObject.SapModel
 kip_ft_F = 4
 SapModel.InitializeNewModel(kip_ft_F)
 
-# Template types:
-#   1 = SteelDeck, 2 = ConcreteSlab, 3 = BeamSlab (what you're using), etc.
-BeamSlab = 3
+#0 = OpenFrame, 1 = PerimeterFrame, 2 = BeamSlab, 3 = FlatPlate
+template_type = 2
+NumStory = 2
+StoryHeight = 12
+SpansX = 2
+LengthX = 20
+SpansY = 2
+LengthY = 20
 
-# Use template to create 3D frame
-# Format: New3DFrame(template_type, spansZ, LengthZ, spansX, LengthX, SpansY, LengthY)
-ret = SapModel.File.New3DFrame(BeamSlab, 2, 12, 2, 20, 2, 20)
+#Create 3D Frame
+SapModel.File.New3DFrame(template_type, NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY)
 
 # Optionally save and close
 ModelPath = os.path.join(os.getcwd(), '3DFrame.sdb')
 
-#Apply Load
+#Set Up Load information
+
 #Add Load Pattern
-LTYPE_OTHER = 8
-SapModel.LoadPatterns.Add("OTHER", LTYPE_OTHER)
+#1 = Dead, 2 = SuperDead, 3 = Live, 4 = Reduced Live, 5 = Quake, 6 = Wind, 7 = Snow, 8 = Other... Check API for others
+LTYPE = 8
+SapModel.LoadPatterns.Add("TOP_LOAD", LTYPE)
+ForceX = 150
+ForceY = 150
 
-#SetLoadForce (Joint Location, LoadType, [ForceX, ForceY, ForceZ, MomentX, MomentY, MomentZ]
+#Apply Loads
+#SetLoadForce (Joint Name, LoadType, [ForceX, ForceY, ForceZ, MomentX, MomentY, MomentZ]
+SapModel.PointObj.SetLoadForce("3","TOP_LOAD", [ForceX, ForceY, 0, 0, 0, 0])
+SapModel.PointObj.SetLoadForce("6","TOP_LOAD", [ForceX, 0, 0, 0, 0, 0])
+SapModel.PointObj.SetLoadForce("9","TOP_LOAD", [ForceX, 0, 0, 0, 0, 0])
+SapModel.PointObj.SetLoadForce("12","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
+SapModel.PointObj.SetLoadForce("21","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
 
-#Apply Load in X Direction
-
-SapModel.PointObj.SetLoadForce("3","OTHER", [150, 150, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("6","OTHER", [150, 0, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("9","OTHER", [150, 0, 0, 0, 0, 0])
-
-#Apply Load in Y Direction
-SapModel.PointObj.SetLoadForce("12","OTHER", [0, 150, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("21","OTHER", [0, 150, 0, 0, 0, 0])
-
-
+#^^Need to make a function to so it sets loads on the top at each joint
 
 # Save and Run Analysis
 SapModel.File.Save(ModelPath)
@@ -48,7 +51,7 @@ SapModel.Analyze.RunAnalysis()
 
 # Extract Results
 
-# ADD ^^^
+ SapModel.Results.JointDispl("All", GroupElm, NumberResults, Obj, Elm, Loadcase, StepType, StepNum, U1, U2, U3, R1, R2, R3)
 
 # Exit SAP2000
 mySapObject.ApplicationExit(False)
