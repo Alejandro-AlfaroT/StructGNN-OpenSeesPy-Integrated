@@ -10,7 +10,6 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 import torch
-from torch_geometric.data import Data
 from GNN.models import Structure_GraphNetwork # adjust if you're using a different model
 
 # Step 1: Set device
@@ -20,7 +19,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = Structure_GraphNetwork(
     layer_num=3,               # Replace with the number used in training
     input_dim=11,
-    hidden_dim=256,
+    hidden_dim=512,
     edge_attr_dim=3,
     aggr='mean',
     node_out_dispX_dim=1,
@@ -34,7 +33,7 @@ model = Structure_GraphNetwork(
 
 # Step 3: Load the state dict (weights)
 script_dir = os.path.dirname(os.path.abspath(__file__))
-checkpoint_folder = '2025_06_24__16_02_38'
+checkpoint_folder = '2025_07_01__01_42_38'
 model_path = os.path.normpath(os.path.join(script_dir, '..', 'Results', 'Static_Linear_Analysis', checkpoint_folder, 'model.pt'))
 model.load_state_dict(torch.load( model_path, map_location=device))
 model.to(device)
@@ -75,8 +74,8 @@ def get_node_prediction(output: torch.Tensor, node_index: int):
         prediction["extra"] = node[26:].cpu().tolist()
     return prediction
 
-# Example: Get prediction for node 12
-node_index = 0
+# Get Node Prediction
+node_index = 1
 prediction = get_node_prediction(output, node_index)
 print(f"\nFormatted prediction for node {node_index}:")
 for key, value in prediction.items():

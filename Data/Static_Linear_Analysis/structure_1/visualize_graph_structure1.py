@@ -6,7 +6,7 @@ from mpl_toolkits.mplot3d import Axes3D  # for 3D plots
 
 # Construct path to the .pt file relative to this script
 script_dir = os.path.dirname(os.path.abspath(__file__))
-file_path = os.path.normpath(os.path.join(script_dir, 'structure_graph_NodeAsNode.pt'))
+file_path = os.path.normpath(os.path.join(script_dir, 'structure_graph_NodeAsNode_pseudo.pt'))
 
 print(f"Loading graph data from: {file_path}")
 
