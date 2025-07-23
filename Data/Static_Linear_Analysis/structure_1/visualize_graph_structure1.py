@@ -6,7 +6,7 @@ from mpl_toolkits.mplot3d import Axes3D  # for 3D plots
 
 # Construct path to the .pt file relative to this script
 script_dir = os.path.dirname(os.path.abspath(__file__))
-file_path = os.path.normpath(os.path.join(script_dir, 'structure_graph_NodeAsNode_pseudo.pt'))
+file_path = os.path.normpath(os.path.join(script_dir, 'structure_graph_NodeAsNode.pt'))
 
 print(f"Loading graph data from: {file_path}")
 
@@ -55,7 +55,7 @@ for node_id, (x_, y_, z_) in positions.items():
 ax.set_xlabel('X')
 ax.set_ylabel('Y')
 ax.set_zlabel('Z')
-ax.set_title('3D Structural Graph (PISA3D Model)')
+ax.set_title('3D Structural Graph')
 
 plt.tight_layout()
 plt.show()

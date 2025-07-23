@@ -25,7 +25,7 @@ def get_dataset(dataset_name='Static_Linear_Analysis', whatAsNode='NodeAsNode', 
      
     return data_list
 '''
-#new get_dataset() added by Matthew#
+#Updated get_dataset
 def get_dataset(dataset_name='Static_Linear_Analysis', whatAsNode='NodeAsNode', structure_num=300, special_path=None):
     if special_path is not None:
         root = special_path

@@ -11,13 +11,13 @@ parent_dir = os.path.abspath(os.path.join(script_dir, '..'))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from GNN.models import Structure_GraphNetwork  # Adjust if you're using a different model
+from GNN.models import Structure_GraphNetwork_pseudo  # Adjust if you're using a different model
 
 # Step 1: Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Step 2: Reconstruct the model architecture (must match training!)
-model = Structure_GraphNetwork(
+model = Structure_GraphNetwork_pseudo(
     layer_num=3,
     input_dim=11,
     hidden_dim=512,
@@ -39,7 +39,7 @@ model.load_state_dict(torch.load(model_path, map_location=device))
 model.to(device)
 
 # Step 4: Load graph data
-data_relative_path = os.path.join('Data', 'Static_Linear_Analysis', 'structure_1', 'structure_graph_NodeAsNode_pseudo.pt')
+data_relative_path = os.path.join('Data', 'Static_Linear_Analysis', 'structure_2', 'structure_graph_NodeAsNode_pseudo.pt')
 data_path = os.path.normpath(os.path.join(script_dir, '..', data_relative_path))
 data = torch.load(data_path, weights_only=False)
 
@@ -47,7 +47,7 @@ data = torch.load(data_path, weights_only=False)
 model.eval()
 with torch.no_grad():
     data = data.to(device)
-    output = model(data.x, data.edge_index, data.edge_attr)
+    output = model(data.x, data.edge_index, data.edge_attr, layer_num=3)
 
 # Step 6: Print labeled output
 torch.set_printoptions(sci_mode=False)
