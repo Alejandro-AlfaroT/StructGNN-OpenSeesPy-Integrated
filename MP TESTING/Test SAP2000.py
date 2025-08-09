@@ -1,5 +1,6 @@
 import comtypes.client
 import os
+import csv
 import numpy as np
 
 # Set up SAP2000 helper and instance
@@ -48,59 +49,50 @@ SapModel.PointObj.SetLoadForce("48","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
 SapModel.PointObj.SetLoadForce("63","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
 
 #^^Need to make a function to so it sets loads on the top floor
+#Can do this by writing a function to select the top layer by finding all points with the highest Z value, then choose select the options with the smallest X/Y value so it only chooses the edges of the top floor
 
 # Save and Run Analysis
 SapModel.File.Save(ModelPath)
 SapModel.Analyze.RunAnalysis()
 
-# Extract Results
-Axial = np.zeros(25)
-Reaction = np.zeros([4,3])
-Displacement = np.zeros([10,3])
 
+# Select the load case to extract results from
+load_case = "TOP_LOAD"
 SapModel.Results.Setup.DeselectAllCasesAndCombosForOutput()
-SapModel.Results.Setup.SetCaseSelectedForOutput('[TOP_LOAD')
+SapModel.Results.Setup.SetCaseSelectedForOutput(load_case)
 
-# Metadata and identifiers
-NumberResults = 0
-Obj = []          # Object names
-Elm = []          # Element IDs
-ACase = []        # Analysis case names
-StepType = []     # Type of analysis step (e.g., Linear, TimeHistory)
-StepNum = []      # Step number
+# Get all joint names
+joint_names = SapModel.PointObj.GetNameList()
 
-# Object/element-level result control
-ObjectElm = 0     # 0 = object results, 1 = element results
-ObjSta = []       # Object station positions
-ElmSta = []       # Element station positions
+# Create CSV file to store displacements
+with open("joint_displacements.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["Joint", "U1", "U2", "U3"])  # Only displacements
 
-# Internal force result containers
-P = []            # Axial force
-V2 = []           # Shear force in local 2-direction
-V3 = []           # Shear force in local 3-direction
-T = []            # Torsion
-M2 = []           # Moment about local 2-axis
-M3 = []           # Moment about local 3-axis
+    for joint in joint_names:
+        # Initialize variables
+        joint = str(joint)
 
-# Element-level control and end force results
-Element = 1       # Request element-level results
-F1 = []
-F2 = []
-F3 = []
-R1 = []
-R2 = []
-R3 = []
+        NumberResults = 0
+        Obj = []
+        Elm = []
+        ACase = []
+        StepType = []
+        StepNum = []
+        U1 = []
+        U2 = []
+        U3 = []
 
-# Group-based result extraction
-GroupElm = 2      # Target group ID
+        # Only displacements: ignore rotations
+        [NumberResults, Obj, Elm, ACase, StepType, StepNum,
+         U1, U2, U3, *_] = SapModel.Results.JointDispl(
+            joint, 0, NumberResults,
+            Obj, Elm, ACase, StepType, StepNum,
+            U1, U2, U3, [], [], []
+        )
 
-# Joint displacement result containers
-U1 = []           # Displacement in global X
-U2 = []           # Displacement in global Y
-U3 = []           # Displacement in global Z
-U4 = []           # Rotation about global X
-U5 = []           # Rotation about global Y
-U6 = []           # Rotation about global Z
+        if NumberResults > 0:
+            writer.writerow([joint, U1[0], U2[0], U3[0]])
 
 
 # Close SAP2000

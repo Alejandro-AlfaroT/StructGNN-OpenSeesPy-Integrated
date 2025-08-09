@@ -5,9 +5,13 @@ __pycache__/
 
 # Ignore models and output
 MP TESTING/predicted_output.pt
+#ignore the predicted node output
+MP TESTING/predicted_node_outputs.csv
 
 # Ignore installers
 Miniconda3-*.sh
 
 # Ignore all 3DFrame.* files in MP TESTING
 MP TESTING/3DFrame.*
+
+
