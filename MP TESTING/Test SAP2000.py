@@ -37,7 +37,7 @@ ForceX = 90
 ForceY = 150
 
 #Apply Loads
-'''
+
 #SetLoadForce (Joint Name, LoadType, [ForceX, ForceY, ForceZ, MomentX, MomentY, MomentZ]
 SapModel.PointObj.SetLoadForce("3","TOP_LOAD", [ForceX, ForceY, 0, 0, 0, 0])
 SapModel.PointObj.SetLoadForce("6","TOP_LOAD", [ForceX, 0, 0, 0, 0, 0])
@@ -48,10 +48,10 @@ SapModel.PointObj.SetLoadForce("18","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
 SapModel.PointObj.SetLoadForce("33","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
 SapModel.PointObj.SetLoadForce("48","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
 SapModel.PointObj.SetLoadForce("63","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
-'''
+
 #^^Need to make a function to so it sets loads on the top floor
 #Can do this by writing a function to select the top layer by finding all points with the highest Z value, then choose select the options with the smallest X/Y value so it only chooses the edges of the top floor
-
+'''
 # Automatically find top-story joints
 output = SapModel.PointObj.GetNameList()
 ret = output[0]
@@ -75,26 +75,31 @@ for name in PointNames:
 min_x = float('inf')
 for name in top_joints:
     ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
-    if x < min_x:
+    if x < min_x:   # Fixed comparison
         min_x = x
 
-# Step 4: Find minimum global Y among top joints
-min_y = float('inf')
+# Step 3.5: Remove joints at min_x from top_joints
+filtered_top_joints = []
 for name in top_joints:
+    ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
+    if np.isclose(x, min_x):
+        filtered_top_joints.append(name)
+
+# Step 4: Find minimum global Y among the filtered top joints
+min_y = float('inf')
+for name in filtered_top_joints:
     ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
     if y < min_y:
         min_y = y
 
-# Step 5: Apply ForceX to joints at min X, and ForceY to joints at min Y (on top floor only)
-for name in top_joints:
+# Step 5: Apply ForceY only to joints at min Y (no more ForceX)
+for name in filtered_top_joints:
     ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
 
-    if np.isclose(x, min_x):
-        SapModel.PointObj.SetLoadForce(name, "TOP_LOAD", [ForceX, 0, 0, 0, 0, 0])
-
-    elif np.isclose(y, min_y):
+    if np.isclose(y, min_y):
         SapModel.PointObj.SetLoadForce(name, "TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
 
+'''
 # Save and Run Analysis
 SapModel.File.Save(ModelPath)
 SapModel.Analyze.RunAnalysis()
@@ -107,6 +112,7 @@ SapModel.Results.Setup.SetCaseSelectedForOutput(load_case)
 
 # Get all joint names
 joint_names = SapModel.PointObj.GetNameList()
+# ^ need to convert this into something to run a function that checks every joint, not just the last one
 
 # Create CSV file to store displacements
 with open("joint_displacements.csv", "w", newline="") as f:
@@ -134,9 +140,8 @@ with open("joint_displacements.csv", "w", newline="") as f:
             Obj, Elm, ACase, StepType, StepNum,
             U1, U2, U3, [], [], []
         )
-
-        if NumberResults > 0:
-            writer.writerow([joint, U1[0], U2[0], U3[0]])
+        for i in range(NumberResults):
+            writer.writerow([joint, U1[i], U2[i], U3[i]])
 
 
 # Close SAP2000
