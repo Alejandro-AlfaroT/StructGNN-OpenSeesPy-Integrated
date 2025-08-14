@@ -1,0 +1,1235 @@
+File D:\Users\JoinTheLegion\Downloads\SAP\StructGNN\Cyrus_Testing\Automated_3DFrame.$2k was saved on m/d/yy at h:mm:ss
+ 
+TABLE:  "ACTIVE DEGREES OF FREEDOM"
+   UX=Yes   UY=Yes   UZ=Yes   RX=Yes   RY=Yes   RZ=Yes
+ 
+TABLE:  "ANALYSIS OPTIONS"
+   Solver=Advanced   SolverProc=Auto   Force32Bit=No   StiffCase=None   GeomMod=None   HingeOpt="In Elements"   NumAThreads=0   MaxFileSize=0   NumDThreads=0   NumRThreads=0   UseMMFiles="Program Determined"   AllowDiff=No
+ 
+TABLE:  "AREA AUTO MESH ASSIGNMENTS"
+   Area=1   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=2   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=3   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=4   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=5   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=6   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=7   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=8   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=9   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=10   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=11   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=12   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=13   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=14   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=15   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=16   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=17   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=18   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=19   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=20   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=21   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=22   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=23   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=24   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=25   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=26   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=27   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=28   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=29   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=30   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=31   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+   Area=32   MeshType="Number of Elements"   MeshGroup=ALL   Number1=4   Number2=4   LocalEdge=No   LocalFace=No   SuppEdge=No   SuppFace=No   SubMesh=No
+ 
+TABLE:  "AREA SECTION ASSIGNMENTS"
+   Area=1   Section=ASEC1   MatProp=Default
+   Area=2   Section=ASEC1   MatProp=Default
+   Area=3   Section=ASEC1   MatProp=Default
+   Area=4   Section=ASEC1   MatProp=Default
+   Area=5   Section=ASEC1   MatProp=Default
+   Area=6   Section=ASEC1   MatProp=Default
+   Area=7   Section=ASEC1   MatProp=Default
+   Area=8   Section=ASEC1   MatProp=Default
+   Area=9   Section=ASEC1   MatProp=Default
+   Area=10   Section=ASEC1   MatProp=Default
+   Area=11   Section=ASEC1   MatProp=Default
+   Area=12   Section=ASEC1   MatProp=Default
+   Area=13   Section=ASEC1   MatProp=Default
+   Area=14   Section=ASEC1   MatProp=Default
+   Area=15   Section=ASEC1   MatProp=Default
+   Area=16   Section=ASEC1   MatProp=Default
+   Area=17   Section=ASEC1   MatProp=Default
+   Area=18   Section=ASEC1   MatProp=Default
+   Area=19   Section=ASEC1   MatProp=Default
+   Area=20   Section=ASEC1   MatProp=Default
+   Area=21   Section=ASEC1   MatProp=Default
+   Area=22   Section=ASEC1   MatProp=Default
+   Area=23   Section=ASEC1   MatProp=Default
+   Area=24   Section=ASEC1   MatProp=Default
+   Area=25   Section=ASEC1   MatProp=Default
+   Area=26   Section=ASEC1   MatProp=Default
+   Area=27   Section=ASEC1   MatProp=Default
+   Area=28   Section=ASEC1   MatProp=Default
+   Area=29   Section=ASEC1   MatProp=Default
+   Area=30   Section=ASEC1   MatProp=Default
+   Area=31   Section=ASEC1   MatProp=Default
+   Area=32   Section=ASEC1   MatProp=Default
+ 
+TABLE:  "AREA SECTION PROPERTIES"
+   Section=ASEC1   Material=4000Psi   MatAngle=0   AreaType=Shell   Type=Shell-Thin   DrillDOF=Yes   Thickness=1   BendThick=1   Color=Cyan   F11Mod=1   F22Mod=1   F12Mod=1   M11Mod=1   M22Mod=1   M12Mod=1   V13Mod=1   V23Mod=1   MMod=1 _
+        WMod=1   GUID=37b6e93d-3288-4eb4-9ddd-ae5af798eddd   Notes="Added 8/13/2025 11:32:35 PM"
+ 
+TABLE:  "AREA SECTION PROPERTY DESIGN PARAMETERS"
+   Section=ASEC1   RebarMat=None   RebarOpt=Default
+ 
+TABLE:  "AREA SECTION PROPERTY - TIME DEPENDENT"
+   Section=ASEC1   TypeSize=Auto   AutoSFSize=1
+ 
+TABLE:  "AUTO WAVE 3 - WAVE CHARACTERISTICS - GENERAL"
+   WaveChar=Default   WaveType="From Theory"   KinFactor=1   SWaterDepth=150   WaveHeight=60   WavePeriod=12   WaveTheory=Linear
+ 
+TABLE:  "CASE - MODAL 1 - GENERAL"
+   Case=MODAL   ModeType=Eigen   MaxNumModes=12   MinNumModes=1   EigenShift=0   EigenCutoff=0   EigenTol=1E-09   AutoShift=Yes
+ 
+TABLE:  "CASE - STATIC 1 - LOAD ASSIGNMENTS"
+   Case=DEAD   LoadType="Load pattern"   LoadName=DEAD   LoadSF=1
+   Case=TOP_LOAD   LoadType="Load pattern"   LoadName=TOP_LOAD   LoadSF=1
+ 
+TABLE:  "CONNECTIVITY - AREA"
+   Area=1   Joint1=2   Joint2=17   Joint3=20   Joint4=5   GUID=8169c42a-5839-46b6-8e3c-3e3e510ca691
+   Area=2   Joint1=5   Joint2=20   Joint3=23   Joint4=8   GUID=0ef8266c-1141-44eb-94d4-1b55fc0a00f4
+   Area=3   Joint1=8   Joint2=23   Joint3=26   Joint4=11   GUID=9f68a0ab-5953-49e2-861c-5bceaa3980af
+   Area=4   Joint1=11   Joint2=26   Joint3=29   Joint4=14   GUID=35da5b13-3bcb-4820-aae1-715ab01ec8da
+   Area=5   Joint1=17   Joint2=32   Joint3=35   Joint4=20   GUID=cb756222-be34-45dc-8cdc-bb6e47c75070
+   Area=6   Joint1=20   Joint2=35   Joint3=38   Joint4=23   GUID=e331134a-c83e-4dd2-8be2-9fd7805d13e7
+   Area=7   Joint1=23   Joint2=38   Joint3=41   Joint4=26   GUID=9dee1093-1375-4736-b19b-72ef08302749
+   Area=8   Joint1=26   Joint2=41   Joint3=44   Joint4=29   GUID=20a3d84e-a02b-48f1-a625-6792dd495fab
+   Area=9   Joint1=32   Joint2=47   Joint3=50   Joint4=35   GUID=8e59090e-7109-4fa3-b342-260311e529f0
+   Area=10   Joint1=35   Joint2=50   Joint3=53   Joint4=38   GUID=99a7491b-2065-4ef0-b568-b36b63f6b323
+   Area=11   Joint1=38   Joint2=53   Joint3=56   Joint4=41   GUID=814a1522-c5e9-4d95-9b24-347ac894c5a9
+   Area=12   Joint1=41   Joint2=56   Joint3=59   Joint4=44   GUID=e4907f8e-751f-424d-ac54-5b0c95915a40
+   Area=13   Joint1=47   Joint2=62   Joint3=65   Joint4=50   GUID=f65b68e4-c228-455b-a7e7-23624f37602b
+   Area=14   Joint1=50   Joint2=65   Joint3=68   Joint4=53   GUID=b8557f8a-7e0a-44ce-8aa9-ff647cb39e1a
+   Area=15   Joint1=53   Joint2=68   Joint3=71   Joint4=56   GUID=58b72f90-6ccf-4832-89f7-fe9ce43186bd
+   Area=16   Joint1=56   Joint2=71   Joint3=74   Joint4=59   GUID=1ed514fb-632e-4021-8baa-73acae8e0b67
+   Area=17   Joint1=3   Joint2=18   Joint3=21   Joint4=6   GUID=4ba2e510-5cd1-4238-a4df-105169e1897e
+   Area=18   Joint1=6   Joint2=21   Joint3=24   Joint4=9   GUID=b1145538-77bb-4572-9bda-11486cab0a92
+   Area=19   Joint1=9   Joint2=24   Joint3=27   Joint4=12   GUID=d1a2ec5d-2376-4fbe-8c24-fc519e0f80dc
+   Area=20   Joint1=12   Joint2=27   Joint3=30   Joint4=15   GUID=4a150d22-0629-447b-886e-e9b34e8c9abe
+   Area=21   Joint1=18   Joint2=33   Joint3=36   Joint4=21   GUID=187409be-3507-426f-8d09-de972b1176da
+   Area=22   Joint1=21   Joint2=36   Joint3=39   Joint4=24   GUID=de7c3e7b-20fe-48d3-8638-13c726690959
+   Area=23   Joint1=24   Joint2=39   Joint3=42   Joint4=27   GUID=7314d184-4cfe-4881-bcae-bedca7966bb4
+   Area=24   Joint1=27   Joint2=42   Joint3=45   Joint4=30   GUID=b982081f-a730-4035-9807-b1c5ff51dd2f
+   Area=25   Joint1=33   Joint2=48   Joint3=51   Joint4=36   GUID=914a14e8-05f2-401c-ae29-acea0aa215c1
+   Area=26   Joint1=36   Joint2=51   Joint3=54   Joint4=39   GUID=e1ea7341-275d-43c2-abc7-2567d6506502
+   Area=27   Joint1=39   Joint2=54   Joint3=57   Joint4=42   GUID=06de4fe8-23ac-4ec5-9616-eb441c1886c8
+   Area=28   Joint1=42   Joint2=57   Joint3=60   Joint4=45   GUID=410a6476-e95d-44f2-9d8a-8868d1082a5a
+   Area=29   Joint1=48   Joint2=63   Joint3=66   Joint4=51   GUID=04fbbe49-8239-4a65-a110-d32e317dda5e
+   Area=30   Joint1=51   Joint2=66   Joint3=69   Joint4=54   GUID=75504c8d-50d6-4b30-af58-8aafcfbe635b
+   Area=31   Joint1=54   Joint2=69   Joint3=72   Joint4=57   GUID=a70e6667-a2fb-4df6-aa52-521963dc91e4
+   Area=32   Joint1=57   Joint2=72   Joint3=75   Joint4=60   GUID=6094a02e-3f5e-49aa-88f0-83468cb081da
+ 
+TABLE:  "CONNECTIVITY - FRAME"
+   Frame=1   JointI=1   JointJ=2   IsCurved=No   GUID=e78ce493-8a7e-450e-921e-245cf50ae5fc
+   Frame=2   JointI=2   JointJ=3   IsCurved=No   GUID=cbcce7ae-c188-421e-81be-d90b90524a01
+   Frame=3   JointI=4   JointJ=5   IsCurved=No   GUID=5a00ecaf-5f4b-4302-b50b-6be8c43f57b7
+   Frame=4   JointI=5   JointJ=6   IsCurved=No   GUID=b6020760-5a52-4151-8804-769bc880f9a7
+   Frame=5   JointI=7   JointJ=8   IsCurved=No   GUID=07cfa0ba-ba59-43d3-b17b-64a3aa5cdb7d
+   Frame=6   JointI=8   JointJ=9   IsCurved=No   GUID=fba09500-7ba6-4810-8c88-b59bc561d687
+   Frame=7   JointI=10   JointJ=11   IsCurved=No   GUID=79a16775-080c-4eb2-b310-0241707d7c02
+   Frame=8   JointI=11   JointJ=12   IsCurved=No   GUID=8fff1128-8c51-4533-9965-2cf333c8c9a3
+   Frame=9   JointI=13   JointJ=14   IsCurved=No   GUID=9409cf46-7c96-43a0-b10d-bbfc529de3d9
+   Frame=10   JointI=14   JointJ=15   IsCurved=No   GUID=0900ce57-c193-42b2-b835-82c57e4b5594
+   Frame=11   JointI=16   JointJ=17   IsCurved=No   GUID=1e074f12-39c0-4d72-a2ef-3d19d51ad95b
+   Frame=12   JointI=17   JointJ=18   IsCurved=No   GUID=802eefbb-dbf0-4bc1-99c6-33bb7bb14b84
+   Frame=13   JointI=19   JointJ=20   IsCurved=No   GUID=ce3352fc-494e-43de-b7e1-d86ad391230c
+   Frame=14   JointI=20   JointJ=21   IsCurved=No   GUID=742f6e99-7ef0-4b40-9d43-ee0396ded46f
+   Frame=15   JointI=22   JointJ=23   IsCurved=No   GUID=737a6159-ade0-4823-b513-07f3c5b4e40a
+   Frame=16   JointI=23   JointJ=24   IsCurved=No   GUID=42c870dc-de9d-499d-bb9e-4992bda00a63
+   Frame=17   JointI=25   JointJ=26   IsCurved=No   GUID=fcac1942-4916-4380-8e41-126c965915cb
+   Frame=18   JointI=26   JointJ=27   IsCurved=No   GUID=0423d18c-e82e-472e-b4f3-381dac7c39de
+   Frame=19   JointI=28   JointJ=29   IsCurved=No   GUID=b934aa25-2d3f-4232-8057-11aab74ddde2
+   Frame=20   JointI=29   JointJ=30   IsCurved=No   GUID=4550f98f-5b13-44bf-972d-8e056b98d053
+   Frame=21   JointI=31   JointJ=32   IsCurved=No   GUID=2901c8fd-9094-4038-8532-04cdcf461533
+   Frame=22   JointI=32   JointJ=33   IsCurved=No   GUID=cdb4d9f3-bbf6-460d-ae67-f51a4f25c51b
+   Frame=23   JointI=34   JointJ=35   IsCurved=No   GUID=65cca1a2-eb1d-4d30-9997-df0df06ac61a
+   Frame=24   JointI=35   JointJ=36   IsCurved=No   GUID=0897716c-2762-49c0-8cba-89ad59941aaf
+   Frame=25   JointI=37   JointJ=38   IsCurved=No   GUID=cc192ef4-f8c5-4a5e-85bf-027047d1daa6
+   Frame=26   JointI=38   JointJ=39   IsCurved=No   GUID=e0c9eaab-d915-4fd5-8985-aebbb32b6370
+   Frame=27   JointI=40   JointJ=41   IsCurved=No   GUID=1e079c7b-5265-434c-95a0-6fad9f14c64f
+   Frame=28   JointI=41   JointJ=42   IsCurved=No   GUID=64c0eaf4-f777-4f5d-be67-1300826668e5
+   Frame=29   JointI=43   JointJ=44   IsCurved=No   GUID=28c04f7d-c7b8-4763-85c4-347c250a22c0
+   Frame=30   JointI=44   JointJ=45   IsCurved=No   GUID=25f421b5-26f9-4a8f-858c-5037156366d0
+   Frame=31   JointI=46   JointJ=47   IsCurved=No   GUID=13cff8fa-aa86-4de6-85a1-31ffd8950cf8
+   Frame=32   JointI=47   JointJ=48   IsCurved=No   GUID=949d0ad3-82c9-4d53-907f-635d51be9730
+   Frame=33   JointI=49   JointJ=50   IsCurved=No   GUID=429ff887-6a57-4de5-95e1-e34501e0b083
+   Frame=34   JointI=50   JointJ=51   IsCurved=No   GUID=539e957f-2092-4424-9829-584d98315a3e
+   Frame=35   JointI=52   JointJ=53   IsCurved=No   GUID=ed7c6cb0-711b-4c79-8c8c-625b65b7a6d2
+   Frame=36   JointI=53   JointJ=54   IsCurved=No   GUID=b8d10781-c354-4e2e-9a68-499f7926301e
+   Frame=37   JointI=55   JointJ=56   IsCurved=No   GUID=09d0067c-e04a-49cd-b435-33f5c97db54c
+   Frame=38   JointI=56   JointJ=57   IsCurved=No   GUID=cd535e59-3930-4bfb-a3bf-e84182ef8c2a
+   Frame=39   JointI=58   JointJ=59   IsCurved=No   GUID=2ba2647b-6bd7-4347-974f-4048c4d174c5
+   Frame=40   JointI=59   JointJ=60   IsCurved=No   GUID=1205c9e1-c8e8-4e64-b0e1-a1bb756ec832
+   Frame=41   JointI=61   JointJ=62   IsCurved=No   GUID=ea097171-dd03-4f0a-b03a-6db1199346ef
+   Frame=42   JointI=62   JointJ=63   IsCurved=No   GUID=afc6e333-41a9-4a08-9ea2-ddef9a88fe73
+   Frame=43   JointI=64   JointJ=65   IsCurved=No   GUID=1e0a56c4-7897-4897-942c-a61e810bef22
+   Frame=44   JointI=65   JointJ=66   IsCurved=No   GUID=7018def1-1231-4ce1-82e8-45043ea73f90
+   Frame=45   JointI=67   JointJ=68   IsCurved=No   GUID=50f1e042-a6b7-45d9-8ecb-60584017396a
+   Frame=46   JointI=68   JointJ=69   IsCurved=No   GUID=16c674bb-88a3-466c-9068-bf7c93c242ed
+   Frame=47   JointI=70   JointJ=71   IsCurved=No   GUID=c19c490e-7de9-458c-88fa-b5019a18dbc0
+   Frame=48   JointI=71   JointJ=72   IsCurved=No   GUID=27b9260b-5b82-4555-941e-3a60cc3e5947
+   Frame=49   JointI=73   JointJ=74   IsCurved=No   GUID=609392c7-7ac3-4742-af46-8acbeff5cc81
+   Frame=50   JointI=74   JointJ=75   IsCurved=No   GUID=ec9eca97-bb89-4648-bf99-b39233929a6b
+   Frame=51   JointI=2   JointJ=17   IsCurved=No   GUID=799866ec-d8e3-4476-883c-913a78ff0e53
+   Frame=52   JointI=3   JointJ=18   IsCurved=No   GUID=37775fd8-2c2b-4e86-956b-4f8ce85e92fd
+   Frame=53   JointI=17   JointJ=32   IsCurved=No   GUID=f7b3358f-39d4-4e93-afb5-b20ea1328c04
+   Frame=54   JointI=18   JointJ=33   IsCurved=No   GUID=85f0cf6c-a40a-44c3-8a84-c239e1d1284e
+   Frame=55   JointI=32   JointJ=47   IsCurved=No   GUID=c1754ce6-0436-4ca2-aa5f-710816781407
+   Frame=56   JointI=33   JointJ=48   IsCurved=No   GUID=36a345c8-498e-4186-a1bd-f0b105f23561
+   Frame=57   JointI=47   JointJ=62   IsCurved=No   GUID=84af0ce4-3d99-4596-9ec0-1fdc7a87541f
+   Frame=58   JointI=48   JointJ=63   IsCurved=No   GUID=68844f8c-c36b-44db-884a-327438314962
+   Frame=59   JointI=5   JointJ=20   IsCurved=No   GUID=7bcea96b-9dea-4242-baed-c619dd8bc187
+   Frame=60   JointI=6   JointJ=21   IsCurved=No   GUID=82abe759-73c3-452f-8382-c88789c1a417
+   Frame=61   JointI=20   JointJ=35   IsCurved=No   GUID=ecbdb678-80e1-4229-87a7-9f3e8921117d
+   Frame=62   JointI=21   JointJ=36   IsCurved=No   GUID=ddc985e0-5333-4578-95fb-2b860d3e416f
+   Frame=63   JointI=35   JointJ=50   IsCurved=No   GUID=12d5d881-8659-40dc-b6f6-03ef4021eb78
+   Frame=64   JointI=36   JointJ=51   IsCurved=No   GUID=d1af2106-20cb-463e-8df0-5bcc38656626
+   Frame=65   JointI=50   JointJ=65   IsCurved=No   GUID=525f0d63-44fe-4fb1-834d-aa0ac71c1cd7
+   Frame=66   JointI=51   JointJ=66   IsCurved=No   GUID=00042205-30e1-437a-b42b-e9153feb4037
+   Frame=67   JointI=8   JointJ=23   IsCurved=No   GUID=ea4398fb-8a23-4477-ae1c-abf2372b5fc4
+   Frame=68   JointI=9   JointJ=24   IsCurved=No   GUID=acc5ff68-e4ad-44ba-8cb6-e079e08bfbc1
+   Frame=69   JointI=23   JointJ=38   IsCurved=No   GUID=169a7e49-e68b-4e71-a39e-d73a79575e54
+   Frame=70   JointI=24   JointJ=39   IsCurved=No   GUID=721fcfc6-a9b2-4461-b5ec-856e237f34a8
+   Frame=71   JointI=38   JointJ=53   IsCurved=No   GUID=6b4a724d-6939-4c87-95f8-8abcd4f18e81
+   Frame=72   JointI=39   JointJ=54   IsCurved=No   GUID=96251bf2-7c16-49e8-a812-b06862fd8bd8
+   Frame=73   JointI=53   JointJ=68   IsCurved=No   GUID=024e75cd-e8af-49aa-9d72-511fcbcd52d2
+   Frame=74   JointI=54   JointJ=69   IsCurved=No   GUID=dd2ee50d-04d3-47fd-a4f5-557305266c2c
+   Frame=75   JointI=11   JointJ=26   IsCurved=No   GUID=f629f9cb-c446-4e3c-a17f-8edd7526cd41
+   Frame=76   JointI=12   JointJ=27   IsCurved=No   GUID=d8482b02-fbc4-457e-b1df-07bcba08f271
+   Frame=77   JointI=26   JointJ=41   IsCurved=No   GUID=c0e5d86a-2a00-4fd8-8fe7-c6bd5d800e27
+   Frame=78   JointI=27   JointJ=42   IsCurved=No   GUID=54360f31-4cca-4963-b28c-2dd3e135e0f5
+   Frame=79   JointI=41   JointJ=56   IsCurved=No   GUID=1e1cbab2-2d77-45d3-89f1-368363fd1e4e
+   Frame=80   JointI=42   JointJ=57   IsCurved=No   GUID=728444d7-62d8-4a50-8d86-ad27df58c6b6
+   Frame=81   JointI=56   JointJ=71   IsCurved=No   GUID=1947bd62-00b2-4a94-bc86-6b9196c82691
+   Frame=82   JointI=57   JointJ=72   IsCurved=No   GUID=617c32f5-721b-48d8-8279-a0a8266c739b
+   Frame=83   JointI=14   JointJ=29   IsCurved=No   GUID=8b8b6abe-eb72-475b-8597-aca0af16bdcd
+   Frame=84   JointI=15   JointJ=30   IsCurved=No   GUID=5b02410a-8208-4324-bd22-813697c72836
+   Frame=85   JointI=29   JointJ=44   IsCurved=No   GUID=797e4c60-a1ab-424c-aed3-ae88b3e1e696
+   Frame=86   JointI=30   JointJ=45   IsCurved=No   GUID=036c2e1c-d25b-4254-b84a-af4f504fb788
+   Frame=87   JointI=44   JointJ=59   IsCurved=No   GUID=d248ca6e-23c2-4b7c-96f6-592011a9627a
+   Frame=88   JointI=45   JointJ=60   IsCurved=No   GUID=e998a18f-f996-4001-a1d6-720abf5a07d7
+   Frame=89   JointI=59   JointJ=74   IsCurved=No   GUID=159670ff-5c2a-414e-90f4-2cb7e8e51779
+   Frame=90   JointI=60   JointJ=75   IsCurved=No   GUID=4cade263-9f5e-40b9-ad50-532c534d5ac2
+   Frame=91   JointI=2   JointJ=5   IsCurved=No   GUID=80ab86f3-19d8-4d16-b6ff-9398baa5b81b
+   Frame=92   JointI=3   JointJ=6   IsCurved=No   GUID=a8b8669e-6d57-4562-bf32-1912b6ae177a
+   Frame=93   JointI=5   JointJ=8   IsCurved=No   GUID=c7f4e1e7-8ff3-4c09-a2b4-8e5b6a9eb0a2
+   Frame=94   JointI=6   JointJ=9   IsCurved=No   GUID=407dc0e4-2085-4c0a-8c3b-46f2fde71841
+   Frame=95   JointI=8   JointJ=11   IsCurved=No   GUID=747dac8d-934c-47a2-bb5a-8da32a1ece1a
+   Frame=96   JointI=9   JointJ=12   IsCurved=No   GUID=df896dda-d3e6-4476-a591-f173f9f9b905
+   Frame=97   JointI=11   JointJ=14   IsCurved=No   GUID=2ad389b7-eb90-4c94-af1e-1baa8f89c5db
+   Frame=98   JointI=12   JointJ=15   IsCurved=No   GUID=77700c2f-2f58-4b17-a2fd-c24cc7170f3f
+   Frame=99   JointI=17   JointJ=20   IsCurved=No   GUID=3fec90aa-f402-4d9a-b89a-20d6269ea2df
+   Frame=100   JointI=18   JointJ=21   IsCurved=No   GUID=3975c134-1c21-4239-b7e4-5916630bea3e
+   Frame=101   JointI=20   JointJ=23   IsCurved=No   GUID=9f7ef167-313c-47a5-9981-9454f0b6c222
+   Frame=102   JointI=21   JointJ=24   IsCurved=No   GUID=2a0936ba-f31f-4fae-8eab-059e2d1c781b
+   Frame=103   JointI=23   JointJ=26   IsCurved=No   GUID=dfe74da0-38fe-4e53-9549-89718795be78
+   Frame=104   JointI=24   JointJ=27   IsCurved=No   GUID=50bbff5c-1bfa-4044-b092-56b49041c21c
+   Frame=105   JointI=26   JointJ=29   IsCurved=No   GUID=6f6a952b-5815-442b-83ec-75c4630a341f
+   Frame=106   JointI=27   JointJ=30   IsCurved=No   GUID=0e35a24d-67f0-447a-88c7-2e98dbad3b97
+   Frame=107   JointI=32   JointJ=35   IsCurved=No   GUID=a70f750a-f9c5-4cc0-a640-cf9f686d25c3
+   Frame=108   JointI=33   JointJ=36   IsCurved=No   GUID=130706fa-5293-44af-a1d8-c43f9d896d84
+   Frame=109   JointI=35   JointJ=38   IsCurved=No   GUID=6e4a0b73-bd9a-4539-8ad5-f30d53581bba
+   Frame=110   JointI=36   JointJ=39   IsCurved=No   GUID=22ed1cbf-c080-484d-a12a-63f7274d8ed8
+   Frame=111   JointI=38   JointJ=41   IsCurved=No   GUID=5ea98ba5-6998-48ba-9239-c860b7591a62
+   Frame=112   JointI=39   JointJ=42   IsCurved=No   GUID=2e7b804c-966a-4e10-8d9b-ef5903d04560
+   Frame=113   JointI=41   JointJ=44   IsCurved=No   GUID=3b2c221f-1993-4883-9b0e-5d63eef433f3
+   Frame=114   JointI=42   JointJ=45   IsCurved=No   GUID=05e331a8-261b-4268-a7a2-f5d43c96dd39
+   Frame=115   JointI=47   JointJ=50   IsCurved=No   GUID=6b3b2800-6e37-4a93-80bb-1d9b60404bb6
+   Frame=116   JointI=48   JointJ=51   IsCurved=No   GUID=d045f3b4-d1aa-4e61-95db-a7d3f4b942a4
+   Frame=117   JointI=50   JointJ=53   IsCurved=No   GUID=a84540d9-57d9-427f-ba11-29ab548c4de8
+   Frame=118   JointI=51   JointJ=54   IsCurved=No   GUID=e84ae2c2-81c8-433b-9aa9-2dc4281c0a95
+   Frame=119   JointI=53   JointJ=56   IsCurved=No   GUID=7f2fe6de-5359-4d74-9972-b54b8e23e8eb
+   Frame=120   JointI=54   JointJ=57   IsCurved=No   GUID=43009ebd-0bcd-460f-9113-b9d2cd624907
+   Frame=121   JointI=56   JointJ=59   IsCurved=No   GUID=4f1c5757-ade1-4b85-ab39-ffb398dd2b99
+   Frame=122   JointI=57   JointJ=60   IsCurved=No   GUID=f6f1234d-7a0c-4cff-867c-02fac349d7f6
+   Frame=123   JointI=62   JointJ=65   IsCurved=No   GUID=8785740d-baaa-42ee-9637-acba51e0f4a3
+   Frame=124   JointI=63   JointJ=66   IsCurved=No   GUID=f4b52fd0-8b75-4050-bcd9-94660e07aaea
+   Frame=125   JointI=65   JointJ=68   IsCurved=No   GUID=e73996ad-0d6a-45e4-9109-176df96ecfe1
+   Frame=126   JointI=66   JointJ=69   IsCurved=No   GUID=7145333c-0bfd-44f5-be05-a2cdef8217f0
+   Frame=127   JointI=68   JointJ=71   IsCurved=No   GUID=7b13722a-7bc9-45a6-9de4-1cec24347508
+   Frame=128   JointI=69   JointJ=72   IsCurved=No   GUID=073d1560-f7db-49df-91f0-7288103260e5
+   Frame=129   JointI=71   JointJ=74   IsCurved=No   GUID=83bbf1d5-ed04-4443-91ea-862e131ba742
+   Frame=130   JointI=72   JointJ=75   IsCurved=No   GUID=e12d8a1c-d098-48fd-b2e4-cf7a5713953b
+ 
+TABLE:  "COORDINATE SYSTEMS"
+   Name=GLOBAL   Type=Cartesian   X=0   Y=0   Z=0   AboutZ=0   AboutY=0   AboutX=0
+ 
+TABLE:  "DATABASE DOCUMENTATION"
+ 
+TABLE:  "DATABASE FORMAT TYPES"
+   UnitsCurr=Yes   OverrideE=No
+ 
+TABLE:  "FRAME AUTO MESH ASSIGNMENTS"
+   Frame=1   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=2   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=3   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=4   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=5   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=6   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=7   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=8   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=9   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=10   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=11   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=12   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=13   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=14   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=15   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=16   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=17   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=18   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=19   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=20   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=21   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=22   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=23   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=24   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=25   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=26   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=27   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=28   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=29   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=30   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=31   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=32   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=33   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=34   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=35   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=36   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=37   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=38   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=39   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=40   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=41   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=42   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=43   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=44   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=45   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=46   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=47   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=48   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=49   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=50   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=51   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=52   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=53   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=54   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=55   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=56   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=57   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=58   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=59   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=60   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=61   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=62   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=63   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=64   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=65   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=66   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=67   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=68   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=69   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=70   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=71   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=72   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=73   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=74   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=75   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=76   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=77   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=78   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=79   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=80   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=81   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=82   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=83   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=84   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=85   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=86   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=87   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=88   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=89   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=90   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=91   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=92   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=93   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=94   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=95   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=96   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=97   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=98   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=99   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=100   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=101   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=102   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=103   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=104   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=105   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=106   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=107   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=108   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=109   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=110   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=111   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=112   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=113   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=114   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=115   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=116   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=117   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=118   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=119   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=120   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=121   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=122   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=123   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=124   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=125   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=126   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=127   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=128   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=129   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+   Frame=130   AutoMesh=Yes   AtJoints=Yes   AtFrames=No   NumSegments=0   MaxLength=0   MaxDegrees=0
+ 
+TABLE:  "FRAME DESIGN PROCEDURES"
+   Frame=1   DesignProc="From Material"
+   Frame=2   DesignProc="From Material"
+   Frame=3   DesignProc="From Material"
+   Frame=4   DesignProc="From Material"
+   Frame=5   DesignProc="From Material"
+   Frame=6   DesignProc="From Material"
+   Frame=7   DesignProc="From Material"
+   Frame=8   DesignProc="From Material"
+   Frame=9   DesignProc="From Material"
+   Frame=10   DesignProc="From Material"
+   Frame=11   DesignProc="From Material"
+   Frame=12   DesignProc="From Material"
+   Frame=13   DesignProc="From Material"
+   Frame=14   DesignProc="From Material"
+   Frame=15   DesignProc="From Material"
+   Frame=16   DesignProc="From Material"
+   Frame=17   DesignProc="From Material"
+   Frame=18   DesignProc="From Material"
+   Frame=19   DesignProc="From Material"
+   Frame=20   DesignProc="From Material"
+   Frame=21   DesignProc="From Material"
+   Frame=22   DesignProc="From Material"
+   Frame=23   DesignProc="From Material"
+   Frame=24   DesignProc="From Material"
+   Frame=25   DesignProc="From Material"
+   Frame=26   DesignProc="From Material"
+   Frame=27   DesignProc="From Material"
+   Frame=28   DesignProc="From Material"
+   Frame=29   DesignProc="From Material"
+   Frame=30   DesignProc="From Material"
+   Frame=31   DesignProc="From Material"
+   Frame=32   DesignProc="From Material"
+   Frame=33   DesignProc="From Material"
+   Frame=34   DesignProc="From Material"
+   Frame=35   DesignProc="From Material"
+   Frame=36   DesignProc="From Material"
+   Frame=37   DesignProc="From Material"
+   Frame=38   DesignProc="From Material"
+   Frame=39   DesignProc="From Material"
+   Frame=40   DesignProc="From Material"
+   Frame=41   DesignProc="From Material"
+   Frame=42   DesignProc="From Material"
+   Frame=43   DesignProc="From Material"
+   Frame=44   DesignProc="From Material"
+   Frame=45   DesignProc="From Material"
+   Frame=46   DesignProc="From Material"
+   Frame=47   DesignProc="From Material"
+   Frame=48   DesignProc="From Material"
+   Frame=49   DesignProc="From Material"
+   Frame=50   DesignProc="From Material"
+   Frame=51   DesignProc="From Material"
+   Frame=52   DesignProc="From Material"
+   Frame=53   DesignProc="From Material"
+   Frame=54   DesignProc="From Material"
+   Frame=55   DesignProc="From Material"
+   Frame=56   DesignProc="From Material"
+   Frame=57   DesignProc="From Material"
+   Frame=58   DesignProc="From Material"
+   Frame=59   DesignProc="From Material"
+   Frame=60   DesignProc="From Material"
+   Frame=61   DesignProc="From Material"
+   Frame=62   DesignProc="From Material"
+   Frame=63   DesignProc="From Material"
+   Frame=64   DesignProc="From Material"
+   Frame=65   DesignProc="From Material"
+   Frame=66   DesignProc="From Material"
+   Frame=67   DesignProc="From Material"
+   Frame=68   DesignProc="From Material"
+   Frame=69   DesignProc="From Material"
+   Frame=70   DesignProc="From Material"
+   Frame=71   DesignProc="From Material"
+   Frame=72   DesignProc="From Material"
+   Frame=73   DesignProc="From Material"
+   Frame=74   DesignProc="From Material"
+   Frame=75   DesignProc="From Material"
+   Frame=76   DesignProc="From Material"
+   Frame=77   DesignProc="From Material"
+   Frame=78   DesignProc="From Material"
+   Frame=79   DesignProc="From Material"
+   Frame=80   DesignProc="From Material"
+   Frame=81   DesignProc="From Material"
+   Frame=82   DesignProc="From Material"
+   Frame=83   DesignProc="From Material"
+   Frame=84   DesignProc="From Material"
+   Frame=85   DesignProc="From Material"
+   Frame=86   DesignProc="From Material"
+   Frame=87   DesignProc="From Material"
+   Frame=88   DesignProc="From Material"
+   Frame=89   DesignProc="From Material"
+   Frame=90   DesignProc="From Material"
+   Frame=91   DesignProc="From Material"
+   Frame=92   DesignProc="From Material"
+   Frame=93   DesignProc="From Material"
+   Frame=94   DesignProc="From Material"
+   Frame=95   DesignProc="From Material"
+   Frame=96   DesignProc="From Material"
+   Frame=97   DesignProc="From Material"
+   Frame=98   DesignProc="From Material"
+   Frame=99   DesignProc="From Material"
+   Frame=100   DesignProc="From Material"
+   Frame=101   DesignProc="From Material"
+   Frame=102   DesignProc="From Material"
+   Frame=103   DesignProc="From Material"
+   Frame=104   DesignProc="From Material"
+   Frame=105   DesignProc="From Material"
+   Frame=106   DesignProc="From Material"
+   Frame=107   DesignProc="From Material"
+   Frame=108   DesignProc="From Material"
+   Frame=109   DesignProc="From Material"
+   Frame=110   DesignProc="From Material"
+   Frame=111   DesignProc="From Material"
+   Frame=112   DesignProc="From Material"
+   Frame=113   DesignProc="From Material"
+   Frame=114   DesignProc="From Material"
+   Frame=115   DesignProc="From Material"
+   Frame=116   DesignProc="From Material"
+   Frame=117   DesignProc="From Material"
+   Frame=118   DesignProc="From Material"
+   Frame=119   DesignProc="From Material"
+   Frame=120   DesignProc="From Material"
+   Frame=121   DesignProc="From Material"
+   Frame=122   DesignProc="From Material"
+   Frame=123   DesignProc="From Material"
+   Frame=124   DesignProc="From Material"
+   Frame=125   DesignProc="From Material"
+   Frame=126   DesignProc="From Material"
+   Frame=127   DesignProc="From Material"
+   Frame=128   DesignProc="From Material"
+   Frame=129   DesignProc="From Material"
+   Frame=130   DesignProc="From Material"
+ 
+TABLE:  "FRAME LOAD TRANSFER OPTIONS"
+   Frame=1   Transfer=Yes
+   Frame=2   Transfer=Yes
+   Frame=3   Transfer=Yes
+   Frame=4   Transfer=Yes
+   Frame=5   Transfer=Yes
+   Frame=6   Transfer=Yes
+   Frame=7   Transfer=Yes
+   Frame=8   Transfer=Yes
+   Frame=9   Transfer=Yes
+   Frame=10   Transfer=Yes
+   Frame=11   Transfer=Yes
+   Frame=12   Transfer=Yes
+   Frame=13   Transfer=Yes
+   Frame=14   Transfer=Yes
+   Frame=15   Transfer=Yes
+   Frame=16   Transfer=Yes
+   Frame=17   Transfer=Yes
+   Frame=18   Transfer=Yes
+   Frame=19   Transfer=Yes
+   Frame=20   Transfer=Yes
+   Frame=21   Transfer=Yes
+   Frame=22   Transfer=Yes
+   Frame=23   Transfer=Yes
+   Frame=24   Transfer=Yes
+   Frame=25   Transfer=Yes
+   Frame=26   Transfer=Yes
+   Frame=27   Transfer=Yes
+   Frame=28   Transfer=Yes
+   Frame=29   Transfer=Yes
+   Frame=30   Transfer=Yes
+   Frame=31   Transfer=Yes
+   Frame=32   Transfer=Yes
+   Frame=33   Transfer=Yes
+   Frame=34   Transfer=Yes
+   Frame=35   Transfer=Yes
+   Frame=36   Transfer=Yes
+   Frame=37   Transfer=Yes
+   Frame=38   Transfer=Yes
+   Frame=39   Transfer=Yes
+   Frame=40   Transfer=Yes
+   Frame=41   Transfer=Yes
+   Frame=42   Transfer=Yes
+   Frame=43   Transfer=Yes
+   Frame=44   Transfer=Yes
+   Frame=45   Transfer=Yes
+   Frame=46   Transfer=Yes
+   Frame=47   Transfer=Yes
+   Frame=48   Transfer=Yes
+   Frame=49   Transfer=Yes
+   Frame=50   Transfer=Yes
+   Frame=51   Transfer=Yes
+   Frame=52   Transfer=Yes
+   Frame=53   Transfer=Yes
+   Frame=54   Transfer=Yes
+   Frame=55   Transfer=Yes
+   Frame=56   Transfer=Yes
+   Frame=57   Transfer=Yes
+   Frame=58   Transfer=Yes
+   Frame=59   Transfer=Yes
+   Frame=60   Transfer=Yes
+   Frame=61   Transfer=Yes
+   Frame=62   Transfer=Yes
+   Frame=63   Transfer=Yes
+   Frame=64   Transfer=Yes
+   Frame=65   Transfer=Yes
+   Frame=66   Transfer=Yes
+   Frame=67   Transfer=Yes
+   Frame=68   Transfer=Yes
+   Frame=69   Transfer=Yes
+   Frame=70   Transfer=Yes
+   Frame=71   Transfer=Yes
+   Frame=72   Transfer=Yes
+   Frame=73   Transfer=Yes
+   Frame=74   Transfer=Yes
+   Frame=75   Transfer=Yes
+   Frame=76   Transfer=Yes
+   Frame=77   Transfer=Yes
+   Frame=78   Transfer=Yes
+   Frame=79   Transfer=Yes
+   Frame=80   Transfer=Yes
+   Frame=81   Transfer=Yes
+   Frame=82   Transfer=Yes
+   Frame=83   Transfer=Yes
+   Frame=84   Transfer=Yes
+   Frame=85   Transfer=Yes
+   Frame=86   Transfer=Yes
+   Frame=87   Transfer=Yes
+   Frame=88   Transfer=Yes
+   Frame=89   Transfer=Yes
+   Frame=90   Transfer=Yes
+   Frame=91   Transfer=Yes
+   Frame=92   Transfer=Yes
+   Frame=93   Transfer=Yes
+   Frame=94   Transfer=Yes
+   Frame=95   Transfer=Yes
+   Frame=96   Transfer=Yes
+   Frame=97   Transfer=Yes
+   Frame=98   Transfer=Yes
+   Frame=99   Transfer=Yes
+   Frame=100   Transfer=Yes
+   Frame=101   Transfer=Yes
+   Frame=102   Transfer=Yes
+   Frame=103   Transfer=Yes
+   Frame=104   Transfer=Yes
+   Frame=105   Transfer=Yes
+   Frame=106   Transfer=Yes
+   Frame=107   Transfer=Yes
+   Frame=108   Transfer=Yes
+   Frame=109   Transfer=Yes
+   Frame=110   Transfer=Yes
+   Frame=111   Transfer=Yes
+   Frame=112   Transfer=Yes
+   Frame=113   Transfer=Yes
+   Frame=114   Transfer=Yes
+   Frame=115   Transfer=Yes
+   Frame=116   Transfer=Yes
+   Frame=117   Transfer=Yes
+   Frame=118   Transfer=Yes
+   Frame=119   Transfer=Yes
+   Frame=120   Transfer=Yes
+   Frame=121   Transfer=Yes
+   Frame=122   Transfer=Yes
+   Frame=123   Transfer=Yes
+   Frame=124   Transfer=Yes
+   Frame=125   Transfer=Yes
+   Frame=126   Transfer=Yes
+   Frame=127   Transfer=Yes
+   Frame=128   Transfer=Yes
+   Frame=129   Transfer=Yes
+   Frame=130   Transfer=Yes
+ 
+TABLE:  "FRAME OUTPUT STATION ASSIGNMENTS"
+   Frame=1   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=2   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=3   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=4   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=5   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=6   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=7   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=8   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=9   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=10   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=11   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=12   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=13   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=14   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=15   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=16   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=17   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=18   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=19   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=20   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=21   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=22   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=23   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=24   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=25   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=26   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=27   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=28   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=29   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=30   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=31   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=32   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=33   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=34   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=35   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=36   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=37   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=38   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=39   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=40   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=41   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=42   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=43   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=44   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=45   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=46   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=47   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=48   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=49   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=50   StationType=MinNumSta   MinNumSta=3   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=51   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=52   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=53   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=54   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=55   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=56   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=57   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=58   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=59   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=60   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=61   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=62   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=63   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=64   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=65   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=66   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=67   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=68   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=69   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=70   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=71   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=72   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=73   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=74   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=75   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=76   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=77   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=78   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=79   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=80   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=81   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=82   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=83   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=84   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=85   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=86   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=87   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=88   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=89   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=90   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=91   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=92   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=93   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=94   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=95   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=96   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=97   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=98   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=99   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=100   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=101   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=102   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=103   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=104   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=105   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=106   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=107   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=108   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=109   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=110   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=111   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=112   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=113   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=114   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=115   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=116   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=117   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=118   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=119   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=120   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=121   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=122   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=123   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=124   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=125   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=126   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=127   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=128   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=129   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+   Frame=130   StationType=MaxStaSpcg   MaxStaSpcg=2   AddAtElmInt=Yes   AddAtPtLoad=Yes
+ 
+TABLE:  "FRAME SECTION ASSIGNMENTS"
+   Frame=1   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=2   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=3   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=4   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=5   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=6   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=7   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=8   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=9   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=10   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=11   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=12   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=13   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=14   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=15   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=16   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=17   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=18   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=19   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=20   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=21   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=22   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=23   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=24   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=25   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=26   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=27   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=28   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=29   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=30   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=31   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=32   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=33   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=34   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=35   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=36   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=37   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=38   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=39   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=40   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=41   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=42   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=43   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=44   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=45   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=46   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=47   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=48   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=49   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=50   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=51   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=52   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=53   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=54   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=55   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=56   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=57   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=58   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=59   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=60   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=61   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=62   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=63   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=64   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=65   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=66   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=67   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=68   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=69   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=70   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=71   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=72   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=73   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=74   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=75   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=76   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=77   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=78   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=79   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=80   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=81   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=82   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=83   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=84   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=85   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=86   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=87   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=88   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=89   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=90   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=91   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=92   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=93   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=94   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=95   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=96   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=97   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=98   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=99   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=100   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=101   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=102   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=103   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=104   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=105   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=106   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=107   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=108   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=109   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=110   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=111   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=112   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=113   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=114   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=115   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=116   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=117   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=118   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=119   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=120   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=121   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=122   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=123   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=124   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=125   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=126   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=127   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=128   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=129   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+   Frame=130   AutoSelect=N.A.   AnalSect=FSEC1   MatProp=Default
+ 
+TABLE:  "FRAME SECTION PROPERTIES 01 - GENERAL"
+   SectionName=FSEC1   Material=A992Fy50   Shape="I/Wide Flange"   t3=1   t2=0.416666666666667   tf=0.0316666666666667   tw=0.0208333333333333   t2b=0.416666666666667   tfb=0.0316666666666667   FilletRadius=0   Area=0.0459027777777778 _
+        TorsConst=1.11820239985211E-05   I33=0.00761491904578189   I22=0.000382489490901492   I23=0   AS2=0.0208333333333333   AS3=0.0219907407407407   S33Top=0.0152298380915638   S33Bot=0.0152298380915638   S22Left=0.00183594955632716 _
+        S22Right=0.00183594955632716   Z33=0.0173461226851852   Z22=0.00285047743055555   R33=0.407298829174586   R22=0.0912830767686939   CGOffset3=0   CGOffset2=0   EccV2=0   EccV3=0   Cw=8.94967259257473E-05   Color=Red   FromFile=No _
+        AMod=1   A2Mod=1   A3Mod=1   JMod=1   I2Mod=1   I3Mod=1   MMod=1   WMod=1   GUID=f16d3134-f619-48e7-b96b-1141c099689f   Notes="Added 8/13/2025 11:32:35 PM"
+ 
+TABLE:  "FRAME SECTION PROPERTIES 13 - TIME DEPENDENT"
+   SectionName=FSEC1   TypeSize=Auto   AutoSFSize=1
+ 
+TABLE:  "FUNCTION - PLOT FUNCTIONS"
+   PlotFunc="Input Energy"   Type=Energy   Component=Input   Mode=All
+ 
+TABLE:  "FUNCTION - POWER SPECTRAL DENSITY - USER"
+   Name=UNIFPSD   Frequency=0   Value=1
+   Name=UNIFPSD   Frequency=1   Value=1
+ 
+TABLE:  "FUNCTION - RESPONSE SPECTRUM - USER"
+   Name=UNIFRS   Period=0   Accel=1   FuncDamp=0.05
+   Name=UNIFRS   Period=1   Accel=1
+ 
+TABLE:  "FUNCTION - STEADY STATE - USER"
+   Name=UNIFSS   Frequency=0   Value=1
+   Name=UNIFSS   Frequency=1   Value=1
+ 
+TABLE:  "FUNCTION - TIME HISTORY - USER"
+   Name=RAMPTH   Time=0   Value=0
+   Name=RAMPTH   Time=1   Value=1
+   Name=RAMPTH   Time=4   Value=1
+   Name=UNIFTH   Time=0   Value=1
+   Name=UNIFTH   Time=1   Value=1
+ 
+TABLE:  "GRID LINES"
+   CoordSys=GLOBAL   AxisDir=X   GridID=A   XRYZCoord=-40   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=End   AllVisible=Yes   BubbleSize=3.75
+   CoordSys=GLOBAL   AxisDir=X   GridID=B   XRYZCoord=-20   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=End
+   CoordSys=GLOBAL   AxisDir=X   GridID=C   XRYZCoord=0   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=End
+   CoordSys=GLOBAL   AxisDir=X   GridID=D   XRYZCoord=20   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=End
+   CoordSys=GLOBAL   AxisDir=X   GridID=E   XRYZCoord=40   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=End
+   CoordSys=GLOBAL   AxisDir=Y   GridID=1   XRYZCoord=-40   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=Start
+   CoordSys=GLOBAL   AxisDir=Y   GridID=2   XRYZCoord=-20   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=Start
+   CoordSys=GLOBAL   AxisDir=Y   GridID=3   XRYZCoord=0   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=Start
+   CoordSys=GLOBAL   AxisDir=Y   GridID=4   XRYZCoord=20   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=Start
+   CoordSys=GLOBAL   AxisDir=Y   GridID=5   XRYZCoord=40   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=Start
+   CoordSys=GLOBAL   AxisDir=Z   GridID=Z1   XRYZCoord=0   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=End
+   CoordSys=GLOBAL   AxisDir=Z   GridID=Z2   XRYZCoord=12   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=End
+   CoordSys=GLOBAL   AxisDir=Z   GridID=Z3   XRYZCoord=24   LineType=Primary   LineColor=Gray8Dark   Visible=No   BubbleLoc=End
+ 
+TABLE:  "GROUPS 1 - DEFINITIONS"
+   GroupName=ALL   Selection=Yes   SectionCut=Yes   Steel=Yes   Concrete=Yes   Aluminum=Yes   ColdFormed=Yes   Stage=Yes   Bridge=Yes   AutoSeismic=No   AutoWind=No   SelDesSteel=No   SelDesAlum=No   SelDesCold=No   MassWeight=Yes   Color=Red
+ 
+TABLE:  "JOINT COORDINATES"
+   Joint=1   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=-40   Z=0   SpecialJt=No   GUID=553cc284-27cc-447e-8014-9a07057d241c
+   Joint=2   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=-40   Z=12   SpecialJt=No   GUID=bc6173b2-3d1f-4436-b25b-e01844bee9b2
+   Joint=3   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=-40   Z=24   SpecialJt=No   GUID=0acfc437-ec24-477f-b793-a23e69afbf5e
+   Joint=4   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=-20   Z=0   SpecialJt=No   GUID=3a264e40-9b46-468d-9719-a8b6d0cdedac
+   Joint=5   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=-20   Z=12   SpecialJt=No   GUID=49383ea6-7481-4679-b34a-8d2ef292d07d
+   Joint=6   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=-20   Z=24   SpecialJt=No   GUID=1a7c8905-bae5-4f2e-8939-6c60ce32fd2f
+   Joint=7   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=0   Z=0   SpecialJt=No   GUID=b8dc8f37-f6ac-4f54-9503-b88c850d9f73
+   Joint=8   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=0   Z=12   SpecialJt=No   GUID=4e558307-b370-4657-b340-86ed5453e06b
+   Joint=9   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=0   Z=24   SpecialJt=No   GUID=45c727f8-bf19-4173-96af-b9724f51225a
+   Joint=10   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=20   Z=0   SpecialJt=No   GUID=ebc7a3cc-c0c5-4cc7-8a53-a4b7ffbced26
+   Joint=11   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=20   Z=12   SpecialJt=No   GUID=4bd77378-58cc-46e4-b015-853db6e155d0
+   Joint=12   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=20   Z=24   SpecialJt=No   GUID=08d2c87a-323a-4d15-8b7e-074c9279e991
+   Joint=13   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=40   Z=0   SpecialJt=No   GUID=f524d054-de09-4a07-ad09-efe5a4e0c8b3
+   Joint=14   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=40   Z=12   SpecialJt=No   GUID=f5cfab48-8869-4495-9c98-545b70eb755e
+   Joint=15   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-40   Y=40   Z=24   SpecialJt=No   GUID=64aed290-5f93-4061-8c6b-d4119d088566
+   Joint=16   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=-40   Z=0   SpecialJt=No   GUID=864b8b9e-c693-4ea0-932c-d9ee71aff589
+   Joint=17   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=-40   Z=12   SpecialJt=No   GUID=fcb24fc5-4361-4790-8b44-3ddda89089e9
+   Joint=18   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=-40   Z=24   SpecialJt=No   GUID=de85c1d1-541a-4044-8ead-eac78fc702bb
+   Joint=19   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=-20   Z=0   SpecialJt=No   GUID=dee86675-31df-4df9-8df2-4fb1f9851951
+   Joint=20   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=-20   Z=12   SpecialJt=No   GUID=aa3a9e3d-579c-4e71-b0f9-daac50d7384f
+   Joint=21   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=-20   Z=24   SpecialJt=No   GUID=f9270c67-ba31-4c2c-a16d-a1dd62a887b2
+   Joint=22   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=0   Z=0   SpecialJt=No   GUID=eda5b0c9-7dc4-472d-89cb-1f4609dab196
+   Joint=23   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=0   Z=12   SpecialJt=No   GUID=8617a223-a677-42d7-b01b-15b1b4d07ede
+   Joint=24   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=0   Z=24   SpecialJt=No   GUID=16bbe9b7-203e-46b7-a3e2-9dfc667c9073
+   Joint=25   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=20   Z=0   SpecialJt=No   GUID=1b7047e4-1861-49af-8060-087404af7385
+   Joint=26   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=20   Z=12   SpecialJt=No   GUID=90070616-2ba9-46f8-9ff6-3341cb7e3c69
+   Joint=27   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=20   Z=24   SpecialJt=No   GUID=2338b1d3-10a5-45ae-ad82-611e08256a02
+   Joint=28   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=40   Z=0   SpecialJt=No   GUID=356af590-0d4d-4f2b-86be-31b0fbfebe6c
+   Joint=29   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=40   Z=12   SpecialJt=No   GUID=eb46e985-fea9-42c1-8e3f-afdf8dab4d1a
+   Joint=30   CoordSys=GLOBAL   CoordType=Cartesian   XorR=-20   Y=40   Z=24   SpecialJt=No   GUID=77223bd7-ddca-4f8a-8ca9-76e935b3252c
+   Joint=31   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=-40   Z=0   SpecialJt=No   GUID=e5ca6fd1-414b-42eb-8f5f-8050e83e7f14
+   Joint=32   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=-40   Z=12   SpecialJt=No   GUID=392642d7-6b80-4b3c-b91d-69d2941191f1
+   Joint=33   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=-40   Z=24   SpecialJt=No   GUID=7d3fbc30-7647-4814-af41-1955aee9fe4f
+   Joint=34   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=-20   Z=0   SpecialJt=No   GUID=0900de53-f186-41c2-b9b8-dffe88c8278f
+   Joint=35   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=-20   Z=12   SpecialJt=No   GUID=43b399ff-67a6-447b-9b43-cc60ee36c4f8
+   Joint=36   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=-20   Z=24   SpecialJt=No   GUID=2a71031f-84f6-4abb-8e63-cd2c47ec6869
+   Joint=37   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=0   Z=0   SpecialJt=No   GUID=534df21f-19b4-4669-8864-811aa9b479cd
+   Joint=38   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=0   Z=12   SpecialJt=No   GUID=9bce78aa-c22a-4c11-9d72-c5a738b5b34c
+   Joint=39   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=0   Z=24   SpecialJt=No   GUID=346754ee-2572-4b90-bedd-da42cfd2539f
+   Joint=40   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=20   Z=0   SpecialJt=No   GUID=aee41fe4-714c-450b-a358-95682959ac45
+   Joint=41   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=20   Z=12   SpecialJt=No   GUID=4a4a2e53-62f5-4b8b-a7e4-9fa8bb983744
+   Joint=42   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=20   Z=24   SpecialJt=No   GUID=4b44a41d-2aa9-494e-a140-c69716ff8ce5
+   Joint=43   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=40   Z=0   SpecialJt=No   GUID=54f9586a-4cf8-4d59-868b-5845056b041b
+   Joint=44   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=40   Z=12   SpecialJt=No   GUID=fa26a16a-65e1-4e10-9e87-61f7a09370b9
+   Joint=45   CoordSys=GLOBAL   CoordType=Cartesian   XorR=0   Y=40   Z=24   SpecialJt=No   GUID=3d207f93-13cd-4669-9fe5-f2f42ce9e4f0
+   Joint=46   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=-40   Z=0   SpecialJt=No   GUID=87d53dbf-8a90-42dd-931b-97477cf24aa6
+   Joint=47   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=-40   Z=12   SpecialJt=No   GUID=f2b8dde4-e83f-460d-a55e-dc5603146d48
+   Joint=48   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=-40   Z=24   SpecialJt=No   GUID=aa680499-0fcd-4b70-8c2e-9a0801ae370c
+   Joint=49   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=-20   Z=0   SpecialJt=No   GUID=45704979-3f90-481b-8b83-9ab3ff9eae8a
+   Joint=50   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=-20   Z=12   SpecialJt=No   GUID=25a5f913-2e65-4105-90e9-88baf643aa22
+   Joint=51   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=-20   Z=24   SpecialJt=No   GUID=b21ccf86-3f93-4803-a041-a620b64cea5c
+   Joint=52   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=0   Z=0   SpecialJt=No   GUID=640340a8-aa18-4bd3-b174-34848fedcbf6
+   Joint=53   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=0   Z=12   SpecialJt=No   GUID=ef731993-3876-4fb6-b937-6e98f893d5a3
+   Joint=54   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=0   Z=24   SpecialJt=No   GUID=df281ad0-efc6-4a2b-9ed7-7bf2c94f6129
+   Joint=55   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=20   Z=0   SpecialJt=No   GUID=1878d7fd-2655-4627-aa0c-1402bfca9b7b
+   Joint=56   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=20   Z=12   SpecialJt=No   GUID=3dbd061b-9722-4158-9993-807a1f43fef0
+   Joint=57   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=20   Z=24   SpecialJt=No   GUID=d280f254-5e73-4273-992a-b665654d26c3
+   Joint=58   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=40   Z=0   SpecialJt=No   GUID=65646b4a-0826-4e96-8433-538c0bebf905
+   Joint=59   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=40   Z=12   SpecialJt=No   GUID=ccbb7738-ea0f-4930-96b9-6da37fc85746
+   Joint=60   CoordSys=GLOBAL   CoordType=Cartesian   XorR=20   Y=40   Z=24   SpecialJt=No   GUID=4a5a6920-e89b-4332-88e2-14a900d45399
+   Joint=61   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=-40   Z=0   SpecialJt=No   GUID=14ebeb56-dbf3-43ca-8f21-52c153130a8b
+   Joint=62   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=-40   Z=12   SpecialJt=No   GUID=ba4be12c-7c4a-460a-819b-cc56fb7a976f
+   Joint=63   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=-40   Z=24   SpecialJt=No   GUID=b87fb23a-e73d-4a39-a944-0b1030427995
+   Joint=64   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=-20   Z=0   SpecialJt=No   GUID=36a95038-414b-42f2-92d1-da6c9003a360
+   Joint=65   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=-20   Z=12   SpecialJt=No   GUID=6d20fe0a-ea56-4a73-ad2d-8b7bb03742c9
+   Joint=66   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=-20   Z=24   SpecialJt=No   GUID=f2c224b9-f33a-4e54-be34-85253a0b854c
+   Joint=67   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=0   Z=0   SpecialJt=No   GUID=2eca546c-7966-44af-81fb-be73fbb40a59
+   Joint=68   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=0   Z=12   SpecialJt=No   GUID=08b1be53-d56c-442b-9fb3-de310c8022d0
+   Joint=69   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=0   Z=24   SpecialJt=No   GUID=bc71aea4-1561-4f0c-968a-282b89a3ed77
+   Joint=70   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=20   Z=0   SpecialJt=No   GUID=d42e70d6-cbb8-416b-97f2-4aa114fcb239
+   Joint=71   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=20   Z=12   SpecialJt=No   GUID=2764f1ff-3ec0-4927-873f-dc21642aa21f
+   Joint=72   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=20   Z=24   SpecialJt=No   GUID=187fd7f4-445a-4345-bb35-3a73c7f078fe
+   Joint=73   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=40   Z=0   SpecialJt=No   GUID=9633b733-59ca-4633-9571-e4c69441f8a8
+   Joint=74   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=40   Z=12   SpecialJt=No   GUID=7a279c95-f133-4296-a665-08522dee8319
+   Joint=75   CoordSys=GLOBAL   CoordType=Cartesian   XorR=40   Y=40   Z=24   SpecialJt=No   GUID=7df6eb17-c895-4be3-8a32-0f2f8c61139e
+ 
+TABLE:  "JOINT LOADS - FORCE"
+   Joint=3   LoadPat=TOP_LOAD   CoordSys=GLOBAL   F1=90   F2=150   F3=0   M1=0   M2=0   M3=0   GUID=9e61dfb6-cbd0-4462-891f-afa4145a73d7
+   Joint=6   LoadPat=TOP_LOAD   CoordSys=GLOBAL   F1=90   F2=0   F3=0   M1=0   M2=0   M3=0   GUID=e648fcd4-c372-4038-9eb6-8de70f4f7b0c
+   Joint=9   LoadPat=TOP_LOAD   CoordSys=GLOBAL   F1=90   F2=0   F3=0   M1=0   M2=0   M3=0   GUID=36b64986-ecc2-4475-9e57-acf0a0809b56
+   Joint=12   LoadPat=TOP_LOAD   CoordSys=GLOBAL   F1=90   F2=0   F3=0   M1=0   M2=0   M3=0   GUID=064a4d80-46c0-4415-b69a-8140157ca846
+   Joint=15   LoadPat=TOP_LOAD   CoordSys=GLOBAL   F1=90   F2=0   F3=0   M1=0   M2=0   M3=0   GUID=71ea6317-075f-438f-a455-32be53b3fc4f
+   Joint=18   LoadPat=TOP_LOAD   CoordSys=GLOBAL   F1=0   F2=150   F3=0   M1=0   M2=0   M3=0   GUID=3d918a99-fc3d-4cac-a676-18b2681c8e4c
+   Joint=33   LoadPat=TOP_LOAD   CoordSys=GLOBAL   F1=0   F2=150   F3=0   M1=0   M2=0   M3=0   GUID=d8f0bc69-5612-4299-887a-fc1e9cd6239d
+   Joint=48   LoadPat=TOP_LOAD   CoordSys=GLOBAL   F1=0   F2=150   F3=0   M1=0   M2=0   M3=0   GUID=a4ab64fb-1c10-4de1-bf88-0f9155e7fb04
+   Joint=63   LoadPat=TOP_LOAD   CoordSys=GLOBAL   F1=0   F2=150   F3=0   M1=0   M2=0   M3=0   GUID=c6f21260-f4e2-41f7-8ef7-286bab3a15ce
+ 
+TABLE:  "JOINT PATTERN DEFINITIONS"
+   Pattern=Default
+ 
+TABLE:  "JOINT RESTRAINT ASSIGNMENTS"
+   Joint=1   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=4   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=7   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=10   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=13   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=16   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=19   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=22   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=25   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=28   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=31   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=34   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=37   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=40   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=43   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=46   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=49   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=52   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=55   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=58   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=61   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=64   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=67   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=70   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+   Joint=73   U1=Yes   U2=Yes   U3=Yes   R1=No   R2=No   R3=No
+ 
+TABLE:  "LOAD CASE DEFINITIONS"
+   Case=DEAD   Type=LinStatic   InitialCond=Zero   DesTypeOpt="Prog Det"   DesignType=Dead   DesActOpt="Prog Det"   DesignAct=Non-Composite   AutoType=None   RunCase=Yes   GUID=04c0f730-5699-45aa-b2b8-1ae60efc71d8
+   Case=MODAL   Type=LinModal   InitialCond=Zero   DesTypeOpt="Prog Det"   DesignType=Other   DesActOpt="Prog Det"   DesignAct=Other   AutoType=None   RunCase=Yes   GUID=6b9f0d36-ce6a-4d79-8585-4c924efa6903
+   Case=TOP_LOAD   Type=LinStatic   InitialCond=Zero   DesTypeOpt="Prog Det"   DesignType=Other   DesActOpt="Prog Det"   DesignAct=Other   AutoType=None   RunCase=Yes   GUID=1dadfbb8-bf98-46f3-8a9e-08b25f20e8b3
+ 
+TABLE:  "LOAD PATTERN DEFINITIONS"
+   LoadPat=DEAD   DesignType=Dead   SelfWtMult=1   GUID=10eb665f-f410-4d2b-9e62-146d9f7b1bc6
+   LoadPat=TOP_LOAD   DesignType=Other   SelfWtMult=0   GUID=e0b2df02-04fc-4f8c-9229-2ca0231699e0
+ 
+TABLE:  "MASS SOURCE"
+   MassSource=MSSSRC1   Elements=Yes   Masses=Yes   Loads=No   IsDefault=Yes
+ 
+TABLE:  "MATERIAL PROPERTIES 01 - GENERAL"
+   Material=4000Psi   Type=Concrete   Grade="f'c 4000 psi"   SymType=Isotropic   TempDepend=No   Color=Yellow   GUID=8a444371-9c9a-465f-83a9-8856a0878e22   Notes="Customary f'c 4000 psi 8/13/2025 11:32:35 PM"
+   Material=A992Fy50   Type=Steel   Grade="Grade 50"   SymType=Isotropic   TempDepend=No   Color=Magenta   GUID=db9396fa-136f-4c77-8dcb-260c15e8e940   Notes="ASTM A992 Grade 50 8/13/2025 11:32:35 PM"
+ 
+TABLE:  "MATERIAL PROPERTIES 02 - BASIC MECHANICAL PROPERTIES"
+   Material=4000Psi   UnitWeight=0.15000000000768   UnitMass=0.0046621423155456   E1=519119.496   G12=216299.79   U12=0.2   A1=5.5E-06
+   Material=A992Fy50   UnitWeight=0.49   UnitMass=0.0152296649007508   E1=4176000   G12=1606153.84615385   U12=0.3   A1=6.5E-06
+ 
+TABLE:  "MATERIAL PROPERTIES 03A - STEEL DATA"
+   Material=A992Fy50   Fy=7200   Fu=9360   EffFy=7920   EffFu=10296   SSCurveOpt=Simple   SSHysType=Kinematic   SHard=0.015   SMax=0.11   SRup=0.17   FinalSlope=-0.1   CoupModType="Von Mises"
+ 
+TABLE:  "MATERIAL PROPERTIES 03B - CONCRETE DATA"
+   Material=4000Psi   Fc=576   eFc=576   LtWtConc=No   SSCurveOpt=Mander   SSHysType=Takeda   SFc=0.00221914   SCap=0.005   FinalSlope=-0.1   FAngle=0   DAngle=0   CoupModType="Modified Darwin-Pecknold"
+ 
+TABLE:  "MATERIAL PROPERTIES 03J - COUPLED NONLINEAR VON MISES DATA"
+   Material=A992Fy50   YieldStress=7920   LinIsoHard=No   LinKinHard=No   NLIsoSaHard=No
+ 
+TABLE:  "MATERIAL PROPERTIES 06 - DAMPING PARAMETERS"
+   Material=4000Psi   ModalRatio=0   VisMass=0   VisStiff=0   HysMass=0   HysStiff=0
+   Material=A992Fy50   ModalRatio=0   VisMass=0   VisStiff=0   HysMass=0   HysStiff=0
+ 
+TABLE:  "MATERIAL PROPERTIES 09 - ACCEPTANCE CRITERIA"
+   Material=4000Psi   IOTens=0.01   LSTens=0.02   CPTens=0.05   IOComp=-0.003   LSComp=-0.006   CPComp=-0.015   IgnoreTens=Yes
+   Material=A992Fy50   IOTens=0.01   LSTens=0.02   CPTens=0.05   IOComp=-0.005   LSComp=-0.01   CPComp=-0.02
+ 
+TABLE:  "OPTIONS - COLORS - DISPLAY"
+   DeviceType=Screen   Points=Blue   LinesFrame=Blue   LinesFrmDL=Blue   LinesCable=Green   LinesTendon=Green   SpringLinks=Green   Restraints=Green   Releases=Green   Axes=Cyan   Text=Black   ShadowLines=Gray8Dark   GuideLines=Gray8Dark _
+        Highlight=Red   Selection=10504778   AreaFillBot=Red   AreaFillTop=16744703   AreaFillSd=Red   AreaEdge=DarkRed   SolidF1=Red   SolidF2=Blue   SolidF3=Green   SolidF4=Yellow   SolidF5=White   SolidF6=Cyan   SolidEdge=DarkRed _
+        Floor=Gray4   Background=White   BGLowLeft=White   BGLowRight=White   BGUpRight=White   Darkness=0
+   DeviceType=Printer   Points=Gray8Dark   LinesFrame=Black   LinesFrmDL=Gray4   LinesCable=Black   LinesTendon=Black   SpringLinks=Gray8Dark   Restraints=Gray8Dark   Releases=Gray4   Axes=Black   Text=Black   ShadowLines=Gray4 _
+        GuideLines=Gray4   Highlight=Black   Selection=Black   AreaFillBot=Gray4   AreaFillTop=Gray8Dark   AreaFillSd=Gray4   AreaEdge=Black   SolidF1=Gray1Light   SolidF2=Gray2   SolidF3=Gray3   SolidF4=Gray4   SolidF5=Gray5 _
+        SolidF6=Gray6   SolidEdge=Black   Floor=Gray4   Background=White   BGLowLeft=White   BGLowRight=White   BGUpRight=White   Darkness=0.5
+   DeviceType="Color Printer"   Points=Blue   LinesFrame=Blue   LinesFrmDL=Blue   LinesCable=Green   LinesTendon=Green   SpringLinks=Green   Restraints=Green   Releases=Green   Axes=Cyan   Text=Black   ShadowLines=Gray8Dark _
+        GuideLines=Gray8Dark   Highlight=Red   Selection=10504778   AreaFillBot=Red   AreaFillTop=16744703   AreaFillSd=Red   AreaEdge=DarkRed   SolidF1=Red   SolidF2=Blue   SolidF3=Green   SolidF4=Yellow   SolidF5=White   SolidF6=Cyan _
+        SolidEdge=DarkRed   Floor=Gray4   Background=White   BGLowLeft=White   BGLowRight=White   BGUpRight=White   Darkness=0.5
+ 
+TABLE:  "OPTIONS - COLORS - OUTPUT"
+   DeviceType=Screen   Contour1=13107400   Contour2=6553828   Contour3=Red   Contour4=16639   Contour5=Orange   Contour6=43775   Contour7=54527   Contour8=Yellow   Contour9=65408   Contour10=Green   Contour11=8453888   Contour12=Cyan _
+        Contour13=16755200   Contour14=16733440   Contour15=Blue   Transpare=0   Ratio1=Cyan   Ratio2=Green   Ratio3=Yellow   Ratio4=Orange   Ratio5=Red   RatioNotD=Gray4   RatioNotC=Red   RatioVal1=0.5   RatioVal2=0.7   RatioVal3=0.9 _
+        RatioVal4=1   DFillPos=Blue   DFillNeg=Red   DFillRPos=9498256   DFillRNeg=9498256
+   DeviceType=Printer   Contour1=Black   Contour2=3158064   Contour3=4210752   Contour4=5263440   Contour5=6316128   Contour6=7368816   Contour7=Gray8Dark   Contour8=Gray7   Contour9=Gray6   Contour10=Gray5   Contour11=Gray4 _
+        Contour12=Gray3   Contour13=Gray2   Contour14=Gray1Light   Contour15=White   Transpare=0   Ratio1=Gray2   Ratio2=Gray4   Ratio3=Gray8Dark   Ratio4=4210752   Ratio5=Black   RatioNotD=Gray4   RatioNotC=Black   RatioVal1=0.5 _
+        RatioVal2=0.7   RatioVal3=0.9   RatioVal4=1   DFillPos=Gray8Dark   DFillNeg=Gray8Dark   DFillRPos=4210752   DFillRNeg=4210752
+   DeviceType="Color Printer"   Contour1=13107400   Contour2=6553828   Contour3=Red   Contour4=16639   Contour5=Orange   Contour6=43775   Contour7=54527   Contour8=Yellow   Contour9=65408   Contour10=Green   Contour11=8453888 _
+        Contour12=Cyan   Contour13=16755200   Contour14=16733440   Contour15=Blue   Transpare=0   Ratio1=Cyan   Ratio2=Green   Ratio3=Yellow   Ratio4=Orange   Ratio5=Red   RatioNotD=Gray4   RatioNotC=Red   RatioVal1=0.5   RatioVal2=0.7 _
+        RatioVal3=0.9   RatioVal4=1   DFillPos=Blue   DFillNeg=Red   DFillRPos=9498256   DFillRNeg=9498256
+ 
+TABLE:  "PREFERENCES - ALUMINUM DESIGN - AA 2015"
+   THDesign=Envelopes   SRatioLimit=1   Provision=LRFD   LatFact=1.33333333333333   UseLatFact=No   Bridge=No   PhiTy=0.9   PhiTr=0.75   PhiC=0.9   PhiBo=0.9   PhiBr=0.75   PhiVo=0.9   PhiVr=0.75
+ 
+TABLE:  "PREFERENCES - COLD FORMED DESIGN - AISI-16"
+   THDesign=Envelopes   FrameType="Braced Frame"   SRatioLimit=1   SOMethod="General 2nd Order"   Provision=LRFD   LatFact=1.33333333333333   UseLatFact=No   PhiTy=0.9   PhiTr=0.75   PhiC=0.85   PhiB=0.9   PhiBPipe=0.95   PhiV=0.95
+ 
+TABLE:  "PREFERENCES - CONCRETE DESIGN - ACI 318-19"
+   THDesign=Envelopes   NumCurves=24   NumPoints=11   MinEccen=Yes   BCCDesign=Yes   IgnoreBPu=Yes   CTorsion=Yes   PatLLF=0.75   UFLimit=0.95   SeisCat=D   Rho=1   Sds=0.5   PhiT=0.9   PhiCTied=0.65   PhiCSpiral=0.75   PhiV=0.75 _
+        PhiVSeismic=0.6   PhiVJoint=0.85   TanTheta=1
+ 
+TABLE:  "PREFERENCES - CONCRETE SHELL DESIGN - EUROCODE 2-2004"
+   Country="CEN Default"   GammaS=1.15   GammaC=1.5   AlphaCC=1   AlphaCT=1   CrackCond="Program Determined"   ShrDesMet="Method 1"   CotTheta=1   AddTenForce=Yes
+ 
+TABLE:  "PREFERENCES - DIMENSIONAL"
+   MergeTol=0.00833333333333333   FineGrid=1   Nudge=1   SelectTol=3   SnapTol=12   SLineThick=2   PLineThick=4   MaxFont=12   MinFont=6   AutoZoom=10   ShrinkFact=70   TextFileLen=240
+ 
+TABLE:  "PREFERENCES - STEEL DESIGN - AISC 360-16"
+   THDesign=Envelopes   FrameType=SMF   PatLLF=0.75   SRatioLimit=0.95   MaxIter=1   SDC=D   SeisCode=No   SeisLoad=No   ImpFactor=1   SystemRho=1   SystemSds=0.5   SystemR=8   SystemCd=5.5   Omega0=3   Provision=LRFD _
+        AMethod="Direct Analysis"   SOMethod="General 2nd Order"   SRMethod="Tau-b Fixed"   NLCoeff=0.002   PhiB=0.9   PhiC=0.9   PhiTY=0.9   PhiTF=0.75   PhiV=0.9   PhiVRolledI=1   PhiVT=0.9   PlugWeld=Yes   HSSWelding=ERW   HSSReduceT=No _
+        CheckDefl=No   DLRat=120   SDLAndLLRat=120   LLRat=360   TotalRat=240   NetRat=240
+ 
+TABLE:  "PROGRAM CONTROL"
+   ProgramName=SAP2000   Version=25.3.1   CurrUnits="Kip, ft, F"   SteelCode="AISC 360-16"   ConcCode="ACI 318-19"   AlumCode="AA 2015"   ColdCode=AISI-16   RegenHinge=Yes
+ 
+TABLE:  "PROJECT INFORMATION"
+   Item="Company Name"
+   Item="Client Name"
+   Item="Project Name"
+   Item="Project Number"
+   Item="Model Name"
+   Item="Model Description"
+   Item="Revision Number"
+   Item="Frame Type"
+   Item=Engineer
+   Item=Checker
+   Item=Supervisor
+   Item="Issue Code"
+   Item="Design Code"
+ 
+TABLE:  "REBAR SIZES"
+   RebarID=#2   Area=0.000347222222222222   Diameter=0.0208333333333333
+   RebarID=#3   Area=0.000763888884749677   Diameter=0.03125
+   RebarID=#4   Area=0.00138888890958495   Diameter=0.0416666666666667
+   RebarID=#5   Area=0.00215277779433462   Diameter=0.0520833333333333
+   RebarID=#6   Area=0.00305555553899871   Diameter=0.0625
+   RebarID=#7   Area=0.00416666683223512   Diameter=0.0729166666666667
+   RebarID=#8   Area=0.00548611126012272   Diameter=0.0833333333333333
+   RebarID=#9   Area=0.00694444444444444   Diameter=0.0940000017484029
+   RebarID=#10   Area=0.00881944431198968   Diameter=0.105833331743876
+   RebarID=#11   Area=0.010833332935969   Diameter=0.11749999721845
+   RebarID=#14   Area=0.015625   Diameter=0.141083329916
+   RebarID=#18   Area=0.0277777777777778   Diameter=0.188083330790202
+   RebarID=10M   Area=0.00107639107025332   Diameter=0.0370734930038452
+   RebarID=15M   Area=0.00215278214050664   Diameter=0.0524934381246567
+   RebarID=20M   Area=0.00322917331424024   Diameter=0.063976377248764
+   RebarID=25M   Area=0.00538195545474688   Diameter=0.0826771706342697
+   RebarID=30M   Area=0.00753473738829295   Diameter=0.0980971157550812
+   RebarID=35M   Area=0.0107639109094938   Diameter=0.117125988006592
+   RebarID=45M   Area=0.0161458667781618   Diameter=0.143372704585393
+   RebarID=55M   Area=0.0269097768598133   Diameter=0.185039381186167
+   RebarID=6d   Area=0.000304618669259879   Diameter=0.019685039917628
+   RebarID=8d   Area=0.000541424689193567   Diameter=0.0262467190623283
+   RebarID=10d   Area=0.000844966982387834   Diameter=0.0328083982070287
+   RebarID=12d   Area=0.00121632197664844   Diameter=0.0393700798352559
+   RebarID=14d   Area=0.00165764232062631   Diameter=0.0459317614634832
+   RebarID=16d   Area=0.00216354615986347   Diameter=0.0524934381246567
+   RebarID=20d   Area=0.00337986792955134   Diameter=0.0656167964140574
+   RebarID=25d   Area=0.00528508010837767   Diameter=0.0820209980010986
+   RebarID=26d   Area=0.00571563674343957   Diameter=0.0853018363316854
+   RebarID=28d   Area=0.00663056928250525   Diameter=0.0918635229269663
+   RebarID=N12   Area=0.00121632197664844   Diameter=0.0393700798352559
+   RebarID=N16   Area=0.00216354615986347   Diameter=0.0524934381246567
+   RebarID=N20   Area=0.00337986792955134   Diameter=0.0656167964140574
+   RebarID=N24   Area=0.00486528790659375   Diameter=0.0787401596705119
+   RebarID=N28   Area=0.00663056928250525   Diameter=0.0918635229269663
+   RebarID=N32   Area=0.00865418463945389   Diameter=0.104986876249313
+   RebarID=N36   Area=0.0109791888131036   Diameter=0.118110239505768
+ 
+END TABLE DATA
