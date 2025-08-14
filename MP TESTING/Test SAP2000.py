@@ -38,21 +38,8 @@ ForceY = 150
 
 #Apply Loads
 
-#SetLoadForce (Joint Name, LoadType, [ForceX, ForceY, ForceZ, MomentX, MomentY, MomentZ]
-SapModel.PointObj.SetLoadForce("3","TOP_LOAD", [ForceX, ForceY, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("6","TOP_LOAD", [ForceX, 0, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("9","TOP_LOAD", [ForceX, 0, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("12","TOP_LOAD", [ForceX, 0, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("15","TOP_LOAD", [ForceX, 0, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("18","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("33","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("48","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
-SapModel.PointObj.SetLoadForce("63","TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
-
-#^^Need to make a function to so it sets loads on the top floor
-#Can do this by writing a function to select the top layer by finding all points with the highest Z value, then choose select the options with the smallest X/Y value so it only chooses the edges of the top floor
-'''
 # Automatically find top-story joints
+#setup
 output = SapModel.PointObj.GetNameList()
 ret = output[0]
 PointNames = output[1]
@@ -60,46 +47,37 @@ PointNames = output[1]
 # Step 1: Determine top Z level
 max_z = -999
 for name in PointNames:
-    ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
+    x, y, z, ret = SapModel.PointObj.GetCoordCartesian(name)
     if z > max_z:
         max_z = z
 
 # Step 2: Find top-story joints
 top_joints = []
 for name in PointNames:
-    ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
+    x, y, z, ret = SapModel.PointObj.GetCoordCartesian(name)
     if np.isclose(z, max_z):
         top_joints.append(name)
 
-# Step 3: Find minimum global X among top joints
+# Step 3: Find min Y and min X among top joints
+min_y = float('inf')
 min_x = float('inf')
 for name in top_joints:
-    ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
-    if x < min_x:   # Fixed comparison
-        min_x = x
-
-# Step 3.5: Remove joints at min_x from top_joints
-filtered_top_joints = []
-for name in top_joints:
-    ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
-    if np.isclose(x, min_x):
-        filtered_top_joints.append(name)
-
-# Step 4: Find minimum global Y among the filtered top joints
-min_y = float('inf')
-for name in filtered_top_joints:
-    ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
+    x, y, z, ret = SapModel.PointObj.GetCoordCartesian(name)
     if y < min_y:
         min_y = y
+    if x < min_x:
+        min_x = x
 
-# Step 5: Apply ForceY only to joints at min Y (no more ForceX)
-for name in filtered_top_joints:
-    ret, x, y, z = SapModel.PointObj.GetCoordCartesian(name)
+# Step 4: Apply ForceX to min-X joints, and ForceY to min-y joints
+for name in top_joints:
+    x, y, z, ret = SapModel.PointObj.GetCoordCartesian(name)
+
+    if np.isclose(x, min_x):
+        SapModel.PointObj.SetLoadForce(name, "TOP_LOAD", [ForceX, 0, 0, 0, 0, 0])
 
     if np.isclose(y, min_y):
         SapModel.PointObj.SetLoadForce(name, "TOP_LOAD", [0, ForceY, 0, 0, 0, 0])
 
-'''
 # Save and Run Analysis
 SapModel.File.Save(ModelPath)
 SapModel.Analyze.RunAnalysis()
