@@ -94,12 +94,11 @@ count, joint_names, ret = SapModel.PointObj.GetNameList()
 # Create CSV file to store displacements
 with open("joint_displacements.csv", "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["Joint", "U1", "U2", "U3"])  # Only displacements
+
 
     for joint in joint_names:
         # Initialize variables
         joint = str(joint)
-
         NumberResults = 0
         Obj = []
         Elm = []
@@ -119,6 +118,7 @@ with open("joint_displacements.csv", "w", newline="") as f:
             U1, U2, U3, [], [], []
         )
         for i in range(NumberResults):
+            #[Joint name, Displacement X, Displacement Y, Displacement Z]
             writer.writerow([joint, U1[i], U2[i], U3[i]])
 
 
