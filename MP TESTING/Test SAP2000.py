@@ -82,7 +82,7 @@ for name in top_joints:
 SapModel.File.Save(ModelPath)
 SapModel.Analyze.RunAnalysis()
 
-
+#Get Displacement Results
 # Select the load case to extract results from
 load_case = "TOP_LOAD"
 SapModel.Results.Setup.DeselectAllCasesAndCombosForOutput()
@@ -120,6 +120,10 @@ with open("joint_displacements.csv", "w", newline="") as f:
         for i in range(NumberResults):
             #[Joint name, Displacement X, Displacement Y, Displacement Z]
             writer.writerow([joint, U1[i], U2[i], U3[i]])
+
+#Get Moment and Shear Results
+
+
 
 
 # Close SAP2000
