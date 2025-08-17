@@ -48,9 +48,8 @@ LTYPE = 8
 load_pattern_name = "TOP_LOAD"
 SapModel.LoadPatterns.Add(load_pattern_name, LTYPE)
 print(f"\nLoad pattern '{load_pattern_name}' created.")
-# --- FIX: Assign forces based on user diagram ---
-Force_on_X_edge = 90  # Purple arrows
-Force_on_Y_edge = 150 # Yellow arrows
+Force_on_X_edge = 90
+Force_on_Y_edge = 150
 
 # --- DATA RETRIEVAL ---
 print("\n[DEBUG] Retrieving joint names...")
@@ -94,10 +93,9 @@ for name, coords in all_coords.items():
     if np.isclose(coords['z'], max_z):
         top_joints.append(name)
 
-# --- FIX: Find correct edges based on user diagram (min-Y and min-X) ---
 print("[DEBUG] Identifying correct edges on the top floor for load application...")
 min_y_top = float('inf')
-min_x_top = float('inf') # Changed from max_x_top
+min_x_top = float('inf')
 for name in top_joints:
     coords = all_coords[name]
     if coords['y'] < min_y_top:
@@ -117,25 +115,18 @@ else:
     for joint_name in top_joints:
         coords = all_coords[joint_name]
         load_vector = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        
-        # Check if the joint is on the LEFT edge (min X)
         if np.isclose(coords['x'], min_x_top):
-            load_vector[0] = Force_on_X_edge # Apply 90 in the +X direction
-            
-        # Check if the joint is on the FRONT edge (min Y)
+            load_vector[0] = Force_on_X_edge
         if np.isclose(coords['y'], min_y_top):
-            load_vector[1] = Force_on_Y_edge # Apply 150 in the +Y direction
-            
-        # Apply the load if the vector is not all zeros
+            load_vector[1] = Force_on_Y_edge
         if any(v != 0.0 for v in load_vector):
             ret = SapModel.PointObj.SetLoadForce(joint_name, load_pattern_name, load_vector)
             if ret != 0:
                 print(f"  [WARNING] Failed to set load for joint {joint_name}")
-
 print("Load application logic complete.")
-# --- END OF FIXES ---
 
-# --- ANALYSIS AND RESULTS ---
+
+# --- ANALYSIS AND RESULTS (REVISED SECTION) ---
 ModelPath = os.path.join(os.getcwd(), 'Automated_3DFrame.sdb')
 SapModel.File.Save(ModelPath)
 print(f"\nModel saved to {ModelPath}")
@@ -144,27 +135,63 @@ print("Running analysis...")
 SapModel.Analyze.RunAnalysis()
 print("Analysis complete.")
 
+# Setup which load case we want results for
 SapModel.Results.Setup.DeselectAllCasesAndCombosForOutput()
 SapModel.Results.Setup.SetCaseSelectedForOutput(load_pattern_name)
+print(f"\n[DEBUG] Set results to be calculated for load case: '{load_pattern_name}'")
 
 csv_filename = "joint_displacements.csv"
-print(f"\nExporting joint displacements for load case '{load_pattern_name}' to {csv_filename}...")
-result_final = SapModel.PointObj.GetNameList(0, [])
-joint_names_list = []
-if isinstance(result_final, tuple) and len(result_final) >= 2:
-    joint_names_list = result_final[1]
+print(f"[INFO] Preparing to export joint displacements to '{csv_filename}'...")
 
 with open(csv_filename, "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["Joint", "U1 (X)", "U2 (Y)", "U3 (Z)"]) 
-    if joint_names_list:
-        for joint in joint_names_list:
-            NumberResults, Obj, Elm, ACase, StepType, StepNum, U1, U2, U3 = (0, [], [], [], [], [], [], [], [])
-            [ret_code, NumberResults, Obj, Elm, ACase, StepType, StepNum, U1, U2, U3, _, _, _] = \
-                SapModel.Results.JointDispl(joint, 0, NumberResults, Obj, Elm, ACase, StepType, StepNum, U1, U2, U3, [], [], [])
-            for i in range(NumberResults):
-                writer.writerow([Obj[i], U1[i], U2[i], U3[i]])
-print("Displacement results exported successfully.")
+    writer.writerow(["Joint", "U1 (X)", "U2 (Y)", "U3 (Z)"])
+    print(f"[DEBUG] CSV file created and header written.")
+
+    if PointNames:
+        # Loop through each joint name to get its displacement
+        for joint in PointNames:
+            # --- THIS IS THE FINAL FIX ---
+            print(f"\n[DEBUG] Processing results for joint: '{joint}'")
+
+            # 1. Pre-initialize variables
+            NumberResults = 0
+            Obj, Elm, ACase, StepType, StepNum = [], [], [], [], []
+            U1, U2, U3, R1, R2, R3 = [], [], [], [], [], []
+
+            # 2. Call the function and get the raw result
+            result = SapModel.Results.JointDispl(joint, 0, NumberResults, Obj, Elm, ACase, StepType, StepNum, U1, U2, U3, R1, R2, R3)
+            print(f"  [DEBUG] Raw API result: {result}")
+
+            # 3. Safely unpack the result based on the new understanding
+            # The result is a list/tuple of 13 items: [NumberResults, ..., U1, U2, U3, ..., return_code]
+            if isinstance(result, (list, tuple)) and len(result) == 13 and result[12] == 0: # Check if the LAST element is 0
+                NumberResults = result[0]
+                
+                # The results like Obj, U1, etc., are returned as single-element tuples, e.g., ('1',).
+                Obj_names = result[1] 
+                U1_vals = result[6]  # U1 (X-disp) is the 7th item (index 6)
+                U2_vals = result[7]  # U2 (Y-disp) is the 8th
+                U3_vals = result[8]  # U3 (Z-disp) is the 9th
+
+                if NumberResults > 0:
+                    print(f"  [SUCCESS] Found {NumberResults} result entry/entries for this joint.")
+                    # Loop through the results (should only be 1 in our case)
+                    for i in range(NumberResults):
+                        joint_name = Obj_names[i]
+                        disp_x = U1_vals[i]
+                        disp_y = U2_vals[i]
+                        disp_z = U3_vals[i]
+                        
+                        writer.writerow([joint_name, disp_x, disp_y, disp_z])
+                        print(f"    [DATA] Wrote to CSV -> Joint: {joint_name}, U1: {disp_x:.6f}, U2: {disp_y:.6f}, U3: {disp_z:.6f}")
+                else:
+                    print(f"  [INFO] No displacement results returned for joint '{joint}'.")
+            else:
+                print(f"  [WARNING] API call failed or returned unexpected data for joint '{joint}'.")
+            # --- END OF FIX ---
+
+print("\nDisplacement results exported successfully.")
 
 # --- CLEANUP ---
 # mySapObject.ApplicationExit(False)
