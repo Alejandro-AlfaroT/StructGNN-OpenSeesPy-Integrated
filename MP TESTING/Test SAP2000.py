@@ -122,7 +122,7 @@ with open("joint_displacements.csv", "w", newline="") as f:
             #[Joint name, Displacement X, Displacement Y, Displacement Z]
             writer.writerow([joint, U1[i], U2[i], U3[i]])
 
-# Get Moment and Shear Results
+# Get Moment Results
 
 # --- Frame-end forces for ALL members (every I/J point), plus joint-wise aggregation ---
 
@@ -180,7 +180,7 @@ with open("frame_joint_forces.csv", "w", newline="") as fcsv:
         # Write raw rows and build joint-wise sums
         for i in range(NumberResults):
             writer.writerow([
-                Obj[i], Elm[i], PointElm[i], ACase[i],
+                Obj[i], Elm[i], PointElm[i], ACase[i], StepType[i], StepNum[i],
                 F1[i], F2[i], F3[i], M1[i], M2[i], M3[i]
             ])
 
