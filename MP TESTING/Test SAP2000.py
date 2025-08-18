@@ -1,4 +1,4 @@
-("NumberResults:", NumberResults)import comtypes.client
+import comtypes.client
 import os
 import csv
 import numpy as np
@@ -124,51 +124,96 @@ with open("joint_displacements.csv", "w", newline="") as f:
 
 # Get Moment Results
 
-# Pick a valid frame object name
-count, frame_names, ret = SapModel.FrameObj.GetNameList()
-frame_name = frame_names[0]  # e.g., '1', but now guaranteed to exist
+# --- Frame-end forces for ALL members (every I/J point), plus joint-wise aggregation ---
 
-ObjectElm = 0  # 0=Objects, 1=Elements
+import collections
 
-# Initialize as empty; ALL of these are outputs
-NumberResults = 0
-Obj = []
-Elm = []
-PointElm = []
-ACase = []
-StepType = []
-StepNum = []
-F1 = []
-F2 = []
-F3 = []
-M1 = []
-M2 = []
-M3 = []
-
-# Re-select the case for safety (you already did this above, but harmless)
+# 1) Make sure the load case/combination you want is selected
 SapModel.Results.Setup.DeselectAllCasesAndCombosForOutput()
 SapModel.Results.Setup.SetCaseSelectedForOutput("TOP_LOAD")
 
-# IMPORTANT: pass empty outputs and CAPTURE returned values
-(
-    NumberResults, Obj, Elm, PointElm, ACase, StepType, StepNum,
-    F1, F2, F3, M1, M2, M3, *_
-) = SapModel.Results.FrameJointForce(
-    frame_name, ObjectElm, NumberResults, Obj, Elm, PointElm,
-    ACase, StepType, StepNum, F1, F2, F3, M1, M2, M3
-)
+# 2) Get all frame objects
+count, frame_names, ret = SapModel.FrameObj.GetNameList()
 
-print
-if NumberResults > 0:
-    # Print first couple of result rows as a sanity check
-    for i in range(min(4, NumberResults)):
-        print(
-            f"Obj={Obj[i]} Elm={Elm[i]} Pt={PointElm[i]} Case={ACase[i]} "
-            f"F1={F1[i]:.3f} F2={F2[i]:.3f} F3={F3[i]:.3f} "
-            f"M1={M1[i]:.3f} M2={M2[i]:.3f} M3={M3[i]:.3f}"
+# CSV for raw frame-end results
+with open("frame_joint_forces.csv", "w", newline="") as fcsv:
+    writer = csv.writer(fcsv)
+    writer.writerow([
+        "Obj","Elm","PointEnd(I/J)","Case","StepType","StepNum",
+        "F1","F2","F3","M1","M2","M3"
+    ])
+
+    # Optional: joint-wise aggregator (sum of frame-end forces at each joint)
+    # key = (joint_name, case, stepType, stepNum)  value = dict of summed components
+    joint_sum = collections.defaultdict(lambda: {"F1":0.0,"F2":0.0,"F3":0.0,"M1":0.0,"M2":0.0,"M3":0.0})
+
+    for frame_name in frame_names:
+        # Map I/J to actual joint names for aggregation
+        ret_i, ret_j, ret = SapModel.FrameObj.GetPoints(frame_name)  # returns (iPoint, jPoint, retcode)
+        i_joint, j_joint = ret_i, ret_j
+
+        # Prepare output arrays (ALL are outputs)
+        NumberResults = 0
+        Obj = []
+        Elm = []
+        PointElm = []
+        ACase = []
+        StepType = []
+        StepNum = []
+        F1 = []
+        F2 = []
+        F3 = []
+        M1 = []
+        M2 = []
+        M3 = []
+
+        (
+            NumberResults, Obj, Elm, PointElm, ACase, StepType, StepNum,
+            F1, F2, F3, M1, M2, M3, *_
+        ) = SapModel.Results.FrameJointForce(
+            frame_name,         # Name
+            0,                  # ObjectElm: 0=Objects, 1=Elements
+            NumberResults, Obj, Elm, PointElm,
+            ACase, StepType, StepNum, F1, F2, F3, M1, M2, M3
         )
-else:
-    print("No frame joint force results returned.")
+
+        # Write raw rows and build joint-wise sums
+        for i in range(NumberResults):
+            writer.writerow([
+                Obj[i], Elm[i], PointElm[i], ACase[i], StepType[i], StepNum[i],
+                F1[i], F2[i], F3[i], M1[i], M2[i], M3[i]
+            ])
+
+            # Map I/J end to actual joint name, then accumulate
+            if PointElm[i].upper().startswith("I"):
+                joint_name = i_joint
+            elif PointElm[i].upper().startswith("J"):
+                joint_name = j_joint
+            else:
+                # Unexpected label; skip aggregation but keep CSV row
+                continue
+
+            key = (joint_name, ACase[i], StepType[i], StepNum[i])
+            agg = joint_sum[key]
+            agg["F1"] += F1[i]
+            agg["F2"] += F2[i]
+            agg["F3"] += F3[i]
+            agg["M1"] += M1[i]
+            agg["M2"] += M2[i]
+            agg["M3"] += M3[i]
+
+# 3) Save joint-wise totals (from connected frame ends) — optional but handy
+#    Note: This is a sum of frame-end forces in each member’s *local end axes* resolved to the joint.
+#    For a true global joint resultant, you’d need to rotate member-end forces to global and sum.
+with open("joint_resultant_from_frames.csv", "w", newline="") as fcsv2:
+    writer2 = csv.writer(fcsv2)
+    writer2.writerow(["Joint","Case","StepType","StepNum","F1_sum","F2_sum","F3_sum","M1_sum","M2_sum","M3_sum"])
+    for (joint, acase, steptype, stepnum), comp in sorted(joint_sum.items()):
+        writer2.writerow([
+            joint, acase, steptype, stepnum,
+            comp["F1"], comp["F2"], comp["F3"], comp["M1"], comp["M2"], comp["M3"]
+        ])
+
 
 # Close SAP2000
 mySapObject.ApplicationExit(False)
