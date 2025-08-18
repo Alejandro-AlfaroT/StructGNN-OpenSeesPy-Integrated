@@ -122,7 +122,7 @@ with open("joint_displacements.csv", "w", newline="") as f:
             #[Joint name, Displacement X, Displacement Y, Displacement Z]
             writer.writerow([joint, U1[i], U2[i], U3[i]])
 
-# Get Moment Results
+# Get Moment and Shear Results
 
 # --- Frame-end forces for ALL members (every I/J point), plus joint-wise aggregation ---
 
@@ -180,7 +180,7 @@ with open("frame_joint_forces.csv", "w", newline="") as fcsv:
         # Write raw rows and build joint-wise sums
         for i in range(NumberResults):
             writer.writerow([
-                Obj[i], Elm[i], PointElm[i], ACase[i], StepType[i], StepNum[i],
+                Obj[i], Elm[i], PointElm[i], ACase[i],
                 F1[i], F2[i], F3[i], M1[i], M2[i], M3[i]
             ])
 
@@ -201,18 +201,6 @@ with open("frame_joint_forces.csv", "w", newline="") as fcsv:
             agg["M1"] += M1[i]
             agg["M2"] += M2[i]
             agg["M3"] += M3[i]
-
-# 3) Save joint-wise totals (from connected frame ends) — optional but handy
-#    Note: This is a sum of frame-end forces in each member’s *local end axes* resolved to the joint.
-#    For a true global joint resultant, you’d need to rotate member-end forces to global and sum.
-with open("joint_resultant_from_frames.csv", "w", newline="") as fcsv2:
-    writer2 = csv.writer(fcsv2)
-    writer2.writerow(["Joint","Case","StepType","StepNum","F1_sum","F2_sum","F3_sum","M1_sum","M2_sum","M3_sum"])
-    for (joint, acase, steptype, stepnum), comp in sorted(joint_sum.items()):
-        writer2.writerow([
-            joint, acase, steptype, stepnum,
-            comp["F1"], comp["F2"], comp["F3"], comp["M1"], comp["M2"], comp["M3"]
-        ])
 
 
 # Close SAP2000
