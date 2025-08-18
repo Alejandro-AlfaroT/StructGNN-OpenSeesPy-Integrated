@@ -1,4 +1,4 @@
-import comtypes.client
+("NumberResults:", NumberResults)import comtypes.client
 import os
 import csv
 import numpy as np
@@ -9,7 +9,7 @@ mySapObject = helper.CreateObjectProgID("CSI.SAP2000.API.SapObject")
 mySapObject.ApplicationStart()
 SapModel = mySapObject.SapModel
 
-# Units: 4 = kip_ft_F
+# Units: lb_in_F = 1, lb_ft_F = 2, kip_in_F = 3, kip_ft_F = 4, kN_mm_C = 5, kN_m_C = 6, kgf_mm_C = 7, kgf_m_C = 8, N_mm_C = 9, N_m_C = 10, Ton_mm_C = 11, Ton_m_C = 12, kN_cm_C = 13, kgf_cm_C = 14, N_cm_C = 15, Ton_cm_C = 16
 kip_ft_F = 4
 SapModel.InitializeNewModel(kip_ft_F)
 
@@ -83,10 +83,11 @@ SapModel.File.Save(ModelPath)
 SapModel.Analyze.RunAnalysis()
 
 #Get Displacement Results
+
 # Select the load case to extract results from
-load_case = "TOP_LOAD"
+LoadCase = "TOP_LOAD"
 SapModel.Results.Setup.DeselectAllCasesAndCombosForOutput()
-SapModel.Results.Setup.SetCaseSelectedForOutput(load_case)
+SapModel.Results.Setup.SetCaseSelectedForOutput(LoadCase)
 
 # Get all joint names
 count, joint_names, ret = SapModel.PointObj.GetNameList()
@@ -121,10 +122,53 @@ with open("joint_displacements.csv", "w", newline="") as f:
             #[Joint name, Displacement X, Displacement Y, Displacement Z]
             writer.writerow([joint, U1[i], U2[i], U3[i]])
 
-#Get Moment and Shear Results
+# Get Moment Results
 
+# Pick a valid frame object name
+count, frame_names, ret = SapModel.FrameObj.GetNameList()
+frame_name = frame_names[0]  # e.g., '1', but now guaranteed to exist
 
+ObjectElm = 0  # 0=Objects, 1=Elements
 
+# Initialize as empty; ALL of these are outputs
+NumberResults = 0
+Obj = []
+Elm = []
+PointElm = []
+ACase = []
+StepType = []
+StepNum = []
+F1 = []
+F2 = []
+F3 = []
+M1 = []
+M2 = []
+M3 = []
+
+# Re-select the case for safety (you already did this above, but harmless)
+SapModel.Results.Setup.DeselectAllCasesAndCombosForOutput()
+SapModel.Results.Setup.SetCaseSelectedForOutput("TOP_LOAD")
+
+# IMPORTANT: pass empty outputs and CAPTURE returned values
+(
+    NumberResults, Obj, Elm, PointElm, ACase, StepType, StepNum,
+    F1, F2, F3, M1, M2, M3, *_
+) = SapModel.Results.FrameJointForce(
+    frame_name, ObjectElm, NumberResults, Obj, Elm, PointElm,
+    ACase, StepType, StepNum, F1, F2, F3, M1, M2, M3
+)
+
+print
+if NumberResults > 0:
+    # Print first couple of result rows as a sanity check
+    for i in range(min(4, NumberResults)):
+        print(
+            f"Obj={Obj[i]} Elm={Elm[i]} Pt={PointElm[i]} Case={ACase[i]} "
+            f"F1={F1[i]:.3f} F2={F2[i]:.3f} F3={F3[i]:.3f} "
+            f"M1={M1[i]:.3f} M2={M2[i]:.3f} M3={M3[i]:.3f}"
+        )
+else:
+    print("No frame joint force results returned.")
 
 # Close SAP2000
 mySapObject.ApplicationExit(False)
