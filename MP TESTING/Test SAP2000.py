@@ -2,6 +2,7 @@ import comtypes.client
 import os
 import csv
 import numpy as np
+import collections
 
 # Set up SAP2000 helper and instance
 helper = comtypes.client.CreateObject('SAP2000v1.Helper')
@@ -14,7 +15,7 @@ kip_ft_F = 4
 SapModel.InitializeNewModel(kip_ft_F)
 
 #0 = OpenFrame, 1 = PerimeterFrame, 2 = BeamSlab, 3 = FlatPlate
-template_type = 2
+template_type = 0
 NumStory = 2
 StoryHeight = 12
 SpansX = 4
@@ -125,8 +126,6 @@ with open("joint_displacements.csv", "w", newline="") as f:
 # Get Moment Results
 
 # --- Frame-end forces for ALL members (every I/J point), plus joint-wise aggregation ---
-
-import collections
 
 # 1) Make sure the load case/combination you want is selected
 SapModel.Results.Setup.DeselectAllCasesAndCombosForOutput()
