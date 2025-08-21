@@ -32,8 +32,8 @@ ModelPath = os.path.join(os.getcwd(), '3DFrame.sdb')
 #Set Up Load information
 #Add Load Pattern
 #1 = Dead, 2 = SuperDead, 3 = Live, 4 = Reduced Live, 5 = Quake, 6 = Wind, 7 = Snow, 8 = Other... Check API for others
-LTYPE = 8
-SapModel.LoadPatterns.Add("TOP_LOAD", LTYPE)
+LType = 8
+SapModel.LoadPatterns.Add("TOP_LOAD", LType)
 ForceX = 90
 ForceY = 150
 
@@ -96,7 +96,9 @@ count, joint_names, ret = SapModel.PointObj.GetNameList()
 # Create CSV file to store displacements
 with open("joint_displacements.csv", "w", newline="") as f:
     writer = csv.writer(f)
-
+    writer.writerow([
+        "Joint Name", "Displacement X", "Displacement Y", "Displacement Z"
+    ])
 
     for joint in joint_names:
         # Initialize variables
