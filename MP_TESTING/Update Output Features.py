@@ -1,75 +1,72 @@
 import os
+import csv
 import torch
-from torch_geometric.data import Data  # only needed for type hints
+from torch_geometric.data import Data  # type hints only
 
-# 1) Get current script’s directory (StructGNN/MP TESTING)
-script_dir = os.path.dirname(os.path.abspath(__file__))
-
-# 2) Go up one level to StructGNN
-structgnn_dir = os.path.dirname(script_dir)
-
-# 3) Build path to the input file inside Data_Generated/structure_1
-path_in = os.path.join(
-    structgnn_dir,
-    "Data_Generated",
-    "structure_1",
-    "structure_graph_NodeAsNode.pt"
-)
-
-# 4) Decide where to save modified file (StructGNN/MP TESTING)
+# ---------- Paths ----------
+script_dir = os.path.dirname(os.path.abspath(__file__))  # .../StructGNN/MP_TESTING
+path_in  = os.path.join(script_dir, "Data_Gen_Manual", "structure_1", "structure_graph.pt")
+path_csv = os.path.join(script_dir, "joint_displacements.csv")
 path_out = os.path.join(script_dir, "graph_modified.pt")
 
-# 5) Load
-data: Data = torch.load(path_in)
+# ---------- Load graph (trusted file) ----------
+data: Data = torch.load(path_in, weights_only=False)
 assert hasattr(data, "y"), "This graph has no 'y' tensor."
-
 num_nodes = data.num_nodes
 print("num_nodes:", num_nodes, "| old y shape:", tuple(data.y.shape))
 
-# 6) Declare each variable (easy to edit later)
-UX = 1
-UY = 1
+# Sanity: expect at least 2 columns for UX, UY
+if data.y.dim() != 2 or data.y.size(1) < 2:
+    raise ValueError(f"Expected data.y with at least 2 columns, got shape {tuple(data.y.shape)}")
 
-MZ1 = 0
-MZ2 = 0
-MZ3 = 0
-MZ4 = 0
-MZ5 = 0
-MZ6 = 0
+# ---------- Read CSV (trim headers/cells to handle 'Joint Name ' etc.) ----------
+with open(path_csv, "r", newline="", encoding="utf-8-sig") as f:
+    reader = csv.reader(f)
+    try:
+        raw_headers = next(reader)
+    except StopIteration:
+        raise ValueError("CSV appears empty.")
 
-MY1 = 0
-MY2 = 0
-MY3 = 0
-MY4 = 0
-MY5 = 0
-MY6 = 0
+    headers = [h.strip() for h in raw_headers]
+    try:
+        idx_joint = headers.index("Joint Name")
+        idx_ux    = headers.index("Displacement X")
+        idx_uy    = headers.index("Displacement Y")
+    except ValueError as e:
+        raise ValueError(f"CSV headers found: {headers}\n"
+                         "Expected: 'Joint Name', 'Displacement X', 'Displacement Y'") from e
 
-VZ1 = 0
-VZ2 = 0
-VZ3 = 0
-VZ4 = 0
-VZ5 = 0
-VZ6 = 0
+    parsed = []
+    for row in reader:
+        if not row or not any(cell.strip() for cell in row):
+            continue
+        row = [c.strip() for c in row]
+        ux = float(row[idx_ux])
+        uy = float(row[idx_uy])
+        parsed.append((ux, uy))
 
-VY1 = 0
-VY2 = 0
-VY3 = 0
-VY4 = 0
-VY5 = 0
-VY6 = 0
+# ---------- Validate counts ----------
+if len(parsed) > num_nodes:
+    raise ValueError(f"CSV has {len(parsed)} joints, but graph has only {num_nodes} nodes.")
 
-# 7) Build new y tensor
-new_y = [
-    UX, UY,
-    MZ1, MZ2, MZ3, MZ4, MZ5, MZ6,
-    MY1, MY2, MY3, MY4, MY5, MY6,
-    VZ1, VZ2, VZ3, VZ4, VZ5, VZ6,
-    VY1, VY2, VY3, VY4, VY5, VY6
-]
+# ---------- Update only UX/ UY; keep other outputs unchanged ----------
+new_y = data.y.clone()
 
-# make it shape [num_nodes, 26]
-data.y = torch.tensor([new_y] * num_nodes, dtype=torch.float)
+# Zero UX/ UY for all nodes first so extra nodes (beyond CSV) get zeros as requested
+new_y[:, 0] = 0.0  # UX
+new_y[:, 1] = 0.0  # UY
 
-# 8) Save
+# Map Joint 1 -> node 0, Joint 2 -> node 1, ...
+for i, (ux, uy) in enumerate(parsed):
+    new_y[i, 0] = ux  # UX
+    new_y[i, 1] = uy  # UY
+
+data.y = new_y
+
+# ---------- Save ----------
 torch.save(data, path_out)
 print("new y shape:", tuple(data.y.shape), "→ saved to", path_out)
+
+# Quick sanity check (first 5)
+for i in range(min(5, len(parsed))):
+    print(f"node {i}: UX={data.y[i,0].item()}, UY={data.y[i,1].item()}")

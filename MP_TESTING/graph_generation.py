@@ -11,52 +11,80 @@ def generate_structure(
     beam_length_x,   # ⬅ X-direction beams
     beam_length_z,   # ⬅ Z-direction beams
     column_length,   # ⬅ vertical members
+    ForceX=90.0,     # ⬅ applied on top level to min-x nodes
+    ForceY=150.0,    # ⬅ applied on top level to min-z nodes (stored in force_z feature)
     output_dir="Data_Gen_Manual",
 ):
     """Generates a building structure with independent X/Z beam lengths.
-       Node IDs now increase along Y first (then X, then Z)."""
-    # Nodes (Y fastest)
-    nodes = []
-    y_val = num_floors + 1
+       Node IDs increase with Y fastest (then X, then Z).
+       Node features = [grid_x, grid_y, grid_z, x, y, z, support, joint, nodal_mass, force_x, force_z].
+       Edge features = [beam, column, length].
+    """
+
+    # --- Dimensions ---
+    y_val = num_floors + 1        # grid_y count
+    grid_y = y_val
+    max_y = y_val - 1
+
+    # --- First pass: collect coordinates (Z -> X -> Y with Y fastest) ---
+    coords = []
     for z in range(grid_z):
         for x in range(grid_x):
             for y in range(y_val):
-                mass_flag = 1.0 if (x == 0 and z == 0) or (x == grid_x - 1 and z == 0) else 0.0
-                load = np.random.uniform(0.003, 0.015)
-                nodes.append([
-                    grid_x, y_val, grid_z,
-                    float(x), float(y), float(z),
-                    0.0 if y == 0 else 1.0,
-                    mass_flag, load, 0.0, 0.0
-                ])
+                coords.append((x, y, z))
 
-    # Edges
-    beams = []
-    columns = []
-    beam_attributes = []
-    column_attributes = []
+    coords = np.array(coords, dtype=float)
 
-    # Y is fastest: index = z*(grid_x*y_val) + x*y_val + y
-    def get_node_index(x, z, y):
-        return z * (grid_x * y_val) + x * y_val + y
+    # Top level joints (max y), then min x and min z among them
+    top_mask = coords[:, 1] == max_y
+    top_coords = coords[top_mask]
+    min_x = top_coords[:, 0].min()
+    min_z = top_coords[:, 2].min()
 
-    # Horizontal beams (skip y=0 if you want a "table" ground)
+    # --- Nodes ---
+    nodes = []
+    for (x, y, z) in coords:
+        support = 1.0 if y == 0 else 0.0
+        joint   = 1.0 if y != 0 else 0.0
+        nodal_mass = 0.0   # always zero
+
+        # Force assignment (note: we keep features as force_x and force_z)
+        on_top = (y == max_y)
+        force_x = float(ForceX) if (on_top and x == min_x) else 0.0
+        force_z = float(ForceY) if (on_top and z == min_z) else 0.0
+
+        nodes.append([
+            float(grid_x), float(grid_y), float(grid_z),  # grid sizes
+            float(x), float(y), float(z),                 # indices as coords
+            support, joint, nodal_mass,                   # flags
+            force_x, force_z                              # loads
+        ])
+
+    # --- Helper: Y fastest index ---
+    def get_node_index(xi, zi, yi):
+        return int(zi * (grid_x * y_val) + xi * y_val + yi)
+
+    # --- Edges + attributes ---
+    edges = []
+    edge_attributes = []  # [beam, column, length]
+
+    # Beams (horizontal) — only for floors above ground (y >= 1)
     for y in range(1, y_val):
         for z in range(grid_z):
             for x in range(grid_x):
                 current = get_node_index(x, z, y)
 
-                # X-direction neighbor (right)
+                # X-direction neighbor
                 if x < grid_x - 1:
                     right = get_node_index(x + 1, z, y)
-                    beams.extend([[current, right], [right, current]])
-                    beam_attributes.extend([[beam_length_x], [beam_length_x]])
+                    edges.append([current, right]); edge_attributes.append([1.0, 0.0, float(beam_length_x)])
+                    edges.append([right, current]); edge_attributes.append([1.0, 0.0, float(beam_length_x)])
 
-                # Z-direction neighbor (deeper)
+                # Z-direction neighbor
                 if z < grid_z - 1:
                     depth = get_node_index(x, z + 1, y)
-                    beams.extend([[current, depth], [depth, current]])
-                    beam_attributes.extend([[beam_length_z], [beam_length_z]])
+                    edges.append([current, depth]); edge_attributes.append([1.0, 0.0, float(beam_length_z)])
+                    edges.append([depth, current]); edge_attributes.append([1.0, 0.0, float(beam_length_z)])
 
     # Columns (vertical)
     for y in range(y_val - 1):
@@ -64,22 +92,22 @@ def generate_structure(
             for x in range(grid_x):
                 current = get_node_index(x, z, y)
                 above = get_node_index(x, z, y + 1)
-                columns.extend([[current, above], [above, current]])
-                column_attributes.extend([[column_length], [column_length]])
+                edges.append([current, above]); edge_attributes.append([0.0, 1.0, float(column_length)])
+                edges.append([above, current]); edge_attributes.append([0.0, 1.0, float(column_length)])
 
-    # Graph tensors
-    edge_index = torch.tensor(beams + columns, dtype=torch.long).t().contiguous()
-    edge_attr = torch.tensor(beam_attributes + column_attributes, dtype=torch.float)
-    node_features = torch.tensor(nodes, dtype=torch.float)
+    # --- Graph tensors ---
+    edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+    edge_attr = torch.tensor(edge_attributes, dtype=torch.float)   # (E, 3)
+    node_features = torch.tensor(nodes, dtype=torch.float)         # (N, 11)
 
     structure_graph = Data(
         x=node_features,
         edge_index=edge_index,
-        edge_attr=edge_attr,    # each row is [length]
+        edge_attr=edge_attr,    # [beam, column, length]
         y=torch.zeros(node_features.shape[0], 38)
     )
 
-    # Save
+    # --- Save ---
     struct_dir = os.path.join(output_dir, f"structure_{structure_id}")
     os.makedirs(struct_dir, exist_ok=True)
     save_path = os.path.join(struct_dir, "structure_graph.pt")
@@ -89,18 +117,20 @@ def generate_structure(
 
 
 if __name__ == "__main__":
-    # Hardcoded inputs
+    # Example with hardcoded defaults
     structure_id = 1
     num_floors = 2
     grid_x = 5
     grid_z = 6
-    beam_length_x = 20.0   # X beams
-    beam_length_z = 10.0   # Z beams
-    column_length = 12.0   # Columns
+    beam_length_x = 20.0
+    beam_length_z = 10.0
+    column_length = 12.0
+    ForceX = 90.0
+    ForceY = 150.0
 
     structure, path = generate_structure(
         structure_id, num_floors, grid_x, grid_z,
-        beam_length_x, beam_length_z, column_length
+        beam_length_x, beam_length_z, column_length, ForceX, ForceY
     )
     print(f"Generated structure {structure_id}: "
           f"{structure.num_nodes} nodes, "
