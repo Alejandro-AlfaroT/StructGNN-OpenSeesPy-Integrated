@@ -30,6 +30,7 @@ Test_SAP2000.SAPAnalysis(Units, template_type, NumStory, StoryHeight, SpansX, Le
 
 #Update output results in PyTorch Graph
 
+
 #Delete the extra files made
 Del_Files.cleanup_SAP2000()
 #Del_Files.cleanup_csv()
