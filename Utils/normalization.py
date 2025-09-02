@@ -69,7 +69,8 @@ def getMinMax_y_linear(dataset, norm_dict):
     min_torsion = 0
     max_torsion = torch.max(torch.abs(y[:, 32:38]))
     norm_dict['torsion'] = [min_torsion, max_torsion]
-    
+
+
     del x, y
     return norm_dict
     
@@ -136,6 +137,8 @@ def normalize_dataset(dataset, analysis='linear'):
     norm_dict = getMinMax_x(dataset, norm_dict)
     
     norm_dict = getMinMax_y_linear(dataset, norm_dict)
+
+
     for data in dataset:
         normalize_linear(data, norm_dict)
 

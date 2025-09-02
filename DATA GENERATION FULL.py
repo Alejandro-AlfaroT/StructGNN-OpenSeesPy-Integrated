@@ -34,4 +34,4 @@ Update_Output_Features.update_output()
 
 #Delete the extra files made
 Del_Files.cleanup_SAP2000()
-#Del_Files.cleanup_csv()
+Del_Files.cleanup_csv()
