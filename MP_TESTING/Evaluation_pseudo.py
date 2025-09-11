@@ -2,7 +2,7 @@ import torch
 import os
 import sys
 import pandas as pd
-
+from Utils import normalization
 
 print("Working directory:", os.getcwd())
 
@@ -12,14 +12,14 @@ parent_dir = os.path.abspath(os.path.join(script_dir, '..'))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from GNN.models import Structure_GraphNetwork_pseudo  # Or Structure_GraphNetwork if used
+from GNN.models import Structure_GraphNetwork  # Or Structure_GraphNetwork if used
 
-# Step 1: Set device
+#Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Step 2: Reconstruct the model architecture (must match training)
-model = Structure_GraphNetwork_pseudo(
-    layer_num=3,
+#Reconstruct the model architecture (must match training)
+model = Structure_GraphNetwork(
+    layer_num=9,
     input_dim=11,
     hidden_dim=512,
     edge_attr_dim=3,
@@ -33,24 +33,31 @@ model = Structure_GraphNetwork_pseudo(
     device=device
 )
 
-# Step 3: Load trained weights
-checkpoint_folder = '2025_07_01__01_42_38'
+#Load trained weights
+checkpoint_folder = '2025_04_17__02_26_56'
 model_path = os.path.normpath(os.path.join(script_dir, '..', 'Results', 'Static_Linear_Analysis', checkpoint_folder, 'model.pt'))
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.to(device)
 
-# Step 4: Load graph data for one structure
-data_relative_path = os.path.join('Data', 'Static_Linear_Analysis', 'structure_2', 'structure_graph_NodeAsNode_pseudo.pt')
+#Load graph data for one structure
+data_relative_path = os.path.join('Data', 'Static_Linear_Analysis', 'structure_1', 'structure_graph_NodeAsNode_pseudo.pt')
 data_path = os.path.normpath(os.path.join(script_dir, '..', data_relative_path))
 data = torch.load(data_path, weights_only=False)
 
-# Step 5: Run inference and extract node outputs
+#Normalize data
+norm_dict = {'grid_num': [0, 7.], 'coord': [0., 6.], 'mass': [0, 0.0237], 'force': [0, 200.], 'length': [0, 8.],
+             'disp': [0, 238.1000], 'momentY': [0, 167100.], 'momentZ': [0, 206300.], 'shearY': [0, 93.1100], 'shearZ': [0, 93.1300], 'axialForce': [0, 1420.], 'torsion': [0, 1.8080]}
+normalization.normalize_linear(data, norm_dict)
+
+#Run inference and extract node outputs
 model.eval()
 with torch.no_grad():
     data = data.to(device)
-    output = model(data.x, data.edge_index, data.edge_attr, layer_num=3)  # Inference
+    output = model(data.x, data.edge_index, data.edge_attr)
 
-# Step 6: Format and print per-node output features
+normalization.denormalize_y_linear(output, norm_dict)
+
+#Format and print per-node output features
 torch.set_printoptions(sci_mode=False)
 
 labels = (
@@ -75,5 +82,3 @@ print(df)
 # Save to CSV
 df.to_csv("predicted_node_outputs.csv", index_label='node_index')
 
-# Optional: Save raw tensor
-# torch.save(output, 'output_predictions.pt')
