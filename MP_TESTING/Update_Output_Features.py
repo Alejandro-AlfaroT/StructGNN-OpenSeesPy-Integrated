@@ -1,7 +1,7 @@
 import os
 import csv
 import torch
-from torch_geometric.data import Data  # type hints only
+from torch_geometric.data import Data
 
 def update_output():
 
@@ -20,7 +20,7 @@ def update_output():
     os.makedirs(save_dir, exist_ok=True)
     path_out = os.path.join(save_dir, "graph_modified.pt")
 
-    # ---------- Load graph (trusted file) ----------
+    #Load graph
     data: Data = torch.load(path_in, weights_only=False)
     assert hasattr(data, "y"), "This graph has no 'y' tensor."
     num_nodes = data.num_nodes
@@ -29,7 +29,7 @@ def update_output():
     if data.y.dim() != 2 or data.y.size(1) < 2:
         raise ValueError(f"Expected data.y with at least 2 columns, got shape {tuple(data.y.shape)}")
 
-    # ---------- Read CSV (trim headers/cells) ----------
+    # Read CSV (trim headers/cells)
     with open(path_csv, "r", newline="", encoding="utf-8-sig") as f:
         reader = csv.reader(f)
         try:
@@ -55,11 +55,11 @@ def update_output():
             uy = float(row[idx_uy])
             parsed.append((ux, uy))
 
-    # ---------- Validate counts ----------
+    #Validate counts
     if len(parsed) > num_nodes:
         raise ValueError(f"CSV has {len(parsed)} joints, but graph has only {num_nodes} nodes.")
 
-    # ---------- Update only UX/ UY; keep other outputs unchanged ----------
+    #Update only UX/ UY; keep other outputs unchanged
     new_y = data.y.clone()
     new_y[:, 0] = 0.0  # UX
     new_y[:, 1] = 0.0  # UY
@@ -68,7 +68,7 @@ def update_output():
         new_y[i, 1] = uy  # UY
     data.y = new_y
 
-    # ---------- Save ----------
+    #Save
     torch.save(data, path_out)
     print("new y shape:", tuple(data.y.shape), "→ saved to", path_out)
 
