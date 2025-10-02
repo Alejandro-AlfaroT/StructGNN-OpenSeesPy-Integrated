@@ -1,0 +1,66 @@
+
+
+ SAP2000 v26.3.0 Ultimate 64-bit (Analysis Build 9993/64)                       
+ File: C:\Users\mnwpa\OneDrive\Documents\GitHub\StructGNN\3DFrame.OUT           
+                                                                     
+                                                                       
+
+ D I S P L A C E M E N T   D E G R E E S   O F   F R E E D O M
+
+         (A) = Active DOF, equilibrium equation
+         (-) = Restrained DOF, reaction computed
+         (+) = Constrained DOF
+         (>) = External substructure DOF
+         ( ) = Null DOF
+
+  JOINTS              UX  UY  UZ  RX  RY  RZ
+       1               -   -   -   A   A   A
+       2 TO       3    A   A   A   A   A   A
+       4               -   -   -   A   A   A
+       5 TO       6    A   A   A   A   A   A
+       7               -   -   -   A   A   A
+       8 TO       9    A   A   A   A   A   A
+      10               -   -   -   A   A   A
+      11 TO      12    A   A   A   A   A   A
+      13               -   -   -   A   A   A
+      14 TO      15    A   A   A   A   A   A
+      16               -   -   -   A   A   A
+      17 TO      18    A   A   A   A   A   A
+      19               -   -   -   A   A   A
+      20 TO      21    A   A   A   A   A   A
+      22               -   -   -   A   A   A
+      23 TO      24    A   A   A   A   A   A
+      25               -   -   -   A   A   A
+      26 TO      27    A   A   A   A   A   A
+      28               -   -   -   A   A   A
+      29 TO      30    A   A   A   A   A   A
+      31               -   -   -   A   A   A
+      32 TO      33    A   A   A   A   A   A
+      34               -   -   -   A   A   A
+      35 TO      36    A   A   A   A   A   A
+      37               -   -   -   A   A   A
+      38 TO      39    A   A   A   A   A   A
+      40               -   -   -   A   A   A
+      41 TO      42    A   A   A   A   A   A
+      43               -   -   -   A   A   A
+      44 TO      45    A   A   A   A   A   A
+      46               -   -   -   A   A   A
+      47 TO      48    A   A   A   A   A   A
+      49               -   -   -   A   A   A
+      50 TO      51    A   A   A   A   A   A
+      52               -   -   -   A   A   A
+      53 TO      54    A   A   A   A   A   A
+      55               -   -   -   A   A   A
+      56 TO      57    A   A   A   A   A   A
+      58               -   -   -   A   A   A
+      59 TO      60    A   A   A   A   A   A
+      61               -   -   -   A   A   A
+      62 TO      63    A   A   A   A   A   A
+      64               -   -   -   A   A   A
+      65 TO      66    A   A   A   A   A   A
+      67               -   -   -   A   A   A
+      68 TO      69    A   A   A   A   A   A
+      70               -   -   -   A   A   A
+      71 TO      72    A   A   A   A   A   A
+      73               -   -   -   A   A   A
+      74 TO      75    A   A   A   A   A   A

@@ -21,7 +21,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = Structure_GraphNetwork(
     layer_num=9,
     input_dim=11,
-    hidden_dim=512,
+    hidden_dim=256,
     edge_attr_dim=3,
     aggr='mean',
     node_out_dispX_dim=1,
@@ -34,7 +34,7 @@ model = Structure_GraphNetwork(
 )
 
 #Load trained weights
-checkpoint_folder = '2025_04_17__02_26_56'
+checkpoint_folder = '2025_06_24__16_02_38'
 model_path = os.path.normpath(os.path.join(script_dir, '..', 'Results', 'Static_Linear_Analysis', checkpoint_folder, 'model.pt'))
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.to(device)

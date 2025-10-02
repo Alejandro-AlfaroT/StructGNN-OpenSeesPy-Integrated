@@ -1,3 +1,5 @@
+from sympy.physics.continuum_mechanics.beam import Beam3D
+
 from MP_TESTING import Test_SAP2000
 from MP_TESTING import Del_Files
 from MP_TESTING import graph_generation
@@ -14,6 +16,9 @@ SpansX = 4
 LengthX = 20
 SpansY = 4
 LengthY = 20
+Restraint = True
+Beam = "Default"
+Column = "Default"
 
 # 1 = Dead, 2 = SuperDead, 3 = Live, 4 = Reduced Live, 5 = Quake, 6 = Wind, 7 = Snow, 8 = Other... Check API for more
 LType = 8
@@ -27,11 +32,11 @@ ForceY = 150
 graph_generation.generate_structure(1, NumStory, SpansX, SpansY, LengthX, LengthY, StoryHeight, ForceX, ForceY)
 
 #Run Analysis and save results as CSV file
-Test_SAP2000.SAPAnalysis(Units, template_type, NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY, LType, ForceX, ForceY)
+Test_SAP2000.SAPAnalysis(Units, template_type, NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY, Restraint, Beam, Column, LType, ForceX, ForceY)
 
 #Update output results in PyTorch Graph
 Update_Output_Features.update_output()
 
 #Delete the extra files made
-Del_Files.cleanup_SAP2000()
-Del_Files.cleanup_csv()
+#Del_Files.cleanup_SAP2000()
+#Del_Files.cleanup_csv()

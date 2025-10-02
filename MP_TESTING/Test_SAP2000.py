@@ -4,7 +4,7 @@ import csv
 import numpy as np
 import collections
 
-def SAPAnalysis(Units, template_type, NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY, LType, ForceX, ForceY):
+def SAPAnalysis(Units, template_type, NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY, Restraint, Beam, Column, LType, ForceX, ForceY):
 
     # Set up SAP2000 helper and instance
     helper = comtypes.client.CreateObject('SAP2000v1.Helper')
@@ -16,7 +16,7 @@ def SAPAnalysis(Units, template_type, NumStory, StoryHeight, SpansX, LengthX, Sp
     SapModel.InitializeNewModel(Units)
 
     #Create 3D Frame
-    SapModel.File.New3DFrame(template_type, NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY)
+    SapModel.File.New3DFrame(template_type, NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY, Restraint, Beam, Column)
 
     # Optionally save and close
     ModelPath = os.path.join(os.getcwd(), '3DFrame.sdb')
@@ -208,6 +208,9 @@ if __name__ == "__main__":
     LengthX = 20
     SpansY = 4
     LengthY = 20
+    Restraint = True
+    Beam = "Default"
+    Column ="Default"
 
     # 1 = Dead, 2 = SuperDead, 3 = Live, 4 = Reduced Live, 5 = Quake, 6 = Wind, 7 = Snow, 8 = Other... Check API for more
     LType = 8
@@ -216,4 +219,4 @@ if __name__ == "__main__":
     ForceX = 90
     ForceY = 150
 
-    SAPAnalysis(Units, template_type, NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY, LType, ForceX, ForceY)
+    SAPAnalysis(Units, template_type, NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY, Restraint, Beam, Column, LType, ForceX, ForceY)

@@ -40,7 +40,7 @@ model.load_state_dict(torch.load(model_path, map_location=device))
 model.to(device)
 
 #Load graph data for one structure
-data_relative_path = os.path.join('Data', 'Static_Linear_Analysis', 'structure_1', 'structure_graph_NodeAsNode.pt')
+data_relative_path = os.path.join('Data', 'Static_Linear_Analysis', 'structure_2', 'structure_graph_NodeAsNode.pt')
 data_path = os.path.normpath(os.path.join(script_dir, '..', data_relative_path))
 data = torch.load(data_path, weights_only=False)
 
