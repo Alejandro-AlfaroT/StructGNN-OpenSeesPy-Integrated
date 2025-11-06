@@ -3,17 +3,31 @@ import csv
 import torch
 from torch_geometric.data import Data
 
-def update_output():
+def _next_version_path(save_dir, stem="structure", ext=".pt"):
+    """Return a unique path in save_dir by incrementing a plain integer suffix if needed."""
+    base = os.path.join(save_dir, f"{stem}{ext}")
+    if not os.path.exists(base):
+        return base
+    i = 1
+    while True:
+        cand = os.path.join(save_dir, f"{stem}_{i}{ext}")
+        if not os.path.exists(cand):
+            return cand
+        i += 1
 
+
+def update_output(structure_id: int = 1,
+                  in_root: str = "Data_Gen_Manual",
+                  out_root: str = "Data_SAP2000"):
     # ---------- Paths ----------
     script_dir = os.path.dirname(os.path.abspath(__file__))  # .../StructGNN/MP_TESTING
     structgnn_dir = os.path.dirname(script_dir)              # .../StructGNN
 
-    # Read input graph from StructGNN/Data_Gen_Manual/...
-    path_in  = os.path.join(structgnn_dir, "Data_Gen_Manual", "structure_1", "structure_graph.pt")
+    # Read input graph from StructGNN/Data_Gen_Manual/structure_{id}/...
+    path_in = os.path.join(structgnn_dir, in_root, f"structure_{structure_id}", "structure_graph.pt")
 
     # ✅ CSVs live ONE LEVEL UP from this script (the folder outside)
-    parent_dir = os.path.dirname(script_dir)  # same as structgnn_dir here, but explicit for clarity
+    parent_dir = os.path.dirname(script_dir)
     path_csv_nodes = os.path.join(parent_dir, "joint_displacements.csv")
     path_csv_edges = os.path.join(parent_dir, "frame_joint_forces.csv")
 
@@ -23,23 +37,23 @@ def update_output():
     if not os.path.isfile(path_csv_edges):
         raise FileNotFoundError(f"Couldn't find edge CSV at: {path_csv_edges}")
 
-    # Save modified graph into a new folder inside StructGNN
-    save_dir = os.path.join(structgnn_dir, "Modified_Graphs")
+    # ✅ Save modified graphs into StructGNN/Data_SAP2000/
+    save_dir = os.path.join(structgnn_dir, out_root)
     os.makedirs(save_dir, exist_ok=True)
-    path_out = os.path.join(save_dir, "graph_modified.pt")
+    path_out = _next_version_path(save_dir)  # <--- auto-increment plain integer filename
 
-    # Load graph
+    # ----- Load graph -----
     data: Data = torch.load(path_in, weights_only=False)
     assert hasattr(data, "y"), "This graph has no 'y' tensor."
     num_nodes = data.num_nodes
-    num_edges = data.num_edges  # counts directed edges in PyG
-    print("num_nodes:", num_nodes, "| old y shape:", tuple(data.y.shape))
-    print("num_edges:", num_edges, "| has edge_y:", hasattr(data, "edge_y"))
+    num_edges = data.num_edges
+    print(f"[structure_{structure_id}] num_nodes:", num_nodes, "| old y shape:", tuple(data.y.shape))
+    print(f"[structure_{structure_id}] num_edges:", num_edges, "| has edge_y:", hasattr(data, "edge_y"))
 
     if data.y.dim() != 2 or data.y.size(1) < 2:
         raise ValueError(f"Expected data.y with at least 2 columns, got shape {tuple(data.y.shape)}")
 
-    # ---------- Update NODE outputs from joint_displacements.csv (existing logic) ----------
+    # ---------- Update NODE outputs from joint_displacements.csv ----------
     with open(path_csv_nodes, "r", newline="", encoding="utf-8-sig") as f:
         reader = csv.reader(f)
         try:
@@ -74,22 +88,18 @@ def update_output():
     new_y[:, 0] = 0.0  # UX
     new_y[:, 1] = 0.0  # UY
     for i, (ux, uy) in enumerate(parsed_nodes):
-        new_y[i, 0] = ux  # UX
-        new_y[i, 1] = uy  # UY
+        new_y[i, 0] = ux
+        new_y[i, 1] = uy
     data.y = new_y
 
-    # ---------- NEW: Update EDGE outputs from frame_joint_forces.csv ----------
-    # Rule: take the LAST 6 numeric columns in each non-empty row as the 6 edge outputs.
+    # ---------- Update EDGE outputs from frame_joint_forces.csv (last 6 numeric columns) ----------
     with open(path_csv_edges, "r", newline="", encoding="utf-8-sig") as f:
         reader = csv.reader(f)
-
-        # Try to read headers; if the file has no headers this still works (we just treat them as data)
         rows = list(reader)
 
     if not rows:
         raise ValueError("Edge CSV appears empty.")
 
-    # If the first row contains any non-numeric cell (besides blanks), assume it's a header row and skip it.
     def _looks_like_header(cells):
         for c in cells:
             c = (c or "").strip()
@@ -106,7 +116,6 @@ def update_output():
 
     parsed_edges = []
     for r in data_rows:
-        # Coerce cells to floats where possible
         nums = []
         for c in r:
             c = (c or "").strip()
@@ -115,13 +124,10 @@ def update_output():
             try:
                 nums.append(float(c))
             except ValueError:
-                # ignore non-numeric cells
                 continue
         if len(nums) < 6:
-            # Not enough numeric columns, skip or raise
             raise ValueError("Edge CSV row has fewer than 6 numeric values; cannot take last 6.")
-        last6 = nums[-6:]
-        parsed_edges.append(last6)
+        parsed_edges.append(nums[-6:])
 
     if len(parsed_edges) < num_edges:
         raise ValueError(
@@ -129,27 +135,13 @@ def update_output():
             "Add more rows or verify edge ordering."
         )
 
-    # Trim or use first num_edges rows to match the graph
     parsed_edges = parsed_edges[:num_edges]
-
-    edge_y_new = torch.tensor(parsed_edges, dtype=torch.float32)
-
-    # Create or overwrite data.edge_y with shape [num_edges, 6]
-    data.edge_y = edge_y_new
-
-    print("new edge_y shape:", tuple(data.edge_y.shape))
+    data.edge_y = torch.tensor(parsed_edges, dtype=torch.float32)
+    print(f"[structure_{structure_id}] new edge_y shape:", tuple(data.edge_y.shape))
 
     # ---------- Save ----------
     torch.save(data, path_out)
-    print("new y shape:", tuple(data.y.shape), "→ saved to", path_out)
-
-    # Quick sanity checks
-    for i in range(min(5, len(parsed_nodes))):
-        print(f"node {i}: UX={data.y[i,0].item()}, UY={data.y[i,1].item()}")
-
-    for e in range(min(5, num_edges)):
-        vals = ", ".join(f"{v:.4g}" for v in data.edge_y[e].tolist())
-        print(f"edge {e}: last6=[{vals}]")
+    print(f"[structure_{structure_id}] new y shape:", tuple(data.y.shape), f"→ saved to {path_out}")
 
 if __name__ == "__main__":
     update_output()
