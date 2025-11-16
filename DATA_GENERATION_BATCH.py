@@ -29,8 +29,8 @@ PARAM_GRID = {
     "LengthX":    [20],            # feet
     "SpansY":     [3, 4],
     "LengthY":    [20],            # feet
-    "ForceX":     [60, 90],        # top loads
-    "ForceY":     [120, 150],
+    "ForceX":     [60, 90],        # Kip
+    "ForceY":     [120, 150],      # Kip
 }
 
 # If you prefer single-run defaults, set lists to one value each:

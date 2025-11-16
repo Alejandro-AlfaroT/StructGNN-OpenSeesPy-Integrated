@@ -2,25 +2,20 @@ import torch
 from torch.utils.data import random_split
 import os
 
-
 # -------------------------------------------------------------------------
 # Load dataset
 # -------------------------------------------------------------------------
-def get_dataset(dataset_name='Static_Linear_Analysis', whatAsNode='NodeAsNode', structure_num=300, special_path=None):
+def get_dataset(structure_num=300):
     """
     Loads a list of PyTorch Geometric graph data objects.
     Each graph is expected at:
-        Data/<dataset_name>/structure_<index>/structure_graph_<whatAsNode>.pt
+        Data_SAP2000/structure_<index>.pt
     """
-    if special_path is not None:
-        root = special_path
-    else:
-        root = os.path.join('Data', dataset_name)
+    root = 'Data_SAP2000'
 
     data_list = []
     for index in range(1, structure_num + 1):
-        folder_name = os.path.join(root, f'structure_{index}')
-        structure_graph_path = os.path.join(folder_name, f'structure_graph_{whatAsNode}.pt')
+        structure_graph_path = os.path.join(root, f'structure_{index}.pt')
 
         if os.path.exists(structure_graph_path):
             graph = torch.load(structure_graph_path, weights_only=False)
@@ -65,14 +60,16 @@ def split_dataset(dataset, train_ratio=0.9, valid_ratio=0.1, test_ratio=None):
 # -------------------------------------------------------------------------
 def get_target_index(target):
     """
-    Returns the start and end indices for selecting node target features
-    from data.y.
+    Returns the start and end indices for selecting node or edge target features.
 
     Node outputs:
         0: disp_x
         1: disp_y
-    """
 
+    Edge outputs (for reference):
+        0–2: edge_shear
+        3–5: edge_moment
+    """
     # Node-level targets (2 total)
     if target == 'disp_x':
         y_start, y_finish = 0, 1
@@ -82,11 +79,9 @@ def get_target_index(target):
         y_start, y_finish = 0, 2
 
     # Edge-level targets (6 total)
-    # Edge targets are not selected by this function directly since
-    # they live in data.edge_y, not data.y, but we define names for reference.
-    elif target == 'edge_shear':     # first 3 edge outputs
+    elif target == 'edge_shear':
         y_start, y_finish = 0, 3
-    elif target == 'edge_moment':    # last 3 edge outputs
+    elif target == 'edge_moment':
         y_start, y_finish = 3, 6
     elif target in ['edge_all', 'edge']:
         y_start, y_finish = 0, 6
