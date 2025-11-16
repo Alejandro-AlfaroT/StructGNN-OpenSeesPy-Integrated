@@ -14,13 +14,26 @@ def print_space():
 
 
 def moving_average(record, half_length=10):
-    """Computes a simple moving average for smoothing training curves."""
-    record = np.array(record, dtype=np.float32)
-    avg = np.zeros(len(record), dtype=np.float32)
-    for i in range(len(record)):
-        start = max(0, i - half_length)
-        end = min(len(record), i + half_length + 1)  # include right endpoint
-        avg[i] = record[start:end].mean() if end > start else record[i]
+    """
+    Safe adaptive moving average.
+    Automatically reduces the smoothing window for short training runs.
+    If the window would cover nearly the whole series, no smoothing is applied.
+    """
+    record = np.asarray(record, dtype=np.float32)
+    n = len(record)
+    if n == 0:
+        return record
+
+    # Cap the window to at most ~n/5 on each side
+    half = min(max(1, half_length), max(1, (n - 1) // 5))
+    if (2 * half + 1) >= n:
+        return record
+
+    avg = np.zeros(n, dtype=np.float32)
+    for i in range(n):
+        start = max(0, i - half)
+        end = min(n, i + half + 1)
+        avg[i] = record[start:end].mean()
     return avg
 
 
@@ -31,7 +44,7 @@ def _maybe_plot_curve(series, label):
     """Helper: plot a curve if it’s non-empty."""
     if series is None:
         return
-    arr = np.asarray(series)
+    arr = np.asarray(series, dtype=np.float32)
     if arr.size == 0:
         return
     epochs = np.arange(1, len(arr) + 1)
@@ -56,7 +69,6 @@ def plot_learningCurve(
                      if you also log node-only and edge-only accuracies.
     """
     train_acc, valid_acc, test_acc = accuracy_record
-    epochs = np.arange(1, len(train_acc) + 1)
 
     plt.figure(figsize=(8, 6))
 
@@ -115,7 +127,6 @@ def plot_lossCurve(
                  if you also log node-only and edge-only losses.
     """
     train_loss, valid_loss, test_loss = loss_record
-    epochs = np.arange(1, len(train_loss) + 1)
 
     plt.figure(figsize=(8, 6))
 
