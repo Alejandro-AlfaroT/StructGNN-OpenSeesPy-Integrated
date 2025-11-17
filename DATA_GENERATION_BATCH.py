@@ -23,14 +23,14 @@ LType = 8                 # "Other"
 # (Put one or more values in each list)
 # ------------------------------------
 PARAM_GRID = {
-    "NumStory":   [2, 3],
-    "StoryHeight":[12],            # feet
-    "SpansX":     [3, 4],
-    "LengthX":    [20],            # feet
-    "SpansY":     [3, 4],
-    "LengthY":    [20],            # feet
-    "ForceX":     [60, 90],        # Kip
-    "ForceY":     [120, 150],      # Kip
+    "NumStory":   [2, 3, 4, 5, 6],
+    "StoryHeight":[12, 16],            # feet
+    "SpansX":     [3, 5, 6],
+    "LengthX":    [20, 30],            # feet
+    "SpansY":     [3, 4, 6],
+    "LengthY":    [20, 40],            # feet
+    "ForceX":     [60, 80, 100],        # Kip
+    "ForceY":     [90, 120, 160],      # Kip
 }
 
 # If you prefer single-run defaults, set lists to one value each:
