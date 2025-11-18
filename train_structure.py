@@ -31,7 +31,7 @@ parser = ArgumentParser()
 # Dataset
 parser.add_argument('--dataset_name', dest='dataset_name', default='Static_Linear_Analysis', type=str)
 parser.add_argument('--whatAsNode', dest='whatAsNode', default='NodeAsNode', type=str)
-parser.add_argument('--data_num', dest='data_num', default=2000, type=int)
+parser.add_argument('--data_num', dest='data_num', default=200, type=int)
 parser.add_argument('--train_ratio', dest='train_ratio', default=0.9, type=float)
 parser.add_argument('--normalization', dest='normalization', default=True, type=bool)
 
