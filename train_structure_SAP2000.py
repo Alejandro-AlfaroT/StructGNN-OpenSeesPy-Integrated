@@ -24,7 +24,7 @@ space = plot.print_space()
 # Args
 parser = ArgumentParser()
 # ----------------------- General / dataset -----------------------
-parser.add_argument('--data_num', dest='data_num', default=1097, type=int)
+parser.add_argument('--data_num', dest='data_num', default=2160, type=int)
 parser.add_argument('--train_ratio', dest='train_ratio', default=0.9, type=float)
 parser.add_argument('--normalization', dest='normalization', default=True, type=bool)
 
@@ -43,7 +43,7 @@ parser.add_argument('--gnn_act', dest='gnn_act', default=True, type=bool,
 # ----------------------- Training -----------------------
 parser.add_argument('--target', dest='target', default='all', type=str,
                     help='which output target you are going to train (node slice), e.g., all')
-parser.add_argument('--epoch_num', dest='epoch_num', default=100, type=int)
+parser.add_argument('--epoch_num', dest='epoch_num', default=1000, type=int)
 parser.add_argument('--batch_size', dest='batch_size', default=1, type=int)
 parser.add_argument('--lr', dest='lr', default=5e-5, type=float)
 parser.add_argument('--loss_function', dest='loss_function', default='L1', type=str,
@@ -106,18 +106,22 @@ print(f"Number of test graphs: {len(valid_dataset)}", end=space)
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False)
 
-# ----------------------- Training targets (node-level slice) -----------------------
-y_start, y_finish = datasets.get_target_index(args.target)
+# ----------------------- Model construction -----------------------
+input_dim = dataset[0].x.shape[1]
+edge_attr_dim = dataset[0].edge_attr.shape[1] if hasattr(dataset[0], "edge_attr") else 0
 
-# ----------------------- Model setup -----------------------
-input_dim = data.x.shape[1]
-edge_attr_dim = data.edge_attr.shape[1] if hasattr(data, "edge_attr") else 0
-node_out_dim = data.y.shape[1] if hasattr(data, "y") else 0           # expect 2
-edge_out_dim = getattr(data, "edge_y", None).shape[1] if hasattr(data, "edge_y") else 0  # expect 6
+node_out_dim = dataset[0].y.shape[1]
+edge_out_dim = getattr(dataset[0], "edge_y", None).shape[1] if hasattr(dataset[0], "edge_y") else 0
 
+print(f"Input dim: {input_dim}")
+print(f"Edge attr dim: {edge_attr_dim}")
+print(f"Node out dim: {node_out_dim}")
+print(f"Edge out dim: {edge_out_dim}")
+
+# sanity check: expects 2 node outputs and 6 edge outputs in your current setup
 if node_out_dim != 2:
-    print(f"[WARN] Expected node y dim == 2 ([dispX, dispY]), got {node_out_dim}")
-if edge_out_dim not in (0, 6):
+    print(f"[WARN] Expected node_y dim == 2, got {node_out_dim}")
+if hasattr(dataset[0], "edge_y") and edge_out_dim != 6:
     print(f"[WARN] Expected edge_y dim == 6, got {edge_out_dim}")
 
 model_constructor_args = {
@@ -142,19 +146,45 @@ model = locals()[args.model](**model_constructor_args).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 # Use the new combined losses
+# Training: keep combined loss as "sum" so gradients scale with total error.
+# Evaluation (node-only / edge-only): use "mean" so logged losses are
+# average error per active DOF, similar to the pseudo version.
 if args.loss_function.lower() in ('l1', 'l1_loss', 'nodeedge_l1'):
-    criterion_combined = losses.NodeEdgeL1Loss(node_weight=1.0, edge_weight=1.0, reduction="sum")
-    criterion_node_only = losses.NodeEdgeL1Loss(node_weight=1.0, edge_weight=0.0, reduction="sum")
-    criterion_edge_only = losses.NodeEdgeL1Loss(node_weight=0.0, edge_weight=1.0, reduction="sum")
+    # For backprop
+    criterion_combined = losses.NodeEdgeL1Loss(
+        node_weight=1.0, edge_weight=1.0, reduction="sum"
+    )
+    # For logging (training/validation metrics)
+    criterion_node_only = losses.NodeEdgeL1Loss(
+        node_weight=1.0, edge_weight=0.0, reduction="mean"
+    )
+    criterion_edge_only = losses.NodeEdgeL1Loss(
+        node_weight=0.0, edge_weight=1.0, reduction="mean"
+    )
 elif args.loss_function.lower() in ('l2', 'l2_loss', 'nodeedge_l2'):
-    criterion_combined = losses.NodeEdgeL2Loss(node_weight=1.0, edge_weight=1.0, reduction="sum")
-    criterion_node_only = losses.NodeEdgeL2Loss(node_weight=1.0, edge_weight=0.0, reduction="sum")
-    criterion_edge_only = losses.NodeEdgeL2Loss(node_weight=0.0, edge_weight=1.0, reduction="sum")
+    # For backprop
+    criterion_combined = losses.NodeEdgeL2Loss(
+        node_weight=1.0, edge_weight=1.0, reduction="sum"
+    )
+    # For logging (training/validation metrics)
+    criterion_node_only = losses.NodeEdgeL2Loss(
+        node_weight=1.0, edge_weight=0.0, reduction="mean"
+    )
+    criterion_edge_only = losses.NodeEdgeL2Loss(
+        node_weight=0.0, edge_weight=1.0, reduction="mean"
+    )
 else:
     raise ValueError(f"Unknown loss_function: {args.loss_function} (use 'L1' or 'L2')")
 
 accuracy_record = np.zeros((3, args.epoch_num))
 loss_record = np.zeros((3, args.epoch_num))
+
+# NEW: separate tracking for node-only and edge-only metrics
+accuracy_record_node = np.zeros((3, args.epoch_num))
+accuracy_record_edge = np.zeros((3, args.epoch_num))
+loss_record_node = np.zeros((3, args.epoch_num))
+loss_record_edge = np.zeros((3, args.epoch_num))
+
 best_accuracy = 0
 
 print(model, end=space)
@@ -245,10 +275,15 @@ for epoch in range(args.epoch_num):
                     )
                     loss_val_edge += edge_loss.item()
 
+                    # If you have a dedicated edge_accuracy, use it; otherwise fallback.
                     if hasattr(accuracy, "edge_accuracy"):
-                        correct_e, elems_e = accuracy.edge_accuracy(edge_out, data.edge_y, args.accuracy_threshold)
+                        correct_e, elems_e = accuracy.edge_accuracy(
+                            edge_out, data.edge_y, args.accuracy_threshold
+                        )
                     else:
-                        correct_e, elems_e = accuracy.node_accuracy(edge_out, data.edge_y, args.accuracy_threshold)
+                        correct_e, elems_e = accuracy.node_accuracy(
+                            edge_out, data.edge_y, args.accuracy_threshold
+                        )
 
                     total_correct_edge += correct_e
                     total_elems_edge += elems_e
@@ -266,8 +301,13 @@ for epoch in range(args.epoch_num):
                 combined_acc  = acc_node
                 combined_loss = loss_node
 
-            accuracy_record[i][epoch] = combined_acc
-            loss_record[i][epoch] = combined_loss
+            # Record metrics: 0 -> train, 1 -> valid
+            accuracy_record[i][epoch]       = combined_acc
+            loss_record[i][epoch]           = combined_loss
+            accuracy_record_node[i][epoch]  = acc_node
+            accuracy_record_edge[i][epoch]  = acc_edge
+            loss_record_node[i][epoch]      = loss_node
+            loss_record_edge[i][epoch]      = loss_edge
 
             split_metrics[split_name] = dict(
                 acc_node=acc_node, loss_node=loss_node,
@@ -304,5 +344,24 @@ with open(os.path.join(save_model_dir, 'training_args.json'), 'w') as f:
 
 # Plot the results (combined metrics)
 title = ', '.join([args.model, 'Data_SAP2000\n', date_str, args.target])
+
+# Combined (node + edge) curves
 plot.plot_learningCurve(accuracy_record, save_model_dir, title=title, target=args.target)
 plot.plot_lossCurve(loss_record, save_model_dir, title=title, target=args.target)
+
+# EXTRA: node vs edge accuracy and loss curves
+plot.plot_node_edge_accuracy_curves(
+    accuracy_record_node,
+    accuracy_record_edge,
+    save_model_dir,
+    title=title,
+    target=args.target,
+)
+
+plot.plot_node_edge_loss_curves(
+    loss_record_node,
+    loss_record_edge,
+    save_model_dir,
+    title=title,
+    target=args.target,
+)

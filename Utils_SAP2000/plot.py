@@ -38,7 +38,7 @@ def moving_average(record, half_length=10):
 
 
 # -------------------------------------------------------------------------
-# Learning and loss curves (combined; optional node/edge overlays)
+# Helpers
 # -------------------------------------------------------------------------
 def _maybe_plot_curve(series, label):
     """Helper: plot a curve if it’s non-empty."""
@@ -51,6 +51,9 @@ def _maybe_plot_curve(series, label):
     plt.plot(epochs, moving_average(arr), label=label)
 
 
+# -------------------------------------------------------------------------
+# Learning and loss curves (combined; optional node/edge overlays)
+# -------------------------------------------------------------------------
 def plot_learningCurve(
     accuracy_record,
     save_model_dir,
@@ -158,6 +161,97 @@ def plot_lossCurve(
     plt.title(title or "Loss Curve (Combined)")
     plt.tight_layout()
     out_path = os.path.join(save_model_dir, f"LossCurve_{target}.png")
+    plt.savefig(out_path)
+    plt.close()
+
+
+# -------------------------------------------------------------------------
+# NEW: separate node vs edge accuracy plot
+# -------------------------------------------------------------------------
+def plot_node_edge_accuracy_curves(
+    accuracy_record_node,
+    accuracy_record_edge,
+    save_model_dir,
+    title=None,
+    target="node_edge",
+):
+    """
+    Plot node accuracy and edge accuracy on the same figure,
+    for train/valid/test splits.
+
+    accuracy_record_node: np.array with shape (3, epochs) -> [train, valid, test]
+    accuracy_record_edge: np.array with shape (3, epochs) -> [train, valid, test]
+    """
+    n_tr, n_va, n_te = accuracy_record_node
+    e_tr, e_va, e_te = accuracy_record_edge
+
+    plt.figure(figsize=(8, 6))
+
+    # Node curves
+    _maybe_plot_curve(n_tr, "Train (Node)")
+    _maybe_plot_curve(n_va, "Validation (Node)")
+    if len(n_te) and np.any(n_te):
+        _maybe_plot_curve(n_te, "Test (Node)")
+
+    # Edge curves
+    _maybe_plot_curve(e_tr, "Train (Edge)")
+    _maybe_plot_curve(e_va, "Validation (Edge)")
+    if len(e_te) and np.any(e_te):
+        _maybe_plot_curve(e_te, "Test (Edge)")
+
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy (Fraction)")
+    plt.ylim([-0.05, 1.05])
+    plt.title(title or "Node vs Edge Accuracy")
+    plt.tight_layout()
+    out_path = os.path.join(save_model_dir, f"NodeEdgeAccuracy_{target}.png")
+    plt.savefig(out_path)
+    plt.close()
+
+
+# -------------------------------------------------------------------------
+# NEW: separate node vs edge loss plot
+# -------------------------------------------------------------------------
+def plot_node_edge_loss_curves(
+    loss_record_node,
+    loss_record_edge,
+    save_model_dir,
+    title=None,
+    target="node_edge",
+):
+    """
+    Plot node loss and edge loss on the same figure,
+    for train/valid/test splits.
+
+    loss_record_node: np.array with shape (3, epochs) -> [train, valid, test]
+    loss_record_edge: np.array with shape (3, epochs) -> [train, valid, test]
+    """
+    n_tr, n_va, n_te = loss_record_node
+    e_tr, e_va, e_te = loss_record_edge
+
+    plt.figure(figsize=(8, 6))
+
+    # Node loss curves
+    _maybe_plot_curve(n_tr, "Train (Node Loss)")
+    _maybe_plot_curve(n_va, "Validation (Node Loss)")
+    if len(n_te) and np.any(n_te):
+        _maybe_plot_curve(n_te, "Test (Node Loss)")
+
+    # Edge loss curves
+    _maybe_plot_curve(e_tr, "Train (Edge Loss)")
+    _maybe_plot_curve(e_va, "Validation (Edge Loss)")
+    if len(e_te) and np.any(e_te):
+        _maybe_plot_curve(e_te, "Test (Edge Loss)")
+
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss")
+    plt.title(title or "Node vs Edge Loss")
+    plt.tight_layout()
+    out_path = os.path.join(save_model_dir, f"NodeEdgeLoss_{target}.png")
     plt.savefig(out_path)
     plt.close()
 

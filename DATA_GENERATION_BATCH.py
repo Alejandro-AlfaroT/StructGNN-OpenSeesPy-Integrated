@@ -28,9 +28,9 @@ LType = 8                 # "Other"
 PARAM_GRID = {
     "NumStory":   [2, 3, 4, 5, 6],
     "StoryHeight":[12, 16],        # feet
-    "SpansX":     [3, 5, 6],
+    "SpansX":     [3, 5],
     "LengthX":    [20, 30],        # feet
-    "SpansY":     [3, 4, 6],
+    "SpansY":     [2, 4, 6],
     "LengthY":    [20, 40],        # feet
     "ForceX":     [60, 80, 100],   # kip
     "ForceY":     [90, 120, 160],  # kip
