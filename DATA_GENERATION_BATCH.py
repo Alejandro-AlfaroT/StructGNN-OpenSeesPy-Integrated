@@ -1,15 +1,18 @@
-# batch_run.py
+# DATA_GENERATION_BATCH.py (ultra-fast geometry grouping)
 import itertools
 import time
 import traceback
+from datetime import datetime
+from collections import defaultdict
 
 from MP_TESTING import Test_SAP2000
 from MP_TESTING import Del_Files
 from MP_TESTING import graph_generation
 from MP_TESTING import Update_Output_Features
 
+
 # ------------------------------
-# Fixed settings
+# SAP2000 fixed settings
 # ------------------------------
 Units = 4                 # kip-ft-F
 template_type = 0         # OpenFrame
@@ -18,49 +21,48 @@ Beam = "Default"
 Column = "Default"
 LType = 8                 # "Other"
 
-# ------------------------------------
-# Define your parameter sweep right here
-# (Put one or more values in each list)
-# ------------------------------------
+
+# ------------------------------
+# Parameter sweep grid
+# ------------------------------
 PARAM_GRID = {
     "NumStory":   [2, 3, 4, 5, 6],
-    "StoryHeight":[12, 16],            # feet
-    "SpansX":     [3, 5, 6],
-    "LengthX":    [20, 30],            # feet
-    "SpansY":     [3, 4, 6],
-    "LengthY":    [20, 40],            # feet
-    "ForceX":     [60, 80, 100],        # Kip
-    "ForceY":     [90, 120, 160],      # Kip
+    "StoryHeight":[12, 16],        # feet
+    "SpansX":     [3, 5],
+    "LengthX":    [20, 30],        # feet
+    "SpansY":     [2, 4, 6],
+    "LengthY":    [20, 40],        # feet
+    "ForceX":     [60, 80, 100],   # kip
+    "ForceY":     [90, 120, 160],  # kip
 }
 
-# If you prefer single-run defaults, set lists to one value each:
-# PARAM_GRID = {
-#     "NumStory":   [2],
-#     "StoryHeight":[12],
-#     "SpansX":     [4],
-#     "LengthX":    [20],
-#     "SpansY":     [4],
-#     "LengthY":    [20],
-#     "ForceX":     [90],
-#     "ForceY":     [150],
-# }
 
-def run_one(structure_id: int,
-            NumStory: int, StoryHeight: float,
-            SpansX: int, LengthX: float,
-            SpansY: int, LengthY: float,
-            ForceX: float, ForceY: float):
+def run_one(
+    structure_id: int,
+    SapModel,
+    geom_info: dict,
+    NumStory: int,
+    StoryHeight: float,
+    SpansX: int,
+    LengthX: float,
+    SpansY: int,
+    LengthY: float,
+    ForceX: float,
+    ForceY: float,
+) -> None:
     """
-    Executes a single end-to-end pipeline run for one parameter combo.
-    Assumes Update_Output_Features.update_output() reads the CSVs written
-    by SAP2000 and writes the final graph to Modified_Graphs.
+    Executes a single run for a given geometry & load combo.
+    Geometry is already built in SAP (geom_info).
     """
-    print("\n" + "="*80)
-    print(f"RUN {structure_id} | "
-          f"NumStory={NumStory}, StoryHeight={StoryHeight}, "
-          f"SpansX={SpansX}, LengthX={LengthX}, SpansY={SpansY}, LengthY={LengthY}, "
-          f"ForceX={ForceX}, ForceY={ForceY}")
-    print("="*80)
+    print("\n" + "=" * 80)
+    print(
+        f"RUN {structure_id} | "
+        f"NumStory={NumStory}, StoryHeight={StoryHeight}, "
+        f"SpansX={SpansX}, LengthX={LengthX}, "
+        f"SpansY={SpansY}, LengthY={LengthY}, "
+        f"ForceX={ForceX}, ForceY={ForceY}"
+    )
+    print("=" * 80)
 
     # 1) Build PyTorch Geometric graph for this configuration
     graph_generation.generate_structure(
@@ -72,73 +74,151 @@ def run_one(structure_id: int,
         LengthY,
         StoryHeight,
         ForceX,
-        ForceY
+        ForceY,
     )
 
-    # 2) Run SAP2000 analysis and export CSVs
-    Test_SAP2000.SAPAnalysis(
-        Units,
-        template_type,
-        NumStory,
-        StoryHeight,
-        SpansX,
-        LengthX,
-        SpansY,
-        LengthY,
-        Restraint,
-        Beam,
-        Column,
-        LType,
+    # 2) SAP2000: apply loads + run + export CSVs (reusing geometry)
+    Test_SAP2000.run_analysis_for_loads(
+        SapModel,
+        geom_info,
         ForceX,
-        ForceY
+        ForceY,
     )
 
     # 3) Update node/edge outputs inside the graph from the generated CSVs
     Update_Output_Features.update_output(structure_id=structure_id)
 
-    # 4) Clean up extra files for this run
-    Del_Files.cleanup_SAP2000()
-    Del_Files.cleanup_csv()
+    # 4) Clean up CSVs if desired (no-op or minimal)
+    Del_Files.cleanup_SAP2000()   # currently disabled in your Del_Files
+    Del_Files.cleanup_csv()       # you disabled this too; safe to leave
 
-def main():
+
+def main() -> None:
+    # ------------------------------
+    # Start SAP2000 once
+    # ------------------------------
+    mySapObject, SapModel = Test_SAP2000.start_sap(
+        attach_to_running=False,
+        visible=True,
+    )
+
     keys = list(PARAM_GRID.keys())
-    values_product = list(itertools.product(*(PARAM_GRID[k] for k in keys)))
+    combos = list(itertools.product(*(PARAM_GRID[k] for k in keys)))
 
-    total_combos = len(values_product)
-    print("\n" + "="*80)
-    print(f"Starting batch run with {total_combos} total combinations.")
-    print("="*80 + "\n")
+    # Build a list of run configs with IDs
+    runs = []
+    for i, combo in enumerate(combos, start=1):
+        params = dict(zip(keys, combo))
+        params["structure_id"] = i
+        runs.append(params)
+
+    print("\n" + "=" * 80)
+    print(f"Starting batch run with {len(runs)} total combinations.")
+    batch_start_dt = datetime.now()
+    print(f"Batch started at: {batch_start_dt.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 80 + "\n")
+
+    # ------------------------------
+    # Group runs by GEOMETRY ONLY
+    # ------------------------------
+    geom_groups = defaultdict(list)
+    for p in runs:
+        geom_key = (
+            p["NumStory"],
+            p["StoryHeight"],
+            p["SpansX"],
+            p["LengthX"],
+            p["SpansY"],
+            p["LengthY"],
+        )
+        geom_groups[geom_key].append(p)
 
     total_runs = 0
     start_time = time.time()
 
-    for i, combo in enumerate(values_product, start=1):
-        params = dict(zip(keys, combo))
-        try:
-            run_one(
-                structure_id=i,
-                NumStory=params["NumStory"],
-                StoryHeight=params["StoryHeight"],
-                SpansX=params["SpansX"],
-                LengthX=params["LengthX"],
-                SpansY=params["SpansY"],
-                LengthY=params["LengthY"],
-                ForceX=params["ForceX"],
-                ForceY=params["ForceY"],
-            )
-            total_runs += 1
-        except Exception as e:
-            print("\n[ERROR] Run failed:")
-            print(f"  Params: {params}")
-            print("  Exception:", e)
-            traceback.print_exc()
-            continue
+    # ------------------------------
+    # Loop over each geometry group
+    # ------------------------------
+    for g_idx, (geom_key, group_runs) in enumerate(geom_groups.items(), start=1):
+        NumStory, StoryHeight, SpansX, LengthX, SpansY, LengthY = geom_key
 
-    elapsed = time.time() - start_time
-    print("\n" + "-"*80)
-    print(f"Completed {total_runs} run(s) in {elapsed:.1f} seconds.")
-    print("Final graphs should be in: Modified_Graphs")
-    print("-"*80 + "\n")
+        print("\n" + "#" * 80)
+        print(
+            f"GEOMETRY GROUP {g_idx} | "
+            f"NumStory={NumStory}, StoryHeight={StoryHeight}, "
+            f"SpansX={SpansX}, LengthX={LengthX}, "
+            f"SpansY={SpansY}, LengthY={LengthY}"
+        )
+        print("#" * 80)
+
+        # --- Prepare SAP geometry ONCE for this group ---
+        geom_info = Test_SAP2000.prepare_geometry(
+            SapModel,
+            Units,
+            template_type,
+            NumStory,
+            StoryHeight,
+            SpansX,
+            LengthX,
+            SpansY,
+            LengthY,
+            Restraint,
+            Beam,
+            Column,
+            LType,
+        )
+
+        # --- Run all load combinations for this geometry ---
+        for params in group_runs:
+            structure_id = params["structure_id"]
+
+            run_start = time.time()
+            try:
+                run_one(
+                    structure_id=structure_id,
+                    SapModel=SapModel,
+                    geom_info=geom_info,
+                    NumStory=NumStory,
+                    StoryHeight=StoryHeight,
+                    SpansX=SpansX,
+                    LengthX=LengthX,
+                    SpansY=SpansY,
+                    LengthY=LengthY,
+                    ForceX=params["ForceX"],
+                    ForceY=params["ForceY"],
+                )
+                total_runs += 1
+                run_end = time.time()
+                print(
+                    f">>> Run {structure_id} completed in "
+                    f"{run_end - run_start:.2f} seconds\n"
+                )
+
+            except Exception as e:
+                print("\n[ERROR] Run failed:")
+                print(f"Params: {params}")
+                print("Exception:", e)
+                traceback.print_exc()
+                # continue to the next run
+                continue
+
+    # ------------------------------
+    # Close SAP2000 once at the end
+    # ------------------------------
+    mySapObject.ApplicationExit(False)
+
+    total_elapsed = time.time() - start_time
+    batch_end_dt = datetime.now()
+
+    print("\n" + "-" * 80)
+    print(f"Completed {total_runs} successful run(s).")
+    print(
+        f"Total elapsed time: {total_elapsed/60:.2f} minutes "
+        f"({total_elapsed:.1f} seconds)"
+    )
+    print(f"Batch ended at: {batch_end_dt.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("Final graphs should be in: Data_SAP2000")
+    print("-" * 80 + "\n")
 
 
 if __name__ == "__main__":
