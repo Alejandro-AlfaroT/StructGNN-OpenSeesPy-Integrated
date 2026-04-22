@@ -12,13 +12,13 @@ ops.wipe()
 ops.model('Basic', '-ndm', 3, '-ndf', 6)
 
 # properties
-numBayX = 6
-numBayY = 6
-numFloor = 12
+numBayX = 8
+numBayY = 10
+numFloor = 16
 
 bayWidthX = 144.0
 bayWidthY = 144.0
-storyHeights = [162.0, 162.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 162.0]
+storyHeights = [240.0, 168.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0, 156.0]
 
 E = 29500.0
 massX = 0.49
@@ -118,7 +118,7 @@ for floor in range(1, numFloor + 1):
 # -------------------------
 # EIGENVALUE ANALYSIS
 # -------------------------
-numEigen = 12
+numEigen = 16
 eigenValues = ops.eigen(numEigen)
 PI = 2 * asin(1.0)
 
@@ -135,7 +135,7 @@ plt.title("Structure")
 # -------------------------
 #opsv.plot_mode_shape(4, sfac=300)
 #plt.title("Mode Shape" )
-numModes = 12
+numModes = 16
 
 for mode in range(1, numModes + 1):
     #plt.figure(f"Mode Shape {mode}")
@@ -160,6 +160,6 @@ ops.algorithm('Linear')
 ops.integrator('LoadControl', 0.1)
 ops.analysis('Static')
 
-ops.analyze(12)
+ops.analyze(16)
 
 ops.wipe()

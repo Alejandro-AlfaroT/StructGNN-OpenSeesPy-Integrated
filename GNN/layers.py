@@ -1,4 +1,14 @@
 import torch
+'''
+def scatter_add(src, index, dim=0, dim_size=None):
+    if dim_size is None:
+        dim_size = int(index.max().item()) + 1 if index.numel() > 0 else 0
+
+    out_shape = list(src.shape)
+    out_shape[dim] = dim_size
+    out = torch.zeros(out_shape, device=src.device, dtype=src.dtype)
+    return out.index_add(dim, index, src)
+'''
 import torch.nn as nn
 from torch_geometric.nn import MessagePassing
 import torch.nn.functional as F

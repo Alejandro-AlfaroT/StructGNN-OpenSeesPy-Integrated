@@ -25,7 +25,7 @@ space = plot.print_space()
 parser = ArgumentParser()
 # ----------------------- General / dataset -----------------------
 parser.add_argument('--data_num', dest='data_num', default=2160, type=int)
-parser.add_argument('--train_ratio', dest='train_ratio', default=0.9, type=float)
+parser.add_argument('--train_ratio', dest='train_ratio', default=0.85, type=float)
 parser.add_argument('--normalization', dest='normalization', default=True, type=bool)
 
 # ----------------------- GNN -----------------------
@@ -43,7 +43,7 @@ parser.add_argument('--gnn_act', dest='gnn_act', default=True, type=bool,
 # ----------------------- Training -----------------------
 parser.add_argument('--target', dest='target', default='all', type=str,
                     help='which output target you are going to train (node slice), e.g., all')
-parser.add_argument('--epoch_num', dest='epoch_num', default=1000, type=int)
+parser.add_argument('--epoch_num', dest='epoch_num', default=3500, type=int)
 parser.add_argument('--batch_size', dest='batch_size', default=1, type=int)
 parser.add_argument('--lr', dest='lr', default=5e-5, type=float)
 parser.add_argument('--loss_function', dest='loss_function', default='L1', type=str,
