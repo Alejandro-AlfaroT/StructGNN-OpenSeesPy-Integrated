@@ -34,7 +34,7 @@ zLoc = 0.0
 
 for k in range(numFloor + 1):
     xLoc = 0.0
-    for i in range(numBayX + 1):
+    for i in range(numBayX + 1):1
         yLoc = 0.0
         for j in range(numBayY + 1):
             ops.node(nodeTag, xLoc, yLoc, zLoc)

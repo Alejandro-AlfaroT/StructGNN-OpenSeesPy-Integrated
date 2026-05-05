@@ -1,8 +1,8 @@
 import openseespy.opensees as ops
 import opsvis as opsv
-from math import asin
 import matplotlib.pyplot as plt
 import math
+from mpl_toolkits.mplot3d import Axes3D
 
 ops.wipe()
 ops.model('basic', '-ndm', 3, '-ndf', 6)
@@ -39,7 +39,8 @@ for j in range(numBayY + 1):
 # Material / Section Properties
 # --------------------------------------------------
 fc_ksi = 4.0
-Ec = 57.0 * math.sqrt(fc_ksi * 1000.0) / 1000.0  # ksi
+fc_psi = fc_ksi * 1000.0
+Ec = 57000.0 * math.sqrt(fc_psi) / 1000.0  # ksi
 Gc = 0.4 * Ec
 
 # Columns
@@ -69,8 +70,6 @@ ops.geomTransf('Linear', 3, 0, 0, 1)  # Y beams
 # Elements
 # --------------------------------------------------
 eleTag = 1
-beam_tags = []
-all_elements = []
 
 # Columns
 for k in range(numFloor):
@@ -80,8 +79,8 @@ for k in range(numFloor):
             nJ = node_tag(k + 1, i, j)
             ops.element(
                 'elasticBeamColumn', eleTag, nI, nJ,
-                A_col, Ec, Gc, J_col, Iy_col, Iz_col, 1)
-            all_elements.append((eleTag, nI, nJ))
+                A_col, Ec, Gc, J_col, Iy_col, Iz_col, 1
+            )
             eleTag += 1
 
 # Beams in X
@@ -92,9 +91,8 @@ for k in range(1, numFloor + 1):
             nJ = node_tag(k, i + 1, j)
             ops.element(
                 'elasticBeamColumn', eleTag, nI, nJ,
-                A_beam, Ec, Gc, J_beam, Iy_beam, Iz_beam, 2)
-            beam_tags.append(eleTag)
-            all_elements.append((eleTag, nI, nJ))
+                A_beam, Ec, Gc, J_beam, Iy_beam, Iz_beam, 2
+            )
             eleTag += 1
 
 # Beams in Y
@@ -105,9 +103,8 @@ for k in range(1, numFloor + 1):
             nJ = node_tag(k, i, j + 1)
             ops.element(
                 'elasticBeamColumn', eleTag, nI, nJ,
-                A_beam, Ec, Gc, J_beam, Iy_beam, Iz_beam, 3)
-            beam_tags.append(eleTag)
-            all_elements.append((eleTag, nI, nJ))
+                A_beam, Ec, Gc, J_beam, Iy_beam, Iz_beam, 3
+            )
             eleTag += 1
 
 # --------------------------------------------------
@@ -126,7 +123,8 @@ for k in range(1, numFloor + 1):
 # --------------------------------------------------
 # Nodal Mass
 # --------------------------------------------------
-m = 5.0  # kip-sec^2/in placeholder
+g = 386.4  # in/sec^2
+m = abs(10) / g  # if you want mass consistent with your gravity load
 
 for k in range(1, numFloor + 1):
     for j in range(numBayY + 1):
@@ -134,85 +132,58 @@ for k in range(1, numFloor + 1):
             n = node_tag(k, i, j)
             ops.mass(n, m, m, 1e-8, 0.0, 0.0, 0.0)
 
+
 # --------------------------------------------------
-# Plotting Definitions
+# Helper for manual load plotting
 # --------------------------------------------------
 def get_node_coords(tag):
     c = ops.nodeCoord(tag)
     return c[0], c[1], c[2]
 
-def plot_fixed_bases(ax, size=80):
-    x_fix, y_fix, z_fix = [], [], []
+def plot_loads_manual():
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
 
+    # draw member lines manually just for the load figure
+    for ele in ops.getEleTags():
+        nodes = ops.eleNodes(ele)
+        x1, y1, z1 = get_node_coords(nodes[0])
+        x2, y2, z2 = get_node_coords(nodes[1])
+        ax.plot([x1, x2], [y1, y2], [z1, z2], 'b-', linewidth=1.0)
+
+    # fixed base markers
+    x_fix, y_fix, z_fix = [], [], []
     for j in range(numBayY + 1):
         for i in range(numBayX + 1):
-            n = node_tag(0, i, j)  # base nodes only
+            n = node_tag(0, i, j)
             x, y, z = get_node_coords(n)
             x_fix.append(x)
             y_fix.append(y)
             z_fix.append(z)
+    ax.scatter(x_fix, y_fix, z_fix, c='k', marker='s', s=80)
 
-    ax.scatter(x_fix, y_fix, z_fix, c='k', marker='s', s=size)
+    # gravity arrows
+    grav_scale = 60
+    for k in range(1, numFloor + 1):
+        for j in range(numBayY + 1):
+            for i in range(numBayX + 1):
+                n = node_tag(k, i, j)
+                x, y, z = get_node_coords(n)
+                ax.quiver(x, y, z, 0, 0, -grav_scale, color='g', arrow_length_ratio=0.2)
 
-def plot_structure(ax, deformed=False, scale=1.0, mode=None, title="Structure"):
-    for _, nI, nJ in all_elements:
-        x1, y1, z1 = get_node_coords(nI)
-        x2, y2, z2 = get_node_coords(nJ)
+    # lateral arrows at diaphragm masters
+    lat_scale = 80
+    for k in range(1, numFloor + 1):
+        master = node_tag(k, numBayX // 2, numBayY // 2)
+        x, y, z = get_node_coords(master)
+        ax.quiver(x, y, z, lat_scale, 0, 0, color='m', arrow_length_ratio=0.2)
 
-        if deformed and mode is None:
-            dx1 = ops.nodeDisp(nI, 1) * scale
-            dy1 = ops.nodeDisp(nI, 2) * scale
-            dz1 = ops.nodeDisp(nI, 3) * scale
-
-            dx2 = ops.nodeDisp(nJ, 1) * scale
-            dy2 = ops.nodeDisp(nJ, 2) * scale
-            dz2 = ops.nodeDisp(nJ, 3) * scale
-
-        elif mode is not None:
-            dx1 = ops.nodeEigenvector(nI, mode, 1) * scale
-            dy1 = ops.nodeEigenvector(nI, mode, 2) * scale
-            dz1 = ops.nodeEigenvector(nI, mode, 3) * scale
-
-            dx2 = ops.nodeEigenvector(nJ, mode, 1) * scale
-            dy2 = ops.nodeEigenvector(nJ, mode, 2) * scale
-            dz2 = ops.nodeEigenvector(nJ, mode, 3) * scale
-        else:
-            dx1 = dy1 = dz1 = 0.0
-            dx2 = dy2 = dz2 = 0.0
-
-        ax.plot(
-            [x1 + dx1, x2 + dx2],
-            [y1 + dy1, y2 + dy2],
-            [z1 + dz1, z2 + dz2],
-            'b-' if not deformed and mode is None else 'r-',
-            linewidth=1.2
-        )
-    plot_fixed_bases(ax)
-    ax.set_title(title)
+    ax.set_title("Applied Loads")
     ax.set_xlabel("X (in)")
     ax.set_ylabel("Y (in)")
     ax.set_zlabel("Z (in)")
     ax.set_box_aspect([1, 1, 1])
-
-def plot_loads(ax, show_gravity=True, show_lateral=True, grav_scale=20, lat_scale=20):
-    # draw undeformed structure first
-    plot_structure(ax, deformed=False, title="Applied Loads")
-
-    # gravity loads at all elevated nodes
-    if show_gravity:
-        for k in range(1, numFloor + 1):
-            for j in range(numBayY + 1):
-                for i in range(numBayX + 1):
-                    n = node_tag(k, i, j)
-                    x, y, z = get_node_coords(n)
-                    ax.quiver(x, y, z, 0, 0, -grav_scale, color='g', arrow_length_ratio=0.2)
-
-    # lateral loads only at diaphragm master nodes
-    if show_lateral:
-        for k in range(1, numFloor + 1):
-            master = node_tag(k, numBayX // 2, numBayY // 2)
-            x, y, z = get_node_coords(master)
-            ax.quiver(x, y, z, lat_scale, 0, 0, color='m', arrow_length_ratio=0.2)
+    plt.tight_layout()
 
 # --------------------------------------------------
 # Gravity Loads
@@ -315,34 +286,28 @@ for mode in range(1, 7):
     )
 
 # --------------------------------------------------
-# Plots
+# Plots using opsvis
 # --------------------------------------------------
 
-# 1. Undeformed structure
-fig = plt.figure(figsize=(8, 6))
-ax = fig.add_subplot(111, projection='3d')
-plot_structure(ax, title="Undeformed Structure")
+# 1. Undeformed model
+opsv.plot_model()
+plt.title("Undeformed Structure")
 plt.tight_layout()
 
-# 2. Load display
-fig = plt.figure(figsize=(8, 6))
-ax = fig.add_subplot(111, projection='3d')
-plot_loads(ax, show_gravity=True, show_lateral=True, grav_scale=60, lat_scale=80)
+# 2. Applied loads (manual arrows)
+plot_loads_manual()
+
+# 3. Deformed shape from gravity + lateral
+opsv.plot_defo(sfac=200)
+plt.title("Deformed Shape (Gravity + Lateral, scaled)")
 plt.tight_layout()
 
-# 3. Gravity + lateral deformed shape
-fig = plt.figure(figsize=(8, 6))
-ax = fig.add_subplot(111, projection='3d')
-plot_structure(ax, deformed=True, scale=10, title="Deformed Shape (Gravity + Lateral, scaled)")
-plt.tight_layout()
+# 4. Mode shapes
+mode_scale = 10
 
-# 4. Modal shape plots
-modal_scale = 100
-
-for mode in range(1, 7):  # of modes
-    fig = plt.figure(figsize=(8, 6))
-    ax = fig.add_subplot(111, projection='3d')
-    plot_structure(ax, mode=mode, scale=modal_scale, title=f"Mode Shape {mode} (scaled)")
+for mode in range(1, 5):
+    opsv.plot_mode_shape(mode, sfac=mode_scale)
+    plt.title(f"Mode Shape {mode} (scaled)")
     plt.tight_layout()
 
 plt.show()
