@@ -70,6 +70,109 @@ Iz_beam = b_beam * h_beam**3 / 12.0
 J_beam = Iy_beam + Iz_beam
 
 # --------------------------------------------------
+# RC Fiber Section Definitions
+# --------------------------------------------------
+
+# Material tags
+cover_col_tag = 1
+core_col_tag = 2
+cover_beam_tag = 3
+core_beam_tag = 4
+steel_tag = 5
+
+# Steel
+fy = 60.0      # ksi
+Es = 29000.0   # ksi
+b_steel = 0.01
+
+ops.uniaxialMaterial('Steel02', steel_tag, fy, Es, b_steel)
+
+# Concrete02 inputs are negative in compression
+# Concrete02 tag fpc epsc0 fpcu epsU lambda ft Ets
+
+ops.uniaxialMaterial('Concrete02', cover_col_tag, -fc_col_ksi, -0.002, -0.20 * fc_col_ksi, -0.006, 0.1, 0.0, 0.0)
+ops.uniaxialMaterial('Concrete02', core_col_tag,  -1.15 * fc_col_ksi, -0.0025, -0.30 * fc_col_ksi, -0.020, 0.1, 0.0, 0.0)
+
+ops.uniaxialMaterial('Concrete02', cover_beam_tag, -fc_beam_ksi, -0.002, -0.20 * fc_beam_ksi, -0.006, 0.1, 0.0, 0.0)
+ops.uniaxialMaterial('Concrete02', core_beam_tag,  -1.10 * fc_beam_ksi, -0.0025, -0.30 * fc_beam_ksi, -0.015, 0.1, 0.0, 0.0)
+
+
+def make_rc_rect_section(secTag, b, h, cover, core_mat, cover_mat, steel_mat,
+                         top_bars, bot_bars, bar_area, side_bars=0):
+    """
+    Rectangular RC fiber section.
+    Local section coordinates:
+    y = horizontal section width direction
+    z = vertical section depth direction
+    """
+
+    y1 = -b / 2.0
+    y2 =  b / 2.0
+    z1 = -h / 2.0
+    z2 =  h / 2.0
+
+    yc1 = y1 + cover
+    yc2 = y2 - cover
+    zc1 = z1 + cover
+    zc2 = z2 - cover
+
+    ops.section('Fiber', secTag, '-GJ', 1.0e8)
+
+    # Core concrete
+    ops.patch('rect', core_mat, 12, 12, yc1, zc1, yc2, zc2)
+
+    # Cover concrete: bottom, top, left, right
+    ops.patch('rect', cover_mat, 12, 2, y1, z1, y2, zc1)
+    ops.patch('rect', cover_mat, 12, 2, y1, zc2, y2, z2)
+    ops.patch('rect', cover_mat, 2, 12, y1, zc1, yc1, zc2)
+    ops.patch('rect', cover_mat, 2, 12, yc2, zc1, y2, zc2)
+
+    # Longitudinal rebar
+    ops.layer('straight', steel_mat, top_bars, bar_area, yc1, zc2, yc2, zc2)
+    ops.layer('straight', steel_mat, bot_bars, bar_area, yc1, zc1, yc2, zc1)
+
+    # Optional side bars, useful for columns
+    if side_bars > 0:
+        ops.layer('straight', steel_mat, side_bars, bar_area, yc1, zc1, yc1, zc2)
+        ops.layer('straight', steel_mat, side_bars, bar_area, yc2, zc1, yc2, zc2)
+
+# --------------------------------------------------
+# Create RC Fiber Sections
+# --------------------------------------------------
+col_sec_tag = 101
+beam_sec_tag = 102
+
+cover = 1.5  # in
+
+Abar8 = 0.79  # #8 bar area, in^2
+Abar6 = 0.44  # #6 bar area, in^2
+
+make_rc_rect_section(
+    col_sec_tag,
+    b_col, h_col, cover,
+    core_col_tag, cover_col_tag, steel_tag,
+    top_bars=4,
+    bot_bars=4,
+    side_bars=2,
+    bar_area=Abar8
+)
+
+make_rc_rect_section(
+    beam_sec_tag,
+    b_beam, h_beam, cover,
+    core_beam_tag, cover_beam_tag, steel_tag,
+    top_bars=2,
+    bot_bars=2,
+    side_bars=0,
+    bar_area=Abar6
+)
+
+# Beam integration
+num_int_pts = 5
+ops.beamIntegration('Lobatto', 1, col_sec_tag, num_int_pts)
+ops.beamIntegration('Lobatto', 2, beam_sec_tag, num_int_pts)
+
+# --------------------------------------------------
 # Geometric Transformations
 # --------------------------------------------------
 ops.geomTransf('Linear', 1, 1, 0, 0)  # columns
@@ -87,10 +190,7 @@ for k in range(numFloor):
         for i in range(numBayX + 1):
             nI = node_tag(k, i, j)
             nJ = node_tag(k + 1, i, j)
-            ops.element(
-                'elasticBeamColumn', eleTag, nI, nJ,
-                A_col, Ec_col, Gc_col, J_col, Iy_col, Iz_col, 1
-            )
+            ops.element('forceBeamColumn', eleTag, nI, nJ, 1, 1)
             eleTag += 1
 
 # Beams in X
@@ -99,10 +199,7 @@ for k in range(1, numFloor + 1):
         for i in range(numBayX):
             nI = node_tag(k, i, j)
             nJ = node_tag(k, i + 1, j)
-            ops.element(
-                'elasticBeamColumn', eleTag, nI, nJ,
-                A_beam, Ec_beam, Gc_beam, J_beam, Iy_beam, Iz_beam, 2
-            )
+            ops.element('forceBeamColumn', eleTag, nI, nJ, 2, 2 )
             eleTag += 1
 
 # Beams in Y
@@ -111,10 +208,7 @@ for k in range(1, numFloor + 1):
         for i in range(numBayX + 1):
             nI = node_tag(k, i, j)
             nJ = node_tag(k, i, j + 1)
-            ops.element(
-                'elasticBeamColumn', eleTag, nI, nJ,
-                A_beam, Ec_beam, Gc_beam, J_beam, Iy_beam, Iz_beam, 3
-            )
+            ops.element('forceBeamColumn', eleTag, nI, nJ,3, 2)
             eleTag += 1
 
 # --------------------------------------------------
@@ -201,7 +295,7 @@ def plot_loads_manual():
 ops.timeSeries('Linear', 1)
 ops.pattern('Plain', 1, 1)
 
-Pnode = -10.0  # kip downward per elevated node
+Pnode = -25.0  # kip downward per elevated node
 for k in range(1, numFloor + 1):
     for j in range(numBayY + 1):
         for i in range(numBayX + 1):
@@ -273,6 +367,11 @@ print(f"dUx = {ux_tot - ux_g:.6e} in")
 print(f"dUy = {uy_tot - uy_g:.6e} in")
 print(f"dUz = {uz_tot - uz_g:.6e} in")
 
+print("\nElement Forces:")
+
+for ele in ops.getEleTags():
+    forces = ops.eleForce(ele)
+    print(f"Element {ele}: {forces}")
 # --------------------------------------------------
 # Modal Analysis
 # --------------------------------------------------
