@@ -10,12 +10,12 @@ ops.model('basic', '-ndm', 3, '-ndf', 6)
 # --------------------------------------------------
 # Geometry
 # --------------------------------------------------
-numBayX = 2
-numBayY = 2
-numFloor = 4
+numBayX = 3
+numBayY = 3
+numFloor = 6
 
-bayX = 240.0   # in
-bayY = 240.0   # in
+bayX = 180.0   # in
+bayY = 180.0   # in
 storyH = 120.0 # in
 
 def node_tag(k, i, j):
@@ -40,7 +40,7 @@ for j in range(numBayY + 1):
 # --------------------------------------------------
 
 # Concrete strengths
-fc_col_ksi = 5.0      # columns, ksi
+fc_col_ksi = 6.0      # columns, ksi
 fc_beam_ksi = 4.0     # beams, ksi
 
 fc_col_psi = fc_col_ksi * 1000.0
@@ -273,10 +273,18 @@ print(f"dUx = {ux_tot - ux_g:.6e} in")
 print(f"dUy = {uy_tot - uy_g:.6e} in")
 print(f"dUz = {uz_tot - uz_g:.6e} in")
 
+print("\nElement Forces:")
+
+for ele in ops.getEleTags():
+    forces = ops.eleForce(ele)
+    print(f"Element {ele}: {forces}")
+
 # --------------------------------------------------
 # Modal Analysis
 # --------------------------------------------------
-lam = ops.eigen(6)
+numModes = numFloor + 2
+
+lam = ops.eigen(numModes)
 periods = [2 * math.pi / math.sqrt(x) for x in lam]
 
 print("\nPeriods:")
@@ -284,17 +292,17 @@ for i, T in enumerate(periods, start=1):
     print(f"Mode {i}: T = {T:.6f} sec")
 
 print("\nRoof-node eigenvector components:")
-for mode in range(1, 7):
+for mode in range(1, len(lam) + 1):
     ux_mode = ops.nodeEigenvector(roof_node, mode, 1)
     uy_mode = ops.nodeEigenvector(roof_node, mode, 2)
     uz_mode = ops.nodeEigenvector(roof_node, mode, 3)
+
     print(
         f"Mode {mode}: "
         f"Ux = {ux_mode:.6e}, "
         f"Uy = {uy_mode:.6e}, "
         f"Uz = {uz_mode:.6e}"
     )
-
 # --------------------------------------------------
 # Plots using opsvis
 # --------------------------------------------------
@@ -315,7 +323,7 @@ plt.tight_layout()
 # 4. Mode shapes
 mode_scale = 10
 
-for mode in range(1, 5):
+for mode in range(1, numFloor+3):
     opsv.plot_mode_shape(mode, sfac=mode_scale)
     plt.title(f"Mode Shape {mode} (scaled)")
     plt.tight_layout()

@@ -372,6 +372,7 @@ print("\nElement Forces:")
 for ele in ops.getEleTags():
     forces = ops.eleForce(ele)
     print(f"Element {ele}: {forces}")
+
 # --------------------------------------------------
 # Modal Analysis
 # --------------------------------------------------
