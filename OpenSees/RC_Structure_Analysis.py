@@ -3,6 +3,9 @@ import opsvis as opsv
 import matplotlib.pyplot as plt
 import math
 from mpl_toolkits.mplot3d import Axes3D
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'RC Structure'))
+from RC_Design_Check import run_checks, print_summary
 
 ops.wipe()
 ops.model('basic', '-ndm', 3, '-ndf', 6)
@@ -36,50 +39,124 @@ for j in range(numBayY + 1):
         ops.fix(node_tag(0, i, j), 1, 1, 1, 1, 1, 1)
 
 # --------------------------------------------------
-# Material / Section Properties
+# Uniaxial Materials
 # --------------------------------------------------
+# Concrete01: Kent-Scott-Park with linear tension softening
+# Args: matTag, fpc, epsc0, fpcu, epsU  (compression negative)
+#
+# Column concrete (fc' = 6 ksi):
+#   Confined core  — Mander approximation: f'cc ~ 7.0 ksi, epsc0 ~ -0.004, epsU ~ -0.020
+#   Unconfined cover                       — f'c  = 6.0 ksi, spalls at epsU = -0.006
+ops.uniaxialMaterial('Concrete01', 1, -7.0, -0.004,  -1.4, -0.020)  # col confined
+ops.uniaxialMaterial('Concrete01', 2, -6.0, -0.002,   0.0, -0.006)  # col cover (no tensile strength)
 
-# Concrete strengths
-fc_col_ksi = 6.0      # columns, ksi
-fc_beam_ksi = 4.0     # beams, ksi
+# Beam concrete (fc' = 4 ksi):
+#   Confined core  — f'cc ~ 4.5 ksi
+#   Unconfined cover
+ops.uniaxialMaterial('Concrete01', 3, -4.5, -0.004,  -0.9, -0.020)  # beam confined
+ops.uniaxialMaterial('Concrete01', 4, -4.0, -0.002,   0.0, -0.006)  # beam cover
 
-fc_col_psi = fc_col_ksi * 1000.0
-fc_beam_psi = fc_beam_ksi * 1000.0
+# Steel01: bilinear with strain hardening
+# Args: matTag, Fy, E0, b
+# Grade 60 rebar: Fy = 60 ksi, Es = 29000 ksi, b = 1% hardening
+ops.uniaxialMaterial('Steel01', 5, 60.0, 29000.0, 0.01)
 
-# ACI approximate Ec = 57000 sqrt(fc') psi
-Ec_col = 57000.0 * math.sqrt(fc_col_psi) / 1000.0   # ksi
-Ec_beam = 57000.0 * math.sqrt(fc_beam_psi) / 1000.0 # ksi
+# --------------------------------------------------
+# Fiber Sections
+# --------------------------------------------------
+# Section tag 1: Column (18" x 18")
+#   Clear cover to stirrups = 1.5 in; #4 ties (0.5 in dia)
+#   -> Core extends to ±7.25 in (to stirrup centerline)
+#   -> Bar center offset = 1.5 + 0.25 + 0.5 = 2.25 in from face  ->  ±6.75 in from centroid
+#   Longitudinal rebar: 8 #8 bars (Ab = 0.79 in²)
+#     corners: (±6.75, ±6.75)   [4 bars]
+#     midface: (±6.75,  0.0) and (0.0, ±6.75) [4 bars]
 
-Gc_col = 0.4 * Ec_col
-Gc_beam = 0.4 * Ec_beam
+col_half  = 9.0          # half section dimension
+col_core  = 7.25         # half core dimension (to stirrup CL)
+col_d     = 6.75         # bar center distance from centroid
+Ab_col    = 0.79         # #8 bar area, in²
+nFibY_col = 8            # fiber subdivisions in Y for patches
+nFibZ_col = 8            # fiber subdivisions in Z for patches
 
-# Columns
-b_col = 18.0
-h_col = 18.0
-A_col = b_col * h_col
-Iy_col = h_col * b_col**3 / 12.0
-Iz_col = b_col * h_col**3 / 12.0
-J_col = Iy_col + Iz_col
+ops.section('Fiber', 1)
+# Confined core
+ops.patch('rect', 1, nFibY_col, nFibZ_col,
+          -col_core, -col_core, col_core, col_core)
+# Cover patches (4 sides)
+ops.patch('rect', 2, 2, nFibZ_col,                         # bottom cover
+          -col_half, -col_half, -col_core, col_half)
+ops.patch('rect', 2, 2, nFibZ_col,                         # top cover
+           col_core, -col_half,  col_half, col_half)
+ops.patch('rect', 2, nFibY_col, 2,                         # left cover
+          -col_core, -col_half,  col_core, -col_core)
+ops.patch('rect', 2, nFibY_col, 2,                         # right cover
+          -col_core,  col_core,  col_core,  col_half)
+# Corner bars
+ops.layer('straight', 5, 4, Ab_col,
+           col_d, -col_d,   col_d,  col_d)  # top row
+ops.layer('straight', 5, 4, Ab_col,
+          -col_d, -col_d,  -col_d,  col_d)  # bottom row
+# Mid-face bars (left and right faces)
+ops.fiber(0.0,  col_d, Ab_col, 5)
+ops.fiber(0.0, -col_d, Ab_col, 5)
 
-# Beams
-b_beam = 12.0
-h_beam = 18.0
-A_beam = b_beam * h_beam
-Iy_beam = h_beam * b_beam**3 / 12.0
-Iz_beam = b_beam * h_beam**3 / 12.0
-J_beam = Iy_beam + Iz_beam
+# Section tag 2: Beam (12" x 18")
+#   Clear cover = 1.5 in; #3 stirrups (0.375 in dia)
+#   -> Core extends to ±(6 - 1.6875) = ±4.3125 in (Z) and ±(9 - 1.6875) = ±7.3125 in (Y)
+#   Bar center offset = 1.5 + 0.1875 + 0.4375 = 2.125 in from face
+#   Top rebar:    3 #7 (Ab = 0.60 in²) at Y = +6.875 in (from centroid)
+#   Bottom rebar: 2 #7 (Ab = 0.60 in²) at Y = -6.875 in
+
+bm_hY  = 9.0         # half beam height (18/2)
+bm_hZ  = 6.0         # half beam width  (12/2)
+bm_cY  = 7.3125      # half core height
+bm_cZ  = 4.3125      # half core width
+bm_dY  = 6.875       # bar Y-offset from centroid
+Ab_bm  = 0.60        # #7 bar area, in²
+nFibY_bm = 8
+nFibZ_bm = 6
+
+ops.section('Fiber', 2)
+# Confined core
+ops.patch('rect', 3, nFibY_bm, nFibZ_bm,
+          -bm_cY, -bm_cZ,  bm_cY,  bm_cZ)
+# Cover patches (4 sides)
+ops.patch('rect', 4, 2, nFibZ_bm,          # bottom cover
+          -bm_hY, -bm_hZ, -bm_cY,  bm_hZ)
+ops.patch('rect', 4, 2, nFibZ_bm,          # top cover
+           bm_cY, -bm_hZ,  bm_hY,  bm_hZ)
+ops.patch('rect', 4, nFibY_bm, 2,          # left cover
+          -bm_cY, -bm_hZ,  bm_cY, -bm_cZ)
+ops.patch('rect', 4, nFibY_bm, 2,          # right cover
+          -bm_cY,  bm_cZ,  bm_cY,  bm_hZ)
+# Top rebar (3 #7 evenly spaced)
+ops.layer('straight', 5, 3, Ab_bm,
+           bm_dY, -bm_cZ,  bm_dY,  bm_cZ)
+# Bottom rebar (2 #7)
+ops.layer('straight', 5, 2, Ab_bm,
+          -bm_dY, -bm_cZ, -bm_dY,  bm_cZ)
+
+# --------------------------------------------------
+# Beam Integration (Lobatto, 5 integration points)
+# --------------------------------------------------
+ops.beamIntegration('Lobatto', 1, 1, 5)   # intTag 1 -> column section
+ops.beamIntegration('Lobatto', 2, 2, 5)   # intTag 2 -> beam section
 
 # --------------------------------------------------
 # Geometric Transformations
 # --------------------------------------------------
-ops.geomTransf('Linear', 1, 1, 0, 0)  # columns
+ops.geomTransf('PDelta', 1, 1, 0, 0)  # columns (P-Delta for seismic)
 ops.geomTransf('Linear', 2, 0, 0, 1)  # X beams
 ops.geomTransf('Linear', 3, 0, 0, 1)  # Y beams
 
 # --------------------------------------------------
-# Elements
+# Elements  (dispBeamColumn with fiber sections)
+# Track tags for the design checker
 # --------------------------------------------------
-eleTag = 1
+eleTag    = 1
+col_tags  = []
+beam_tags = []
 
 # Columns
 for k in range(numFloor):
@@ -87,10 +164,8 @@ for k in range(numFloor):
         for i in range(numBayX + 1):
             nI = node_tag(k, i, j)
             nJ = node_tag(k + 1, i, j)
-            ops.element(
-                'elasticBeamColumn', eleTag, nI, nJ,
-                A_col, Ec_col, Gc_col, J_col, Iy_col, Iz_col, 1
-            )
+            ops.element('dispBeamColumn', eleTag, nI, nJ, 1, 1)
+            col_tags.append(eleTag)
             eleTag += 1
 
 # Beams in X
@@ -99,10 +174,8 @@ for k in range(1, numFloor + 1):
         for i in range(numBayX):
             nI = node_tag(k, i, j)
             nJ = node_tag(k, i + 1, j)
-            ops.element(
-                'elasticBeamColumn', eleTag, nI, nJ,
-                A_beam, Ec_beam, Gc_beam, J_beam, Iy_beam, Iz_beam, 2
-            )
+            ops.element('dispBeamColumn', eleTag, nI, nJ, 2, 2)
+            beam_tags.append(eleTag)
             eleTag += 1
 
 # Beams in Y
@@ -111,10 +184,8 @@ for k in range(1, numFloor + 1):
         for i in range(numBayX + 1):
             nI = node_tag(k, i, j)
             nJ = node_tag(k, i, j + 1)
-            ops.element(
-                'elasticBeamColumn', eleTag, nI, nJ,
-                A_beam, Ec_beam, Gc_beam, J_beam, Iy_beam, Iz_beam, 3
-            )
+            ops.element('dispBeamColumn', eleTag, nI, nJ, 3, 2)
+            beam_tags.append(eleTag)
             eleTag += 1
 
 # --------------------------------------------------
@@ -209,17 +280,17 @@ for k in range(1, numFloor + 1):
             ops.load(n, 0.0, 0.0, Pnode, 0.0, 0.0, 0.0)
 
 # --------------------------------------------------
-# Static Gravity Analysis
+# Static Gravity Analysis  (10 increments for nonlinear convergence)
 # --------------------------------------------------
 ops.system('BandGeneral')
 ops.constraints('Transformation')
 ops.numberer('RCM')
-ops.test('NormDispIncr', 1e-8, 20)
+ops.test('NormDispIncr', 1e-6, 50)
 ops.algorithm('Newton')
-ops.integrator('LoadControl', 1.0)
+ops.integrator('LoadControl', 0.1)   # 10 steps of 10% load
 ops.analysis('Static')
 
-ok = ops.analyze(1)
+ok = ops.analyze(10)
 
 if ok != 0:
     print("Static gravity analysis failed")
@@ -273,11 +344,12 @@ print(f"dUx = {ux_tot - ux_g:.6e} in")
 print(f"dUy = {uy_tot - uy_g:.6e} in")
 print(f"dUz = {uz_tot - uz_g:.6e} in")
 
-print("\nElement Forces:")
-
-for ele in ops.getEleTags():
-    forces = ops.eleForce(ele)
-    print(f"Element {ele}: {forces}")
+# --------------------------------------------------
+# ACI 318-19 Design Check  (gravity + lateral demand)
+# --------------------------------------------------
+design_results = run_checks(col_tags, beam_tags)
+col_fail, beam_fail = print_summary(design_results, verbose=False)
+# Set verbose=True above to print every element's DCR, not just failures.
 
 # --------------------------------------------------
 # Modal Analysis
@@ -307,21 +379,14 @@ for mode in range(1, len(lam) + 1):
 # Plots using opsvis
 # --------------------------------------------------
 
-# 1. Undeformed model
-opsv.plot_model()
-plt.title("Undeformed Structure")
-plt.tight_layout()
 
-# 2. Applied loads (manual arrows)
-plot_loads_manual()
-
-# 3. Deformed shape from gravity + lateral
-opsv.plot_defo(sfac=200)
+# Deformed shape from gravity + lateral
+opsv.plot_defo(sfac=1)
 plt.title("Deformed Shape (Gravity + Lateral, scaled)")
 plt.tight_layout()
 
-# 4. Mode shapes
-mode_scale = 10
+# Mode shapes
+mode_scale = 100
 
 for mode in range(1, numFloor+3):
     opsv.plot_mode_shape(mode, sfac=mode_scale)
