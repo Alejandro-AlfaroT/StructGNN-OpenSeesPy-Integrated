@@ -290,11 +290,31 @@ class MechanismTracker:
                     self.column_yield_events.append(column_record)
 
     def record_step(self, step, roof_disp, base_shear):
+        n_hinge_events_before = len(self.hinge_events)
+        n_column_yield_before = len(self.column_yield_events)
         story_snapshot = collect_story_drift_snapshot(step, roof_disp, base_shear)
         self._record_story_targets(story_snapshot)
         self._record_interstory_drift_envelope(story_snapshot)
         self._record_hinge_response(step, roof_disp, base_shear)
         self._record_column_yield(step, roof_disp, base_shear)
+        new_hinge_events = self.hinge_events[n_hinge_events_before:]
+        new_column_yield_events = self.column_yield_events[n_column_yield_before:]
+
+        return {
+            "story_snapshot": story_snapshot,
+            "max_abs_story_drift_ratio": story_snapshot["max_abs_story_drift_ratio"],
+            "new_hinge_events": new_hinge_events,
+            "new_hinge_yield_events": [
+                event for event in new_hinge_events if event["event"] == "yielded"
+            ],
+            "new_hinge_cap_events": [
+                event for event in new_hinge_events if event["event"] == "capped"
+            ],
+            "new_hinge_ultimate_events": [
+                event for event in new_hinge_events if event["event"] == "ultimate_exceeded"
+            ],
+            "new_column_yield_events": new_column_yield_events,
+        }
 
     def summary(self):
         yielded_events = [event for event in self.hinge_events if event["event"] == "yielded"]

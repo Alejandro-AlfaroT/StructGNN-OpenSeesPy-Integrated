@@ -48,6 +48,55 @@ def clear_failure_artifacts(outputs_dir):
             path.unlink()
 
 
+def model_summary():
+    return {
+        "num_bay_x": sp.NUM_BAY_X,
+        "num_bay_y": sp.NUM_BAY_Y,
+        "num_stories": sp.NUM_FLOOR,
+        "num_floor": sp.NUM_FLOOR,
+        "bay_x_in": sp.BAY_X,
+        "bay_y_in": sp.BAY_Y,
+        "story_height_in": sp.STORY_H,
+        "total_height_in": sp.NUM_FLOOR * sp.STORY_H,
+        "column_geometry": {
+            "width_in": sp.B_COL,
+            "depth_in": sp.H_COL,
+            "area_in2": sp.rect_area(sp.B_COL, sp.H_COL),
+            "iy_in4": sp.rect_iy(sp.B_COL, sp.H_COL),
+            "iz_in4": sp.rect_iz(sp.B_COL, sp.H_COL),
+        },
+        "beam_geometry": {
+            "width_in": sp.B_BEAM,
+            "depth_in": sp.H_BEAM,
+            "area_in2": sp.rect_area(sp.B_BEAM, sp.H_BEAM),
+            "iy_in4": sp.rect_iy(sp.B_BEAM, sp.H_BEAM),
+            "iz_in4": sp.rect_iz(sp.B_BEAM, sp.H_BEAM),
+        },
+    }
+
+
+def print_model_summary(summary):
+    print("\nModel summary:")
+    print(
+        f"  Plan: {summary['num_bay_x']} bay(s) in X @ {summary['bay_x_in']:g} in, "
+        f"{summary['num_bay_y']} bay(s) in Y @ {summary['bay_y_in']:g} in"
+    )
+    print(
+        f"  Vertical: {summary['num_stories']} storie(s) @ "
+        f"{summary['story_height_in']:g} in = {summary['total_height_in']:g} in total"
+    )
+    col = summary["column_geometry"]
+    beam = summary["beam_geometry"]
+    print(
+        f"  Columns: {col['width_in']:g} in x {col['depth_in']:g} in "
+        f"(A={col['area_in2']:.2f} in^2)"
+    )
+    print(
+        f"  Beams: {beam['width_in']:g} in x {beam['depth_in']:g} in "
+        f"(A={beam['area_in2']:.2f} in^2)"
+    )
+
+
 def print_gravity_results(results):
     print("Static gravity analysis succeeded")
     print("\nGravity-only roof control node displacement:")
@@ -201,6 +250,7 @@ def summarize_design_results(
     )
 
     status = {
+        "model": model_summary(),
         "phase": phase,
         "all_design_checks_pass": len(failures) == 0,
         "num_failed_elements": len(failures),
@@ -215,12 +265,20 @@ def summarize_design_results(
             "bottom_bars": sp.COL_BOT_BARS,
             "side_bars_per_face": sp.COL_SIDE_BARS,
             "bar_area_in2": sp.COL_BAR_AREA,
+            "stirrup_bar_size": sp.COL_STIRRUP_BAR_SIZE,
+            "stirrup_legs": sp.COL_STIRRUP_LEGS,
+            "stirrup_spacing_in": sp.COL_STIRRUP_SPACING,
+            "stirrup_area_in2": sp.COL_STIRRUP_LEGS * sp.rebar_area(sp.COL_STIRRUP_BAR_SIZE),
         },
         "final_beam_reinforcement": {
             "bar_size": sp.BEAM_BAR_SIZE,
             "top_bars": sp.BEAM_TOP_BARS,
             "bottom_bars": sp.BEAM_BOT_BARS,
             "bar_area_in2": sp.BEAM_BAR_AREA,
+            "stirrup_bar_size": sp.BEAM_STIRRUP_BAR_SIZE,
+            "stirrup_legs": sp.BEAM_STIRRUP_LEGS,
+            "stirrup_spacing_in": sp.BEAM_STIRRUP_SPACING,
+            "stirrup_area_in2": sp.BEAM_STIRRUP_LEGS * sp.rebar_area(sp.BEAM_STIRRUP_BAR_SIZE),
         },
     }
 
@@ -237,12 +295,16 @@ def summarize_design_results(
 def combine_design_statuses(
     gravity_status,
     pushover_final_status,
+    pushover_envelope_status=None,
     pushover_redesign_history=None,
 ):
+    lateral_status = pushover_envelope_status or pushover_final_status
+    lateral_phase = lateral_status.get("phase")
     status = {
+        "model": model_summary(),
         "all_design_checks_pass": (
             gravity_status["all_design_checks_pass"]
-            and pushover_final_status["all_design_checks_pass"]
+            and lateral_status["all_design_checks_pass"]
         ),
         "gravity": gravity_status,
         "pushover_final": pushover_final_status,
@@ -251,10 +313,60 @@ def combine_design_statuses(
         "notes": [
             "Gravity checks use the post-redesign gravity-analysis state.",
             "Pushover-final checks use element forces at the final converged pushover state.",
-            "Pushover-final checks are not peak-over-history envelopes; add per-step force tracking before treating them as lateral design envelopes.",
+            (
+                "The configured target roof-drift DCR snapshot is used for lateral design acceptance; the full 60 in pushover envelope is retained for ultimate/collapse behavior."
+                if lateral_phase == "pushover_target_roof_drift"
+                else "When available, pushover-envelope checks are used for lateral design acceptance instead of the final-state snapshot."
+            ),
             "Shear DCRs are included in pass/fail status, but the current redesign loop only changes longitudinal bars.",
         ],
     }
+
+    if pushover_envelope_status is not None:
+        status["pushover_lateral_design"] = pushover_envelope_status
+        if lateral_phase == "pushover_target_roof_drift":
+            status["pushover_2pct_drift"] = pushover_envelope_status
+            full_envelope = pushover_envelope_status.get("full_history_envelope_summary")
+            if full_envelope is not None:
+                status["pushover_envelope"] = full_envelope
+                status["ultimate_envelope_pass"] = full_envelope.get(
+                    "all_design_checks_pass"
+                )
+                status["ultimate_envelope_num_failed_elements"] = full_envelope.get(
+                    "num_failed_elements"
+                )
+                status["ultimate_envelope_failed_element_tags"] = full_envelope.get(
+                    "failed_element_tags", []
+                )
+                status["ultimate_envelope_num_failed_columns"] = full_envelope.get(
+                    "num_failed_columns"
+                )
+                status["ultimate_envelope_failed_column_tags"] = full_envelope.get(
+                    "failed_column_tags", []
+                )
+                status["ultimate_envelope_num_failed_beams"] = full_envelope.get(
+                    "num_failed_beams"
+                )
+                status["ultimate_envelope_failed_beam_tags"] = full_envelope.get(
+                    "failed_beam_tags", []
+                )
+                status["ultimate_envelope_max_column_pm_dcr"] = full_envelope.get(
+                    "max_column_pm_dcr"
+                )
+                status["ultimate_envelope_max_column_shear_dcr"] = full_envelope.get(
+                    "max_column_shear_dcr"
+                )
+                status["ultimate_envelope_max_beam_flexure_dcr"] = full_envelope.get(
+                    "max_beam_flexure_dcr"
+                )
+                status["ultimate_envelope_max_beam_shear_dcr"] = full_envelope.get(
+                    "max_beam_shear_dcr"
+                )
+                status["notes"].append(
+                    "Ultimate-envelope checks summarize the full 60 in pushover history and are reported separately from overall acceptance."
+                )
+        else:
+            status["pushover_envelope"] = pushover_envelope_status
 
     if pushover_redesign_history is not None:
         status["pushover_redesign_history"] = pushover_redesign_history
@@ -283,6 +395,115 @@ def combine_design_statuses(
             )
 
     return status
+
+
+def run_pushover_envelope_design_check(outputs_dir, pushover_results):
+    envelope = pushover_results.get("design_envelope", {})
+    if not envelope.get("tracked"):
+        return None, None
+
+    status = envelope.get("summary", {})
+    elements = envelope.get("elements", {})
+    target_snapshot = envelope.get("target_dcr_snapshot")
+
+    print("\nPeak-over-history pushover design envelope:")
+    print(
+        f"  Samples checked: {status.get('num_samples', 0)} "
+        f"(every {status.get('sample_every', '?')} step(s))"
+    )
+    print(
+        f"  Column P-M max DCR : {status.get('max_column_pm_dcr', 0.0):.3f}"
+    )
+    print(
+        f"  Column shear max DCR: {status.get('max_column_shear_dcr', 0.0):.3f}"
+    )
+    print(
+        f"  Beam flexure max DCR: {status.get('max_beam_flexure_dcr', 0.0):.3f}"
+    )
+    print(
+        f"  Beam shear max DCR  : {status.get('max_beam_shear_dcr', 0.0):.3f}"
+    )
+    print(
+        f"  Envelope failures   : {status.get('num_failed_elements', 0)}"
+    )
+    print(
+        f"    Columns failing   : {status.get('num_failed_columns', 0)}"
+    )
+    if status.get("failed_column_tags"):
+        print(f"      Column tags     : {status['failed_column_tags']}")
+    print(
+        f"    Beams failing     : {status.get('num_failed_beams', 0)}"
+    )
+    if status.get("failed_beam_tags"):
+        print(f"      Beam tags       : {status['failed_beam_tags']}")
+
+    with (outputs_dir / "design_check_pushover_envelope.json").open("w") as file:
+        json.dump(elements, file, indent=2)
+
+    acceptance_status = status
+    acceptance_results = elements
+
+    if target_snapshot:
+        target_status = target_snapshot.get("summary", {})
+        target_results = target_snapshot.get("results", {})
+        target_status["full_history_envelope_summary"] = status
+
+        print(
+            "\nPushover DCR snapshot at "
+            f"{100.0 * target_status.get('target_roof_drift_ratio', 0.0):.1f}% "
+            "roof drift:"
+        )
+        print(
+            f"  Target roof displacement: "
+            f"{target_status.get('target_roof_disp_in', 0.0):.3f} in"
+        )
+        print(
+            f"  Actual snapshot: step {target_status.get('step')} | "
+            f"Uroof={target_status.get('actual_roof_disp_in', 0.0):.3f} in | "
+            f"drift={100.0 * target_status.get('actual_roof_drift_ratio', 0.0):.3f}% | "
+            f"Vbase={target_status.get('base_shear_kip', 0.0):.3f} kip"
+        )
+        print(
+            f"  Column P-M max DCR : "
+            f"{target_status.get('max_column_pm_dcr', 0.0):.3f}"
+        )
+        print(
+            f"  Column shear max DCR: "
+            f"{target_status.get('max_column_shear_dcr', 0.0):.3f}"
+        )
+        print(
+            f"  Beam flexure max DCR: "
+            f"{target_status.get('max_beam_flexure_dcr', 0.0):.3f}"
+        )
+        print(
+            f"  Beam shear max DCR  : "
+            f"{target_status.get('max_beam_shear_dcr', 0.0):.3f}"
+        )
+        print(
+            f"  Target-drift failures: "
+            f"{target_status.get('num_failed_elements', 0)}"
+        )
+        print(
+            f"    Columns failing: "
+            f"{target_status.get('num_failed_columns', 0)}"
+        )
+        if target_status.get("failed_column_tags"):
+            print(f"      Column tags: {target_status['failed_column_tags']}")
+        print(
+            f"    Beams failing  : "
+            f"{target_status.get('num_failed_beams', 0)}"
+        )
+        if target_status.get("failed_beam_tags"):
+            print(f"      Beam tags: {target_status['failed_beam_tags']}")
+
+        with (outputs_dir / "design_check_pushover_2pct_drift.json").open("w") as file:
+            json.dump(target_snapshot, file, indent=2)
+
+        if getattr(sp, "PUSHOVER_USE_TARGET_DCR_FOR_REDESIGN", True):
+            acceptance_status = target_status
+            acceptance_results = target_results
+
+    return acceptance_status, acceptance_results
 
 
 def run_final_pushover_design_check(outputs_dir, pushover_failed=False):
@@ -320,12 +541,20 @@ def reinforcement_snapshot():
             "bottom_bars": sp.COL_BOT_BARS,
             "side_bars_per_face": sp.COL_SIDE_BARS,
             "bar_area_in2": sp.COL_BAR_AREA,
+            "stirrup_bar_size": sp.COL_STIRRUP_BAR_SIZE,
+            "stirrup_legs": sp.COL_STIRRUP_LEGS,
+            "stirrup_spacing_in": sp.COL_STIRRUP_SPACING,
+            "stirrup_area_in2": sp.COL_STIRRUP_LEGS * sp.rebar_area(sp.COL_STIRRUP_BAR_SIZE),
         },
         "beam": {
             "bar_size": sp.BEAM_BAR_SIZE,
             "top_bars": sp.BEAM_TOP_BARS,
             "bottom_bars": sp.BEAM_BOT_BARS,
             "bar_area_in2": sp.BEAM_BAR_AREA,
+            "stirrup_bar_size": sp.BEAM_STIRRUP_BAR_SIZE,
+            "stirrup_legs": sp.BEAM_STIRRUP_LEGS,
+            "stirrup_spacing_in": sp.BEAM_STIRRUP_SPACING,
+            "stirrup_area_in2": sp.BEAM_STIRRUP_LEGS * sp.rebar_area(sp.BEAM_STIRRUP_BAR_SIZE),
         },
     }
 
@@ -362,35 +591,111 @@ def _failed_member_classes(failed_element_tags):
     return classes or {"column", "beam"}
 
 
-def _column_strengthening_update(cfg):
-    next_bar = _next_value(sp.COL_BAR_SIZE, cfg.rebar.bar_sizes_col)
-    if next_bar is not None:
-        return {
-            "bar_size": next_bar,
-            "n_top": sp.COL_TOP_BARS,
-            "n_bot": sp.COL_BOT_BARS,
-            "n_side": sp.COL_SIDE_BARS,
-        }
+def _column_reinforcement_ratio(update):
+    total_bars = update["n_top"] + update["n_bot"] + 2 * update["n_side"]
+    return total_bars * sp.rebar_area(update["bar_size"]) / (sp.B_COL * sp.H_COL)
+
+
+def _column_total_steel_area(update):
+    total_bars = update["n_top"] + update["n_bot"] + 2 * update["n_side"]
+    return total_bars * sp.rebar_area(update["bar_size"])
+
+
+def _first_valid_column_update(candidates, cfg):
+    for update in candidates:
+        if _column_reinforcement_ratio(update) <= cfg.rebar.rho_col_max:
+            return update
+    return None
+
+
+def _column_strengthening_update(cfg, prefer_bar_count=False):
+    candidates = []
 
     next_top = _next_count(sp.COL_TOP_BARS, cfg.rebar.col_n_top_range)
     if next_top is not None:
-        return {
+        candidates.append({
             "bar_size": sp.COL_BAR_SIZE,
             "n_top": next_top,
             "n_bot": next_top,
             "n_side": sp.COL_SIDE_BARS,
-        }
+        })
 
     next_side = _next_value(sp.COL_SIDE_BARS, cfg.rebar.col_n_side_options)
     if next_side is not None:
-        return {
+        candidates.append({
             "bar_size": sp.COL_BAR_SIZE,
             "n_top": sp.COL_TOP_BARS,
             "n_bot": sp.COL_BOT_BARS,
             "n_side": next_side,
-        }
+        })
 
-    return None
+    next_bar = _next_value(sp.COL_BAR_SIZE, cfg.rebar.bar_sizes_col)
+    if next_bar is not None:
+        candidates.append({
+            "bar_size": next_bar,
+            "n_top": sp.COL_TOP_BARS,
+            "n_bot": sp.COL_BOT_BARS,
+            "n_side": sp.COL_SIDE_BARS,
+        })
+
+    if not prefer_bar_count and candidates:
+        candidates = candidates[-1:] + candidates[:-1]
+
+    return _first_valid_column_update(candidates, cfg)
+
+
+def _column_envelope_strengthening_update(cfg, envelope_summary):
+    current = {
+        "bar_size": sp.COL_BAR_SIZE,
+        "n_top": sp.COL_TOP_BARS,
+        "n_bot": sp.COL_BOT_BARS,
+        "n_side": sp.COL_SIDE_BARS,
+    }
+    current_ast = _column_total_steel_area(current)
+    governing_dcr = max(
+        envelope_summary.get("max_column_pm_dcr") or 0.0,
+        envelope_summary.get("max_column_shear_dcr") or 0.0,
+    )
+    target_dcr = max(0.1, getattr(cfg.dcr, "dcr_band_hi", 0.95))
+    required_ast = current_ast * max(1.0, governing_dcr / target_dcr)
+
+    candidates = []
+    _, max_top = cfg.rebar.col_n_top_range
+
+    for bar_size in sorted(set(cfg.rebar.bar_sizes_col)):
+        if bar_size < sp.COL_BAR_SIZE:
+            continue
+
+        for n_top in range(sp.COL_TOP_BARS, max_top + 1):
+            for n_side in sorted(set(cfg.rebar.col_n_side_options)):
+                if n_side < sp.COL_SIDE_BARS:
+                    continue
+
+                update = {
+                    "bar_size": bar_size,
+                    "n_top": n_top,
+                    "n_bot": n_top,
+                    "n_side": n_side,
+                }
+                ast = _column_total_steel_area(update)
+
+                if ast <= current_ast + 1.0e-9:
+                    continue
+                if _column_reinforcement_ratio(update) > cfg.rebar.rho_col_max:
+                    continue
+
+                candidates.append((ast, -n_top, n_side, bar_size, update))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item[:4])
+
+    for ast, _, _, _, update in candidates:
+        if ast >= required_ast:
+            return update
+
+    return candidates[-1][4]
 
 
 def _beam_strengthening_update(cfg):
@@ -418,7 +723,11 @@ def apply_pushover_failure_redesign(pushover_results, cfg):
     failed_tags = pushover_results["status"].get("failed_element_tags", [])
     classes = _failed_member_classes(failed_tags)
     before = reinforcement_snapshot()
-    col_update = _column_strengthening_update(cfg) if "column" in classes else None
+    col_update = (
+        _column_strengthening_update(cfg, prefer_bar_count=True)
+        if "column" in classes
+        else None
+    )
     beam_update = _beam_strengthening_update(cfg) if "beam" in classes else None
 
     if col_update is None and beam_update is None:
@@ -444,6 +753,152 @@ def apply_pushover_failure_redesign(pushover_results, cfg):
     }
 
 
+def _pushover_envelope_summary(pushover_results):
+    return (
+        pushover_results
+        .get("design_envelope", {})
+        .get("summary", {})
+    )
+
+
+def _pushover_target_dcr_snapshot(pushover_results):
+    return (
+        pushover_results
+        .get("design_envelope", {})
+        .get("target_dcr_snapshot")
+    )
+
+
+def _pushover_lateral_design_summary(pushover_results):
+    target_snapshot = _pushover_target_dcr_snapshot(pushover_results)
+    if (
+        getattr(sp, "PUSHOVER_USE_TARGET_DCR_FOR_REDESIGN", True)
+        and target_snapshot
+        and target_snapshot.get("summary")
+    ):
+        return target_snapshot["summary"]
+
+    return _pushover_envelope_summary(pushover_results)
+
+
+def needs_pushover_envelope_redesign(pushover_results):
+    if pushover_results["status"].get("failed"):
+        return False
+
+    summary = _pushover_lateral_design_summary(pushover_results)
+    if not summary.get("tracked", False):
+        # Target-drift snapshots do not carry a "tracked" flag.
+        if summary.get("phase") != "pushover_target_roof_drift":
+            return False
+
+    return summary.get("all_design_checks_pass") is False
+
+
+def _envelope_governing_dcr(summary):
+    if not summary:
+        return 0.0
+
+    return max(
+        summary.get("max_column_pm_dcr") or 0.0,
+        summary.get("max_column_shear_dcr") or 0.0,
+        summary.get("max_beam_flexure_dcr") or 0.0,
+        summary.get("max_beam_shear_dcr") or 0.0,
+    )
+
+
+def pushover_envelope_redesign_stalled(redesign_history):
+    if not getattr(sp, "PUSHOVER_ENVELOPE_STOP_ON_STALLED_DCR", True):
+        return None
+
+    records = []
+    for record in redesign_history:
+        summary = (
+            record.get("pushover_target_dcr", {})
+            if getattr(sp, "PUSHOVER_USE_TARGET_DCR_FOR_REDESIGN", True)
+            else record.get("pushover_envelope", {})
+        )
+        if not summary:
+            summary = record.get("pushover_envelope", {})
+        if summary.get("all_design_checks_pass") is False:
+            records.append(
+                {
+                    "attempt_index": record.get("attempt_index"),
+                    "governing_dcr": _envelope_governing_dcr(summary),
+                    "num_failed_elements": summary.get("num_failed_elements"),
+                    "failed_element_tags": summary.get("failed_element_tags", []),
+                }
+            )
+
+    min_reruns = max(
+        1,
+        int(getattr(sp, "PUSHOVER_ENVELOPE_STALL_MIN_RERUNS", 2)),
+    )
+    if len(records) <= min_reruns:
+        return None
+
+    current = records[-1]
+    prior_best = min(
+        records[:-1],
+        key=lambda row: row["governing_dcr"],
+    )
+    tol = max(
+        0.0,
+        float(getattr(sp, "PUSHOVER_ENVELOPE_STALL_DCR_TOL", 0.01)),
+    )
+
+    if current["governing_dcr"] >= prior_best["governing_dcr"] * (1.0 - tol):
+        return {
+            "stalled": True,
+            "reason": (
+                "Pushover envelope redesign stopped because the governing "
+                "DCR did not improve enough after additional reinforcement."
+            ),
+            "current": current,
+            "best_previous": prior_best,
+            "relative_improvement_tolerance": tol,
+            "completed_envelope_reruns": len(records) - 1,
+        }
+
+    return None
+
+
+def apply_pushover_envelope_redesign(pushover_results, cfg):
+    summary = _pushover_lateral_design_summary(pushover_results)
+    failed_tags = summary.get("failed_element_tags", [])
+    classes = _failed_member_classes(failed_tags)
+    before = reinforcement_snapshot()
+    col_update = (
+        _column_envelope_strengthening_update(cfg, summary)
+        if "column" in classes
+        else None
+    )
+    beam_update = _beam_strengthening_update(cfg) if "beam" in classes else None
+
+    if col_update is None and beam_update is None:
+        return {
+            "changed": False,
+            "reason": "Pushover envelope failed, but no stronger longitudinal reinforcement option is available in the configured search space.",
+            "failed_member_classes": sorted(classes),
+            "envelope_summary": summary,
+            "before": before,
+            "after": before,
+        }
+
+    apply_updates(col_update, beam_update)
+    after = reinforcement_snapshot()
+
+    return {
+        "changed": before != after,
+        "reason": "Pushover envelope design checks failed; strengthened affected member class(es).",
+        "failed_member_classes": sorted(classes),
+        "column_update": col_update,
+        "beam_update": beam_update,
+        "envelope_summary": summary,
+        "before": before,
+        "after": after,
+    }
+
+
 def _pushover_failure_roof_drift(pushover_results):
     status = pushover_results["status"]
     if status.get("failed_roof_disp") is not None:
@@ -458,6 +913,65 @@ def needs_pushover_failure_redesign(pushover_results):
     if not status.get("failed"):
         return False
     return _pushover_failure_roof_drift(pushover_results) < sp.PUSHOVER_MIN_ACCEPTABLE_DRIFT_RATIO
+
+
+def pushover_attempt_record(attempt_index, pushover_results):
+    record = {
+        "attempt_index": attempt_index,
+        "reinforcement": reinforcement_snapshot(),
+        "completed_steps": pushover_results["status"]["completed_steps"],
+        "failed": pushover_results["status"]["failed"],
+        "failed_step": pushover_results["status"]["failed_step"],
+        "failed_roof_drift_ratio": (
+            _pushover_failure_roof_drift(pushover_results)
+            if pushover_results["status"]["failed"]
+            else None
+        ),
+        "minimum_acceptable_roof_drift_ratio": sp.PUSHOVER_MIN_ACCEPTABLE_DRIFT_RATIO,
+        "failed_element_tags": pushover_results["status"].get("failed_element_tags", []),
+    }
+
+    envelope_summary = _pushover_envelope_summary(pushover_results)
+    if envelope_summary:
+        record["pushover_envelope"] = {
+            "tracked": envelope_summary.get("tracked", False),
+            "all_design_checks_pass": envelope_summary.get("all_design_checks_pass"),
+            "num_failed_elements": envelope_summary.get("num_failed_elements"),
+            "failed_element_tags": envelope_summary.get("failed_element_tags", []),
+            "num_failed_columns": envelope_summary.get("num_failed_columns"),
+            "failed_column_tags": envelope_summary.get("failed_column_tags", []),
+            "num_failed_beams": envelope_summary.get("num_failed_beams"),
+            "failed_beam_tags": envelope_summary.get("failed_beam_tags", []),
+            "max_column_pm_dcr": envelope_summary.get("max_column_pm_dcr"),
+            "max_column_shear_dcr": envelope_summary.get("max_column_shear_dcr"),
+            "max_beam_flexure_dcr": envelope_summary.get("max_beam_flexure_dcr"),
+            "max_beam_shear_dcr": envelope_summary.get("max_beam_shear_dcr"),
+        }
+
+    target_snapshot = _pushover_target_dcr_snapshot(pushover_results)
+    if target_snapshot and target_snapshot.get("summary"):
+        target_summary = target_snapshot["summary"]
+        record["pushover_target_dcr"] = {
+            "phase": target_summary.get("phase"),
+            "target_roof_drift_ratio": target_summary.get("target_roof_drift_ratio"),
+            "target_roof_disp_in": target_summary.get("target_roof_disp_in"),
+            "actual_roof_drift_ratio": target_summary.get("actual_roof_drift_ratio"),
+            "actual_roof_disp_in": target_summary.get("actual_roof_disp_in"),
+            "step": target_summary.get("step"),
+            "all_design_checks_pass": target_summary.get("all_design_checks_pass"),
+            "num_failed_elements": target_summary.get("num_failed_elements"),
+            "failed_element_tags": target_summary.get("failed_element_tags", []),
+            "num_failed_columns": target_summary.get("num_failed_columns"),
+            "failed_column_tags": target_summary.get("failed_column_tags", []),
+            "num_failed_beams": target_summary.get("num_failed_beams"),
+            "failed_beam_tags": target_summary.get("failed_beam_tags", []),
+            "max_column_pm_dcr": target_summary.get("max_column_pm_dcr"),
+            "max_column_shear_dcr": target_summary.get("max_column_shear_dcr"),
+            "max_beam_flexure_dcr": target_summary.get("max_beam_flexure_dcr"),
+            "max_beam_shear_dcr": target_summary.get("max_beam_shear_dcr"),
+        }
+
+    return record
 
 
 def pushover_log_path(outputs_dir, attempt_index):
@@ -489,6 +1003,10 @@ def main():
     outputs_dir = project_dir / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
     clear_failure_artifacts(outputs_dir)
+    current_model_summary = model_summary()
+    print_model_summary(current_model_summary)
+    with (outputs_dir / "model_summary.json").open("w") as file:
+        json.dump(current_model_summary, file, indent=2)
 
     # ── Iterative steel redesign (gravity-driven inner loop) ─────────────────
     cfg = DesignConfig.from_structure_parameters()
@@ -541,68 +1059,67 @@ def main():
     apply_lateral_loads()
     pushover_results = run_pushover(log_path=pushover_log_path(outputs_dir, 0))
     print_pushover_results(pushover_results, gravity_results)
-    pushover_redesign_history = [
-        {
-            "attempt_index": 0,
-            "reinforcement": reinforcement_snapshot(),
-            "completed_steps": pushover_results["status"]["completed_steps"],
-            "failed": pushover_results["status"]["failed"],
-            "failed_step": pushover_results["status"]["failed_step"],
-            "failed_roof_drift_ratio": (
-                _pushover_failure_roof_drift(pushover_results)
-                if pushover_results["status"]["failed"]
-                else None
-            ),
-            "minimum_acceptable_roof_drift_ratio": sp.PUSHOVER_MIN_ACCEPTABLE_DRIFT_RATIO,
-            "failed_element_tags": pushover_results["status"].get("failed_element_tags", []),
-        }
-    ]
-    redesign_attempts = 0
+    pushover_redesign_history = [pushover_attempt_record(0, pushover_results)]
+    failure_redesign_attempts = 0
+    envelope_redesign_attempts = 0
 
-    while needs_pushover_failure_redesign(pushover_results):
-        if redesign_attempts >= sp.PUSHOVER_REDESIGN_MAX_ATTEMPTS:
-            print(
-                "[WARNING] Pushover still failed before "
-                f"{100.0 * sp.PUSHOVER_MIN_ACCEPTABLE_DRIFT_RATIO:.1f}% roof drift "
-                f"after {sp.PUSHOVER_REDESIGN_MAX_ATTEMPTS} redesign attempt(s)."
-            )
+    while True:
+        if needs_pushover_failure_redesign(pushover_results):
+            if failure_redesign_attempts >= sp.PUSHOVER_REDESIGN_MAX_ATTEMPTS:
+                print(
+                    "[WARNING] Pushover still failed before "
+                    f"{100.0 * sp.PUSHOVER_MIN_ACCEPTABLE_DRIFT_RATIO:.1f}% roof drift "
+                    f"after {sp.PUSHOVER_REDESIGN_MAX_ATTEMPTS} failure redesign attempt(s)."
+                )
+                break
+
+            redesign_update = apply_pushover_failure_redesign(pushover_results, cfg)
+            pushover_redesign_history[-1]["failure_redesign_update"] = redesign_update
+            retry_reason = "pushover-failure redesign"
+            failure_redesign_attempts += 1
+
+        elif needs_pushover_envelope_redesign(pushover_results):
+            stalled = pushover_envelope_redesign_stalled(pushover_redesign_history)
+            if stalled:
+                pushover_redesign_history[-1]["envelope_redesign_stalled"] = stalled
+                print(
+                    "[WARNING] "
+                    f"{stalled['reason']} "
+                    f"Current DCR={stalled['current']['governing_dcr']:.3f}; "
+                    f"best previous DCR={stalled['best_previous']['governing_dcr']:.3f}."
+                )
+                break
+
+            if envelope_redesign_attempts >= sp.PUSHOVER_ENVELOPE_REDESIGN_MAX_ATTEMPTS:
+                print(
+                    "[WARNING] Pushover envelope checks still fail "
+                    f"after {sp.PUSHOVER_ENVELOPE_REDESIGN_MAX_ATTEMPTS} envelope redesign attempt(s)."
+                )
+                break
+
+            redesign_update = apply_pushover_envelope_redesign(pushover_results, cfg)
+            pushover_redesign_history[-1]["envelope_redesign_update"] = redesign_update
+            retry_reason = "pushover-envelope redesign"
+            envelope_redesign_attempts += 1
+
+        else:
             break
-
-        redesign_update = apply_pushover_failure_redesign(pushover_results, cfg)
-        pushover_redesign_history[-1]["redesign_update"] = redesign_update
 
         if not redesign_update["changed"]:
-            print(
-                "[WARNING] Pushover failed before "
-                f"{100.0 * sp.PUSHOVER_MIN_ACCEPTABLE_DRIFT_RATIO:.1f}% roof drift, "
-                "but no stronger reinforcement option was available."
-            )
+            print(f"[WARNING] {redesign_update['reason']}")
             break
 
-        redesign_attempts += 1
+        attempt_index = pushover_redesign_history[-1]["attempt_index"] + 1
         print(
-            "\nRetrying modal/pushover after pushover-failure redesign "
-            f"(attempt {redesign_attempts + 1})."
+            f"\nRetrying modal/pushover after {retry_reason} "
+            f"(attempt {attempt_index + 1})."
         )
         gravity_results, modal_results, pushover_results = run_modal_and_pushover(
             outputs_dir,
-            redesign_attempts,
+            attempt_index,
         )
         pushover_redesign_history.append(
-            {
-                "attempt_index": redesign_attempts,
-                "reinforcement": reinforcement_snapshot(),
-                "completed_steps": pushover_results["status"]["completed_steps"],
-                "failed": pushover_results["status"]["failed"],
-                "failed_step": pushover_results["status"]["failed_step"],
-                "failed_roof_drift_ratio": (
-                    _pushover_failure_roof_drift(pushover_results)
-                    if pushover_results["status"]["failed"]
-                    else None
-                ),
-                "minimum_acceptable_roof_drift_ratio": sp.PUSHOVER_MIN_ACCEPTABLE_DRIFT_RATIO,
-                "failed_element_tags": pushover_results["status"].get("failed_element_tags", []),
-            }
+            pushover_attempt_record(attempt_index, pushover_results)
         )
     (
         pushover_final_design_status,
@@ -611,9 +1128,14 @@ def main():
         outputs_dir,
         pushover_failed=pushover_results["status"]["failed"],
     )
+    (
+        pushover_envelope_design_status,
+        pushover_envelope_design_results,
+    ) = run_pushover_envelope_design_check(outputs_dir, pushover_results)
     design_status = combine_design_statuses(
         gravity_design_status,
         pushover_final_design_status,
+        pushover_envelope_status=pushover_envelope_design_status,
         pushover_redesign_history=pushover_redesign_history,
     )
 
@@ -638,16 +1160,29 @@ def main():
     drift_fig, _ = plot_roof_drift_curve(pushover_results, show=False)
     drift_fig.savefig(outputs_dir / "pushover_drift_curve.png", dpi=200)
 
+    design_check_export = {
+        "gravity": design_results,
+        "pushover_final": pushover_final_design_results,
+    }
+    if pushover_envelope_design_results is not None:
+        lateral_check_name = (
+            "pushover_2pct_drift"
+            if (
+                pushover_envelope_design_status
+                and pushover_envelope_design_status.get("phase")
+                == "pushover_target_roof_drift"
+            )
+            else "pushover_envelope"
+        )
+        design_check_export[lateral_check_name] = pushover_envelope_design_results
+
     sample_summary = save_analysis_sample(
         outputs_dir / "samples" / "baseline_frame",
         gravity_results,
         modal_results,
         pushover_results,
         design_status=design_status,
-        design_check_results={
-            "gravity": design_results,
-            "pushover_final": pushover_final_design_results,
-        },
+        design_check_results=design_check_export,
     )
 
     print(f"\nSaved pushover curve CSV: {csv_path}")

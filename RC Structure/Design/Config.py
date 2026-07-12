@@ -72,7 +72,7 @@ class RebarConfig:
 
     col_n_top_range: Tuple[int, int] = (2, 6)     # inclusive; n_bot = n_top
     col_n_side_options: List[int] = field(
-        default_factory=lambda: [0, 1, 2]          # bars per face
+        default_factory=lambda: [0, 1, 2, 3, 4]    # bars per face
     )
     beam_n_range: Tuple[int, int] = (2, 7)         # inclusive, per layer
 
@@ -82,10 +82,16 @@ class RebarConfig:
     cover_in: float = field(default_factory=lambda: sp.COVER)
 
     # Transverse reinforcement
-    stirrup_bar_size: int = 4
-    stirrup_legs: int = 2
-    stirrup_spacing_col_in: float = 6.0
-    stirrup_spacing_beam_in: float = 6.0
+    stirrup_bar_size: int = field(default_factory=lambda: sp.COL_STIRRUP_BAR_SIZE)
+    stirrup_legs: int = field(default_factory=lambda: sp.COL_STIRRUP_LEGS)
+    col_stirrup_bar_size: int = field(default_factory=lambda: sp.COL_STIRRUP_BAR_SIZE)
+    col_stirrup_legs: int = field(default_factory=lambda: sp.COL_STIRRUP_LEGS)
+    beam_stirrup_bar_size: int = field(default_factory=lambda: sp.BEAM_STIRRUP_BAR_SIZE)
+    beam_stirrup_legs: int = field(default_factory=lambda: sp.BEAM_STIRRUP_LEGS)
+    stirrup_spacing_col_in: float = field(default_factory=lambda: sp.COL_STIRRUP_SPACING)
+    stirrup_spacing_beam_in: float = field(default_factory=lambda: sp.BEAM_STIRRUP_SPACING)
+    stirrup_spacing_min_in: float = field(default_factory=lambda: sp.STIRRUP_MIN_SPACING)
+    stirrup_spacing_step_in: float = field(default_factory=lambda: sp.STIRRUP_SPACING_STEP)
 
     section_round_increment_in: float = 2.0
 
@@ -102,6 +108,16 @@ class RebarConfig:
     def stirrup_area_in2(self) -> float:
         """Total stirrup shear area (both legs) in²."""
         return self.stirrup_legs * sp.rebar_area(self.stirrup_bar_size)
+
+    @property
+    def col_stirrup_area_in2(self) -> float:
+        """Total column stirrup/tie shear area in in^2."""
+        return self.col_stirrup_legs * sp.rebar_area(self.col_stirrup_bar_size)
+
+    @property
+    def beam_stirrup_area_in2(self) -> float:
+        """Total beam stirrup shear area in in^2."""
+        return self.beam_stirrup_legs * sp.rebar_area(self.beam_stirrup_bar_size)
 
 
 @dataclass
@@ -278,6 +294,14 @@ class DesignConfig:
         return cls(
             rebar=RebarConfig(
                 cover_in=sp.COVER,
+                col_stirrup_bar_size=sp.COL_STIRRUP_BAR_SIZE,
+                col_stirrup_legs=sp.COL_STIRRUP_LEGS,
+                beam_stirrup_bar_size=sp.BEAM_STIRRUP_BAR_SIZE,
+                beam_stirrup_legs=sp.BEAM_STIRRUP_LEGS,
+                stirrup_spacing_col_in=sp.COL_STIRRUP_SPACING,
+                stirrup_spacing_beam_in=sp.BEAM_STIRRUP_SPACING,
+                stirrup_spacing_min_in=sp.STIRRUP_MIN_SPACING,
+                stirrup_spacing_step_in=sp.STIRRUP_SPACING_STEP,
             ),
             materials=MaterialConfig(
                 fc_col_ksi=sp.FC_COL_KSI,

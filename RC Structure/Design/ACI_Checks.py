@@ -463,7 +463,8 @@ def run_checks_phase1(
         the governing limit state, ok flag, and min_controlled flags.
     """
     fy   = cfg.materials.fy_ksi if isinstance(cfg.materials.fy_ksi, float) else sp.FY_KSI
-    Av   = cfg.rebar.stirrup_area_in2
+    Av_col = cfg.rebar.col_stirrup_area_in2
+    Av_beam = cfg.rebar.beam_stirrup_area_in2
 
     pm_diagram = build_pm_diagram(cfg)
     results: Dict[int, MemberCheckResult] = {}
@@ -480,7 +481,7 @@ def run_checks_phase1(
             fc_ksi=(cfg.materials.fc_col_ksi
                     if isinstance(cfg.materials.fc_col_ksi, float)
                     else sp.FC_COL_KSI),
-            Av=Av, s=cfg.rebar.stirrup_spacing_col_in, fy_ksi=fy,
+            Av=Av_col, s=cfg.rebar.stirrup_spacing_col_in, fy_ksi=fy,
         )
         ls_slend = check_slenderness(
             "column",
@@ -513,6 +514,10 @@ def run_checks_phase1(
                 "Muy_kip_in":  My,
                 "Muz_kip_in":  Mz,
                 "Vu_kip":      Vu,
+                "stirrup_bar_size": cfg.rebar.col_stirrup_bar_size,
+                "stirrup_legs": cfg.rebar.col_stirrup_legs,
+                "stirrup_spacing_in": cfg.rebar.stirrup_spacing_col_in,
+                "stirrup_area_in2": Av_col,
             },
         )
         result._recompute()
@@ -534,7 +539,7 @@ def run_checks_phase1(
             fc_ksi=(cfg.materials.fc_beam_ksi
                     if isinstance(cfg.materials.fc_beam_ksi, float)
                     else sp.FC_BEAM_KSI),
-            Av=Av, s=cfg.rebar.stirrup_spacing_beam_in, fy_ksi=fy,
+            Av=Av_beam, s=cfg.rebar.stirrup_spacing_beam_in, fy_ksi=fy,
         )
 
         result = MemberCheckResult(
@@ -553,6 +558,10 @@ def run_checks_phase1(
                 "As_bot_in2":  sp.BEAM_BOT_BARS * sp.BEAM_BAR_AREA,
                 "b_in":        cfg.sections.b_beam_in,
                 "h_in":        cfg.sections.h_beam_in,
+                "stirrup_bar_size": cfg.rebar.beam_stirrup_bar_size,
+                "stirrup_legs": cfg.rebar.beam_stirrup_legs,
+                "stirrup_spacing_in": cfg.rebar.stirrup_spacing_beam_in,
+                "stirrup_area_in2": Av_beam,
             },
         )
         result._recompute()
@@ -592,6 +601,10 @@ def to_legacy_dict(phase1_results: Dict[int, MemberCheckResult]) -> dict:
                 "ok_PM":       ls_pm.ok,
                 "ok_V":        ls_shear.ok,
                 "ok":          r.ok,
+                "stirrup_bar_size": r.section_info.get("stirrup_bar_size"),
+                "stirrup_legs": r.section_info.get("stirrup_legs"),
+                "stirrup_spacing_in": r.section_info.get("stirrup_spacing_in"),
+                "stirrup_area_in2": r.section_info.get("stirrup_area_in2"),
                 # Extra Phase 1 fields not in legacy schema
                 "min_controlled":        r.any_min_controlled,
                 "governing_limit_state": r.governing_limit_state,
@@ -617,6 +630,10 @@ def to_legacy_dict(phase1_results: Dict[int, MemberCheckResult]) -> dict:
                 "ok_F":        ls_pos.ok and ls_neg.ok,
                 "ok_V":        ls_shear.ok,
                 "ok":          r.ok,
+                "stirrup_bar_size": r.section_info.get("stirrup_bar_size"),
+                "stirrup_legs": r.section_info.get("stirrup_legs"),
+                "stirrup_spacing_in": r.section_info.get("stirrup_spacing_in"),
+                "stirrup_area_in2": r.section_info.get("stirrup_area_in2"),
                 # Extra Phase 1 fields
                 "min_controlled":        r.any_min_controlled,
                 "governing_limit_state": r.governing_limit_state,

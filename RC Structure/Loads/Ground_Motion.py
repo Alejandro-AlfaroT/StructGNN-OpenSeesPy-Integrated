@@ -1,4 +1,4 @@
-asimport csv
+import csv
 import math
 import re
 from dataclasses import dataclass
@@ -15,6 +15,7 @@ PEER_DT_RE = re.compile(r"DT\s*=\s*([0-9.+\-Ee]+)", re.IGNORECASE)
 
 GROUND_MOTION_DIR = Path(__file__).resolve().parents[1] / "Ground_Motions"
 MANIFEST_PATH = GROUND_MOTION_DIR / "metadata" / "record_manifest.csv"
+RECORD_SETS_PATH = GROUND_MOTION_DIR / "metadata" / "record_sets.csv"
 
 
 @dataclass
@@ -218,6 +219,327 @@ def load_record_manifest(path=MANIFEST_PATH):
 
     with path.open(newline="") as file:
         return list(csv.DictReader(file))
+
+
+def load_record_sets(path=RECORD_SETS_PATH):
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    with path.open(newline="") as file:
+        return list(csv.DictReader(file))
+
+
+def find_manifest_row(record_id, manifest_path=MANIFEST_PATH):
+    for row in load_record_manifest(manifest_path):
+        if row.get("record_id") == record_id:
+            return row
+
+    raise KeyError(f"Ground motion record_id not found in manifest: {record_id}")
+
+
+def _manifest_path(row, key):
+    value = (row.get(key) or "").strip()
+    if not value:
+        return None
+
+    path = Path(value)
+    if path.is_absolute():
+        return path
+
+    return GROUND_MOTION_DIR / path
+
+
+def _manifest_float(row, key, default=0.0):
+    value = (row.get(key) or "").strip()
+    if not value:
+        return default
+
+    return float(value)
+
+
+def _manifest_bool(row, key, default=True):
+    value = (row.get(key) or "").strip().lower()
+    if not value:
+        return default
+
+    return value in {"1", "true", "yes", "y"}
+
+
+def _peer_result_id(row):
+    notes = row.get("notes") or ""
+    match = re.search(r"PEER result_id=([0-9]+)", notes)
+    if match:
+        return int(match.group(1))
+
+    return None
+
+
+def _record_pair_key(row):
+    peer_id = _peer_result_id(row)
+    if peer_id is not None:
+        return f"peer_result_id:{peer_id}"
+
+    return "|".join(
+        str(row.get(key) or "").strip()
+        for key in ("database", "event_name", "station_id", "station_name")
+    )
+
+
+def load_ground_motion_record(
+    record_id,
+    manifest_path=MANIFEST_PATH,
+    prefer_processed=True,
+    scale_factor=None,
+    require_usable=True,
+):
+    """
+    Load a GroundMotionRecord directly from record_manifest.csv.
+
+    Processed catalog files are already converted to the model unit system
+    (in/sec^2), so prefer them for OpenSees input. If a processed file is not
+    available, this falls back to the raw PEER AT2 acceleration file.
+    """
+
+    row = find_manifest_row(record_id, manifest_path)
+
+    if require_usable and not _manifest_bool(row, "usable", default=True):
+        raise ValueError(f"Ground motion record is marked unusable: {record_id}")
+
+    if scale_factor is None:
+        scale_factor = _manifest_float(row, "scale_factor", default=1.0)
+
+    processed_path = _manifest_path(row, "processed_file")
+    raw_path = _manifest_path(row, "raw_file")
+
+    if prefer_processed and processed_path is not None and processed_path.exists():
+        return read_plain_acceleration(
+            processed_path,
+            dt_sec=_manifest_float(row, "dt_sec"),
+            units=row.get("processed_units") or "in/sec^2",
+            record_id=record_id,
+            scale_factor=scale_factor,
+        )
+
+    if raw_path is not None and raw_path.exists():
+        return read_peer_at2(
+            raw_path,
+            record_id=record_id,
+            scale_factor=scale_factor,
+        )
+
+    missing = []
+    if processed_path is not None:
+        missing.append(str(processed_path))
+    if raw_path is not None:
+        missing.append(str(raw_path))
+
+    raise FileNotFoundError(
+        f"No ground motion file found for {record_id}. Checked: {missing}"
+    )
+
+
+def load_ground_motion_set(
+    set_name="peer_mle_all",
+    split=None,
+    limit=None,
+    manifest_path=MANIFEST_PATH,
+    record_sets_path=RECORD_SETS_PATH,
+    prefer_processed=True,
+    scale_factor=None,
+):
+    """
+    Load a named record set as GroundMotionRecord objects.
+
+    record_sets.csv controls grouping/splits, while record_manifest.csv controls
+    file paths and physical metadata.
+    """
+
+    set_rows = [
+        row for row in load_record_sets(record_sets_path)
+        if row.get("set_name") == set_name
+        and (split is None or row.get("split") == split)
+    ]
+
+    if limit is not None:
+        set_rows = set_rows[:limit]
+
+    records = []
+    for row in set_rows:
+        row_scale = row.get("scale_factor")
+        records.append(
+            load_ground_motion_record(
+                row["record_id"],
+                manifest_path=manifest_path,
+                prefer_processed=prefer_processed,
+                scale_factor=(
+                    scale_factor
+                    if scale_factor is not None
+                    else float(row_scale) if row_scale not in (None, "") else None
+                ),
+            )
+        )
+
+    return records
+
+
+def ground_motion_pair_rows(
+    set_name="peer_mle_all",
+    split=None,
+    manifest_path=MANIFEST_PATH,
+    record_sets_path=RECORD_SETS_PATH,
+):
+    """
+    Return paired horizontal manifest rows.
+
+    PEER result_id is used when present. Otherwise rows are grouped by database,
+    event, station_id, and station_name. Pairs are sorted by component angle
+    where available so the output order is stable.
+    """
+
+    manifest_rows = {
+        row["record_id"]: row
+        for row in load_record_manifest(manifest_path)
+    }
+
+    selected_rows = [
+        manifest_rows[row["record_id"]]
+        for row in load_record_sets(record_sets_path)
+        if row.get("set_name") == set_name
+        and (split is None or row.get("split") == split)
+        and row.get("record_id") in manifest_rows
+    ]
+
+    groups = {}
+    for row in selected_rows:
+        if not _manifest_bool(row, "usable", default=True):
+            continue
+        groups.setdefault(_record_pair_key(row), []).append(row)
+
+    pairs = []
+    for key, rows in groups.items():
+        if len(rows) < 2:
+            continue
+
+        rows = sorted(
+            rows,
+            key=lambda item: (
+                _manifest_float(item, "component_angle_deg", default=999.0),
+                item.get("record_id") or "",
+            ),
+        )
+        pairs.append((key, rows[0], rows[1]))
+
+    return sorted(pairs, key=lambda item: item[0])
+
+
+def load_ground_motion_pairs(
+    set_name="peer_mle_all",
+    split=None,
+    limit=None,
+    start_index=0,
+    manifest_path=MANIFEST_PATH,
+    record_sets_path=RECORD_SETS_PATH,
+    prefer_processed=True,
+    scale_factor=None,
+):
+    pairs = ground_motion_pair_rows(
+        set_name=set_name,
+        split=split,
+        manifest_path=manifest_path,
+        record_sets_path=record_sets_path,
+    )
+
+    pairs = pairs[start_index:]
+    if limit is not None:
+        pairs = pairs[:limit]
+
+    loaded = []
+    for key, row_x, row_y in pairs:
+        loaded.append(
+            (
+                key,
+                load_ground_motion_record(
+                    row_x["record_id"],
+                    manifest_path=manifest_path,
+                    prefer_processed=prefer_processed,
+                    scale_factor=scale_factor,
+                ),
+                load_ground_motion_record(
+                    row_y["record_id"],
+                    manifest_path=manifest_path,
+                    prefer_processed=prefer_processed,
+                    scale_factor=scale_factor,
+                ),
+            )
+        )
+
+    return loaded
+
+
+def load_ground_motion_pair_by_result_id(
+    result_id,
+    set_name="peer_mle_all",
+    split=None,
+    manifest_path=MANIFEST_PATH,
+    record_sets_path=RECORD_SETS_PATH,
+    prefer_processed=True,
+    scale_factor=None,
+):
+    target_key = f"peer_result_id:{int(result_id)}"
+
+    for key, record_x, record_y in load_ground_motion_pairs(
+        set_name=set_name,
+        split=split,
+        manifest_path=manifest_path,
+        record_sets_path=record_sets_path,
+        prefer_processed=prefer_processed,
+        scale_factor=scale_factor,
+    ):
+        if key == target_key:
+            return key, record_x, record_y
+
+    raise KeyError(f"No ground motion pair found for PEER result_id={result_id}")
+
+
+def ground_motion_catalog_summary(
+    manifest_path=MANIFEST_PATH,
+    record_sets_path=RECORD_SETS_PATH,
+):
+    rows = load_record_manifest(manifest_path)
+    usable = [row for row in rows if _manifest_bool(row, "usable", default=True)]
+    pairs = ground_motion_pair_rows(
+        manifest_path=manifest_path,
+        record_sets_path=record_sets_path,
+    )
+
+    def numeric_values(key):
+        values = []
+        for row in usable:
+            value = (row.get(key) or "").strip()
+            if value:
+                values.append(float(value))
+        return values
+
+    pga = numeric_values("pga_g")
+    magnitude = numeric_values("magnitude")
+    rrup = numeric_values("rrup_km")
+    vs30 = numeric_values("vs30_m_per_s")
+
+    return {
+        "num_manifest_rows": len(rows),
+        "num_usable_records": len(usable),
+        "num_record_pairs": len(pairs),
+        "num_unique_events": len({row.get("event_name") for row in usable}),
+        "pga_g_min": min(pga) if pga else None,
+        "pga_g_max": max(pga) if pga else None,
+        "magnitude_min": min(magnitude) if magnitude else None,
+        "magnitude_max": max(magnitude) if magnitude else None,
+        "rrup_km_min": min(rrup) if rrup else None,
+        "rrup_km_max": max(rrup) if rrup else None,
+        "vs30_m_per_s_min": min(vs30) if vs30 else None,
+        "vs30_m_per_s_max": max(vs30) if vs30 else None,
+    }
 
 
 def summarize_record(record):

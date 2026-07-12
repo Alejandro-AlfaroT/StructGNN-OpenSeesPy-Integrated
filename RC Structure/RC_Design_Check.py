@@ -25,15 +25,11 @@ import Structure_Parameters as sp
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stirrup properties
-# Not yet in Structure_Parameters — centralized here until added there.
+# Stirrup area helper. Values come from Structure_Parameters so legacy
+# pushover/final checks stay aligned with the redesign config.
 # ─────────────────────────────────────────────────────────────────────────────
-STIRRUP_BAR_SIZE = 4       # #4 stirrups
-STIRRUP_LEGS     = 2       # 2-leg stirrups
-STIRRUP_S_COL    = 6.0     # column stirrup spacing, in
-STIRRUP_S_BEAM   = 6.0     # beam stirrup spacing, in
-
-_Av = STIRRUP_LEGS * sp.rebar_area(STIRRUP_BAR_SIZE)   # in²
+def _stirrup_area(bar_size, legs):
+    return legs * sp.rebar_area(bar_size)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -257,7 +253,7 @@ def check_beam_flexure(Mu_pos, Mu_neg):
     return dcr_pos, dcr_neg, phi_Mn_pos, phi_Mn_neg, max(dcr_pos, dcr_neg) <= 1.0
 
 
-def check_shear(Vu, Nu, bw, d, fc, s, lambda_=1.0):
+def check_shear(Vu, Nu, bw, d, fc, Av, s, lambda_=1.0):
     """
     ACI 318-19 §22.5 – simplified shear strength.
     Vc = 2λ√f'c · bw · d  +  Nu/(6·Ag)  (compression boost)
@@ -271,7 +267,7 @@ def check_shear(Vu, Nu, bw, d, fc, s, lambda_=1.0):
     Vc = (2.0 * lambda_ * math.sqrt(fc * 1000.0) * bw * d) / 1000.0
     Vc += max(0.0, Nu) / (6.0 * Ag)
 
-    Vs     = _Av * sp.FY_KSI * d / s
+    Vs     = Av * sp.FY_KSI * d / s
     phi_Vn = PHI_SHEAR * (Vc + Vs)
 
     dcr = Vu / phi_Vn if phi_Vn > 1e-6 else 999.0
@@ -325,7 +321,7 @@ def _extract_forces(ele_tag):
 # Main entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_checks(col_tags, beam_tags):
+def run_checks(col_tags, beam_tags, col_diagram=None):
     """
     Run ACI 318-19 checks on all supplied element tags.
 
@@ -338,7 +334,7 @@ def run_checks(col_tags, beam_tags):
     -------
     dict  {ele_tag: result_dict}
     """
-    col_diagram = build_column_PM_diagram()
+    col_diagram = col_diagram or build_column_PM_diagram()
     results     = {}
 
     for tag in col_tags:
@@ -346,12 +342,22 @@ def run_checks(col_tags, beam_tags):
         dcr_PM, ok_PM, Mu, phi_Mn = check_column_PM(P, Mz, My, col_diagram)
         Vu = math.sqrt(Vy**2 + Vz**2)
         phi_Vn, dcr_V, ok_V = check_shear(
-            Vu, P, bw=sp.B_COL, d=_col_d(), fc=sp.FC_COL_KSI, s=STIRRUP_S_COL
+            Vu,
+            P,
+            bw=sp.B_COL,
+            d=_col_d(),
+            fc=sp.FC_COL_KSI,
+            Av=_stirrup_area(sp.COL_STIRRUP_BAR_SIZE, sp.COL_STIRRUP_LEGS),
+            s=sp.COL_STIRRUP_SPACING,
         )
         results[tag] = {
             'type': 'column', 'Pu': P, 'Mu': Mu, 'phi_Mn_cap': phi_Mn,
             'Vu': Vu, 'phi_Vn': phi_Vn, 'dcr_PM': dcr_PM, 'dcr_V': dcr_V,
             'ok_PM': ok_PM, 'ok_V': ok_V, 'ok': ok_PM and ok_V,
+            'stirrup_bar_size': sp.COL_STIRRUP_BAR_SIZE,
+            'stirrup_legs': sp.COL_STIRRUP_LEGS,
+            'stirrup_spacing_in': sp.COL_STIRRUP_SPACING,
+            'stirrup_area_in2': _stirrup_area(sp.COL_STIRRUP_BAR_SIZE, sp.COL_STIRRUP_LEGS),
         }
 
     for tag in beam_tags:
@@ -364,7 +370,13 @@ def run_checks(col_tags, beam_tags):
         )
         Vu = math.sqrt(Vy**2 + Vz**2)
         phi_Vn, dcr_V, ok_V = check_shear(
-            Vu, 0.0, bw=sp.B_BEAM, d=_beam_d(), fc=sp.FC_BEAM_KSI, s=STIRRUP_S_BEAM
+            Vu,
+            0.0,
+            bw=sp.B_BEAM,
+            d=_beam_d(),
+            fc=sp.FC_BEAM_KSI,
+            Av=_stirrup_area(sp.BEAM_STIRRUP_BAR_SIZE, sp.BEAM_STIRRUP_LEGS),
+            s=sp.BEAM_STIRRUP_SPACING,
         )
         results[tag] = {
             'type': 'beam', 'Mu_pos': Mu_pos, 'Mu_neg': Mu_neg,
@@ -372,6 +384,10 @@ def run_checks(col_tags, beam_tags):
             'Mu_y': My, 'Mu_z': Mz, 'Vu': Vu, 'phi_Vn': phi_Vn, 'dcr_pos': dcr_pos,
             'dcr_neg': dcr_neg, 'dcr_V': dcr_V,
             'ok_F': ok_F, 'ok_V': ok_V, 'ok': ok_F and ok_V,
+            'stirrup_bar_size': sp.BEAM_STIRRUP_BAR_SIZE,
+            'stirrup_legs': sp.BEAM_STIRRUP_LEGS,
+            'stirrup_spacing_in': sp.BEAM_STIRRUP_SPACING,
+            'stirrup_area_in2': _stirrup_area(sp.BEAM_STIRRUP_BAR_SIZE, sp.BEAM_STIRRUP_LEGS),
         }
 
     return results

@@ -75,6 +75,18 @@ BEAM_BOT_BARS = 2
 BEAM_SIDE_BARS = 0
 BEAM_BAR_AREA = rebar_area(BEAM_BAR_SIZE)
 
+# Transverse reinforcement used in shear design checks.
+COL_STIRRUP_BAR_SIZE = 4
+COL_STIRRUP_LEGS = 2
+COL_STIRRUP_SPACING = 6.0
+
+BEAM_STIRRUP_BAR_SIZE = 4
+BEAM_STIRRUP_LEGS = 2
+BEAM_STIRRUP_SPACING = 6.0
+
+STIRRUP_MIN_SPACING = 3.0
+STIRRUP_SPACING_STEP = 1.0
+
 # Design DCR target band (iterative steel redesign)
 DESIGN_DCR_MIN = 0.60   # lower bound — avoid over-design
 DESIGN_DCR_MAX = 0.95   # upper bound — demand must be met
@@ -82,13 +94,19 @@ DESIGN_DCR_MAX = 0.95   # upper bound — demand must be met
 # Loading / mass
 G = 386.4
 
+# Concrete unit weight (normal-weight concrete)
+CONCRETE_UNIT_WEIGHT_KCF = 0.150              # kip/ft³
+CONCRETE_UNIT_WEIGHT_KCI = CONCRETE_UNIT_WEIGHT_KCF / 1728.0  # kip/in³
+
 # Floor gravity load — specified as a uniform area load (ksf).
-# Dead load includes slab self-weight + superimposed dead (finishes, MEP, etc.)
-# Live load is the design occupancy load.
+# Dead load should cover superimposed dead only (finishes, MEP, partitions, slab).
+# Structural self-weight of beams and columns is applied separately as element
+# loads in Gravity_Loads.py — do not double-count it here.
+# Live load is the design occupancy load (50 psf = office, ASCE 7 Table 4.3-1).
 # Both are applied in full for gravity analysis (unfactored service loads).
 # The combined value is used for seismic mass (ASCE 7 §12.7.2 effective weight).
-FLOOR_DEAD_LOAD_KSF = 0.15   # kip/ft²
-FLOOR_LIVE_LOAD_KSF = 0.05   # kip/ft²
+FLOOR_DEAD_LOAD_KSF = 0.10   # kip/ft²  (superimposed dead: slab + finishes + MEP)
+FLOOR_LIVE_LOAD_KSF = 0.05   # kip/ft²  (office occupancy)
 
 FX_FLOOR = 10.0
 
@@ -185,8 +203,19 @@ PUSHOVER_FALLBACK_MAX_ITER = 100
 PUSHOVER_STEPS = 1200
 PUSHOVER_DU = 0.05
 PUSHOVER_DEBUG_EVERY = 10
+PUSHOVER_TRACK_DESIGN_ENVELOPE = True
+PUSHOVER_DESIGN_ENVELOPE_EVERY = 5
+PUSHOVER_DESIGN_ENVELOPE_EVENT_MIN_STEP_GAP = 5
+PUSHOVER_DESIGN_ENVELOPE_PEAK_SHEAR_REL_STEP = 0.05
+PUSHOVER_DESIGN_ENVELOPE_DRIFT_JUMP_REL_STEP = 0.10
+PUSHOVER_DCR_CHECK_ROOF_DRIFT_RATIO = 0.02
+PUSHOVER_USE_TARGET_DCR_FOR_REDESIGN = True
 PUSHOVER_MIN_ACCEPTABLE_DRIFT_RATIO = 0.05
 PUSHOVER_REDESIGN_MAX_ATTEMPTS = 3
+PUSHOVER_ENVELOPE_REDESIGN_MAX_ATTEMPTS = 6
+PUSHOVER_ENVELOPE_STOP_ON_STALLED_DCR = True
+PUSHOVER_ENVELOPE_STALL_MIN_RERUNS = 2
+PUSHOVER_ENVELOPE_STALL_DCR_TOL = 0.01
 PUSHOVER_STOP_ON_LOAD_REVERSAL = True
 PUSHOVER_LOAD_REVERSAL_LIMIT = 0.0
 PUSHOVER_LOAD_REVERSAL_MIN_PEAK_FACTOR = 0.02
@@ -307,3 +336,29 @@ def beam_gravity_wz_kip_per_in(beam_axis, perp_index):
 
 def pushover_target_disp():
     return PUSHOVER_STEPS * PUSHOVER_DU
+
+
+def col_self_weight_kip_per_in():
+    """Column self-weight per unit length (kip/in), downward."""
+    return CONCRETE_UNIT_WEIGHT_KCI * B_COL * H_COL
+
+
+def beam_self_weight_kip_per_in():
+    """Beam self-weight per unit length (kip/in), downward."""
+    return CONCRETE_UNIT_WEIGHT_KCI * B_BEAM * H_BEAM
+
+
+def total_structural_self_weight_per_floor():
+    """
+    Total self-weight of all column and beam elements in one floor (kips).
+
+    Columns  : NUM_FLOOR stories × (NUM_BAY_X+1) × (NUM_BAY_Y+1) columns,
+               each STORY_H tall.
+    Beams    : X-beams + Y-beams, each spanning one bay (BAY_X or BAY_Y).
+    """
+    n_col    = (NUM_BAY_X + 1) * (NUM_BAY_Y + 1)
+    n_beam_x = NUM_BAY_X * (NUM_BAY_Y + 1)
+    n_beam_y = (NUM_BAY_X + 1) * NUM_BAY_Y
+    w_col_floor  = col_self_weight_kip_per_in()  * STORY_H * n_col
+    w_beam_floor = beam_self_weight_kip_per_in() * BAY_X   * (n_beam_x + n_beam_y)
+    return w_col_floor + w_beam_floor

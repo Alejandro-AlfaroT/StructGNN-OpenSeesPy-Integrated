@@ -339,6 +339,38 @@ def _pick_beam(candidates, Mu_pos: float = 0.0, Mu_neg: float = 0.0, cfg=None):
     return min(candidates, key=lambda c: abs(_dcr_estimate(c) - target))
 
 
+def _spacing_update(current_spacing, governing_dcr, cfg):
+    if governing_dcr <= cfg.dcr.dcr_hard_max:
+        return None
+
+    step = cfg.rebar.stirrup_spacing_step_in
+    min_spacing = cfg.rebar.stirrup_spacing_min_in
+    target_spacing = current_spacing / max(governing_dcr / cfg.dcr.dcr_hard_max, 1.0)
+    stepped_spacing = math.floor(target_spacing / step) * step
+    next_spacing = max(min_spacing, min(current_spacing - step, stepped_spacing))
+
+    if next_spacing < current_spacing - 1e-9:
+        return next_spacing
+    return None
+
+
+def _current_column_update():
+    return {
+        "bar_size": sp.COL_BAR_SIZE,
+        "n_top": sp.COL_TOP_BARS,
+        "n_bot": sp.COL_BOT_BARS,
+        "n_side": sp.COL_SIDE_BARS,
+    }
+
+
+def _current_beam_update():
+    return {
+        "bar_size": sp.BEAM_BAR_SIZE,
+        "n_top": sp.BEAM_TOP_BARS,
+        "n_bot": sp.BEAM_BOT_BARS,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Redesign from check results
 # ─────────────────────────────────────────────────────────────────────────────
@@ -419,6 +451,8 @@ def redesign_steel(design_results: dict, cfg: Optional[DesignConfig] = None):
     col_dcrs   = [_col_flex_dcr(r)  for r in cols.values()]
     beam_dcrs  = [_beam_flex_dcr(r) for r in beams.values()]
     shear_dcrs = [_shear_dcr(r)     for r in design_results.values()]
+    col_shear_dcr = max((_shear_dcr(r) for r in cols.values()), default=0.0)
+    beam_shear_dcr = max((_shear_dcr(r) for r in beams.values()), default=0.0)
 
     flexural_dcrs = [d for d in col_dcrs + beam_dcrs if d > 0]
     flexural_converged = (
@@ -429,11 +463,29 @@ def redesign_steel(design_results: dict, cfg: Optional[DesignConfig] = None):
     converged = flexural_converged and shear_converged
 
     if flexural_converged and not shear_converged:
+        col_spacing = _spacing_update(
+            cfg.rebar.stirrup_spacing_col_in,
+            col_shear_dcr,
+            cfg,
+        )
+        beam_spacing = _spacing_update(
+            cfg.rebar.stirrup_spacing_beam_in,
+            beam_shear_dcr,
+            cfg,
+        )
+        col_update = _current_column_update() if col_spacing is not None else None
+        beam_update = _current_beam_update() if beam_spacing is not None else None
+
+        if col_update:
+            col_update["stirrup_spacing"] = col_spacing
+        if beam_update:
+            beam_update["stirrup_spacing"] = beam_spacing
+        penalty_log.append("Shear DCR exceeds 1.0; tightening transverse reinforcement spacing.")
         penalty_log.append(
             "Flexural DCRs in band but shear DCR exceeds 1.0; "
-            "shear governed by stirrup spacing — adjust manually."
+            "shear governed by transverse reinforcement spacing."
         )
-        return None, None, False, penalty_log
+        return col_update, beam_update, False, penalty_log
 
     # ── Column redesign ──────────────────────────────────────────────────────
     col_update = None
@@ -557,23 +609,54 @@ def redesign_steel(design_results: dict, cfg: Optional[DesignConfig] = None):
                 "section geometry may need to change."
             )
 
+    col_spacing = _spacing_update(
+        cfg.rebar.stirrup_spacing_col_in,
+        col_shear_dcr,
+        cfg,
+    )
+    beam_spacing = _spacing_update(
+        cfg.rebar.stirrup_spacing_beam_in,
+        beam_shear_dcr,
+        cfg,
+    )
+
+    if col_spacing is not None:
+        if col_update is None:
+            col_update = _current_column_update()
+        col_update["stirrup_spacing"] = col_spacing
+
+    if beam_spacing is not None:
+        if beam_update is None:
+            beam_update = _current_beam_update()
+        beam_update["stirrup_spacing"] = beam_spacing
+
     return col_update, beam_update, converged, penalty_log
 
 
-def apply_updates(col_update, beam_update):
+def apply_updates(col_update, beam_update, cfg: Optional[DesignConfig] = None):
     """Mutate Structure_Parameters in-place with the new bar specs."""
     if col_update:
-        sp.COL_BAR_SIZE  = col_update['bar_size']
-        sp.COL_TOP_BARS  = col_update['n_top']
-        sp.COL_BOT_BARS  = col_update['n_bot']
-        sp.COL_SIDE_BARS = col_update['n_side']   # per face
-        sp.COL_BAR_AREA  = sp.rebar_area(col_update['bar_size'])
+        if "bar_size" in col_update:
+            sp.COL_BAR_SIZE  = col_update['bar_size']
+            sp.COL_TOP_BARS  = col_update['n_top']
+            sp.COL_BOT_BARS  = col_update['n_bot']
+            sp.COL_SIDE_BARS = col_update['n_side']   # per face
+            sp.COL_BAR_AREA  = sp.rebar_area(col_update['bar_size'])
+        if "stirrup_spacing" in col_update:
+            sp.COL_STIRRUP_SPACING = col_update["stirrup_spacing"]
+            if cfg is not None:
+                cfg.rebar.stirrup_spacing_col_in = col_update["stirrup_spacing"]
 
     if beam_update:
-        sp.BEAM_BAR_SIZE = beam_update['bar_size']
-        sp.BEAM_TOP_BARS = beam_update['n_top']
-        sp.BEAM_BOT_BARS = beam_update['n_bot']
-        sp.BEAM_BAR_AREA = sp.rebar_area(beam_update['bar_size'])
+        if "bar_size" in beam_update:
+            sp.BEAM_BAR_SIZE = beam_update['bar_size']
+            sp.BEAM_TOP_BARS = beam_update['n_top']
+            sp.BEAM_BOT_BARS = beam_update['n_bot']
+            sp.BEAM_BAR_AREA = sp.rebar_area(beam_update['bar_size'])
+        if "stirrup_spacing" in beam_update:
+            sp.BEAM_STIRRUP_SPACING = beam_update["stirrup_spacing"]
+            if cfg is not None:
+                cfg.rebar.stirrup_spacing_beam_in = beam_update["stirrup_spacing"]
 
 
 def run_iterative_redesign(
@@ -620,8 +703,10 @@ def run_iterative_redesign(
                 f"\n  Iteration {iteration}/{max_iter}"
                 f"  |  Column: #{sp.COL_BAR_SIZE} "
                 f"{sp.COL_TOP_BARS}T+{sp.COL_BOT_BARS}B+{sp.COL_SIDE_BARS * 2}S"
+                f" ties #{sp.COL_STIRRUP_BAR_SIZE}-{sp.COL_STIRRUP_LEGS}L@{sp.COL_STIRRUP_SPACING:g}\""
                 f"  |  Beam: #{sp.BEAM_BAR_SIZE} "
                 f"{sp.BEAM_TOP_BARS}T+{sp.BEAM_BOT_BARS}B"
+                f" stirrups #{sp.BEAM_STIRRUP_BAR_SIZE}-{sp.BEAM_STIRRUP_LEGS}L@{sp.BEAM_STIRRUP_SPACING:g}\""
             )
 
         with _silence_c_output():
@@ -668,18 +753,24 @@ def run_iterative_redesign(
 
         if verbose:
             if col_upd:
-                print(
-                    f"    -> Column update: #{col_upd['bar_size']}  "
-                    f"{col_upd['n_top']}T+{col_upd['n_bot']}B"
-                    f"+{col_upd['n_side'] * 2}S"
-                )
+                if "bar_size" in col_upd:
+                    print(
+                        f"    -> Column update: #{col_upd['bar_size']}  "
+                        f"{col_upd['n_top']}T+{col_upd['n_bot']}B"
+                        f"+{col_upd['n_side'] * 2}S"
+                    )
+                if "stirrup_spacing" in col_upd:
+                    print(f"    -> Column tie spacing: {col_upd['stirrup_spacing']:g} in")
             else:
                 print("    -> Column: no feasible update found")
             if beam_upd:
-                print(
-                    f"    -> Beam   update: #{beam_upd['bar_size']}  "
-                    f"{beam_upd['n_top']}T+{beam_upd['n_bot']}B"
-                )
+                if "bar_size" in beam_upd:
+                    print(
+                        f"    -> Beam   update: #{beam_upd['bar_size']}  "
+                        f"{beam_upd['n_top']}T+{beam_upd['n_bot']}B"
+                    )
+                if "stirrup_spacing" in beam_upd:
+                    print(f"    -> Beam stirrup spacing: {beam_upd['stirrup_spacing']:g} in")
             else:
                 print("    -> Beam  : no feasible update found")
 
@@ -693,11 +784,13 @@ def run_iterative_redesign(
         previous = (
             sp.COL_BAR_SIZE, sp.COL_TOP_BARS, sp.COL_BOT_BARS, sp.COL_SIDE_BARS,
             sp.BEAM_BAR_SIZE, sp.BEAM_TOP_BARS, sp.BEAM_BOT_BARS,
+            sp.COL_STIRRUP_SPACING, sp.BEAM_STIRRUP_SPACING,
         )
-        apply_updates(col_upd, beam_upd)
+        apply_updates(col_upd, beam_upd, cfg)
         current = (
             sp.COL_BAR_SIZE, sp.COL_TOP_BARS, sp.COL_BOT_BARS, sp.COL_SIDE_BARS,
             sp.BEAM_BAR_SIZE, sp.BEAM_TOP_BARS, sp.BEAM_BOT_BARS,
+            sp.COL_STIRRUP_SPACING, sp.BEAM_STIRRUP_SPACING,
         )
         if current == previous:
             design_passes = all(r.ok for r in phase1_results.values())

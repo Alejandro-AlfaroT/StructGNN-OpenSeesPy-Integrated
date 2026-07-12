@@ -15,3 +15,22 @@ Miniconda3-*.sh
 MP_TESTING/3DFrame.*
 
 
+
+# Local Python environments
+.venv/
+.venv1/
+.venv312/
+
+# RC Structure generated analysis outputs
+RC Structure/outputs/
+RC Structure/Ground_Motions/raw/*
+RC Structure/Ground_Motions/processed/*
+RC Structure/Ground_Motions/scaled/*
+!RC Structure/Ground_Motions/raw/.gitkeep
+!RC Structure/Ground_Motions/processed/.gitkeep
+!RC Structure/Ground_Motions/scaled/.gitkeep
+
+# Model checkpoints and generated training artifacts
+checkpoints_sap2000/
+Results/
+.rc_structure_monitor/

@@ -55,3 +55,56 @@ PEER_LOMAP_GILROYARRAY1_000
 ```
 
 Do not encode scale factor in the record ID. Scale factors belong in metadata.
+
+## Imported PEER MLE Catalog
+
+The current local catalog was imported from:
+
+```text
+C:\Users\andro\Downloads\MLEarthquakeRecords.zip
+```
+
+Import command:
+
+```powershell
+& "C:\Users\andro\anaconda3\envs\OpPy\python.exe" -B "C:\Users\andro\StructGNN\RC Structure\Ground_Motions\import_peer_zip.py" "C:\Users\andro\Downloads\MLEarthquakeRecords.zip" --overwrite
+```
+
+The importer writes one manifest row per usable horizontal acceleration
+component. Vertical components are preserved only as source metadata because the
+current NTHA workflow is organized around horizontal excitation components.
+
+Current catalog summary:
+
+- 164 horizontal acceleration records.
+- 82 PEER selected record pairs.
+- 13 unique earthquake events.
+- Magnitude range: 6.53 to 7.36.
+- Rupture-distance range: 11.03 km to 39.91 km.
+- Vs30 range: 254.26 m/s to 442.61 m/s.
+- PGA range: 0.0620 g to 0.5355 g.
+
+
+## Running Nonlinear Time-History Analysis
+
+After importing the PEER records, run a single bidirectional record pair with:
+
+```powershell
+& "C:\Users\andro\anaconda3\envs\OpPy\python.exe" -B "C:\Users\andro\StructGNN\RC Structure\Ground_Motion_Main.py" --result-id 1 --catalog-summary
+```
+
+Run the first three record pairs in the manifest-backed set:
+
+```powershell
+& "C:\Users\andro\anaconda3\envs\OpPy\python.exe" -B "C:\Users\andro\StructGNN\RC Structure\Ground_Motion_Main.py" --limit 3
+```
+
+Run X-only excitation for a specific component:
+
+```powershell
+& "C:\Users\andro\anaconda3\envs\OpPy\python.exe" -B "C:\Users\andro\StructGNN\RC Structure\Ground_Motion_Main.py" --record-id-x RSN15_KERN_TAF021 --x-only
+```
+
+Outputs are written under `outputs/ntha/`. Each run stores status, record
+summaries, gravity and modal results, time history, story-drift peaks, node
+displacement envelopes, and element end-force envelopes.
