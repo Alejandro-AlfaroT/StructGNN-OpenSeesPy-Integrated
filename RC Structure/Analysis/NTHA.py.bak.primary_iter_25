@@ -65,7 +65,7 @@ _PAT_TAG_Y  = 101
 
 # Default NLTHA tolerances and iteration limits
 _TOL_PRIMARY  = 1.0e-6
-_ITER_PRIMARY = 25
+_ITER_PRIMARY = 20
 _TOL_FALLBACK = 1.0e-4
 _ITER_FALLBACK = 50
 _DT_SUBDIVIDE  = 10      # subdivide dt by this factor in last-resort recovery

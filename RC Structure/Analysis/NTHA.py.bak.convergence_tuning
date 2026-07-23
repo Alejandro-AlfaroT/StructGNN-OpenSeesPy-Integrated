@@ -65,7 +65,7 @@ _PAT_TAG_Y  = 101
 
 # Default NLTHA tolerances and iteration limits
 _TOL_PRIMARY  = 1.0e-6
-_ITER_PRIMARY = 25
+_ITER_PRIMARY = 10
 _TOL_FALLBACK = 1.0e-4
 _ITER_FALLBACK = 50
 _DT_SUBDIVIDE  = 10      # subdivide dt by this factor in last-resort recovery
@@ -287,43 +287,6 @@ def _log(fh, msg):
 #  STATUS HELPERS
 # ================================================================
 
-
-def _summarize_convergence_log(convergence_log, completed_steps):
-    """Return compact convergence-quality metrics for status.json."""
-    entries = convergence_log or []
-    recovery_entries = [entry for entry in entries if entry.get("ok")]
-    failed_entries = [entry for entry in entries if not entry.get("ok")]
-
-    strategy_counts = {}
-    for entry in recovery_entries:
-        strategy = entry.get("strategy", "unknown")
-        strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
-
-    max_consecutive = 0
-    current_consecutive = 0
-    previous_step = None
-    for entry in recovery_entries:
-        step = entry.get("step")
-        if isinstance(step, int) and previous_step is not None and step == previous_step + 1:
-            current_consecutive += 1
-        else:
-            current_consecutive = 1
-        previous_step = step
-        if current_consecutive > max_consecutive:
-            max_consecutive = current_consecutive
-
-    recovery_count = len(recovery_entries)
-    recovery_rate = recovery_count / completed_steps if completed_steps else 0.0
-
-    return {
-        "num_recovery_steps": recovery_count,
-        "recovery_rate": recovery_rate,
-        "recovery_strategy_counts": strategy_counts,
-        "max_consecutive_recovery_steps": max_consecutive,
-        "num_failed_recovery_steps": len(failed_entries),
-    }
-
-
 def _make_status(
     npts_requested,
     completed_steps,
@@ -332,16 +295,13 @@ def _make_status(
     failed_time=None,
     convergence_log=None,
 ):
-    convergence_log = convergence_log or []
-    convergence_summary = _summarize_convergence_log(convergence_log, completed_steps)
     return {
-        "npts_requested":       npts_requested,
-        "completed_steps":      completed_steps,
-        "failed":               failed,
-        "failed_step":          failed_step,
-        "failed_time_sec":      failed_time,
-        "convergence_summary":  convergence_summary,
-        "convergence_log":      convergence_log,
+        "npts_requested":  npts_requested,
+        "completed_steps": completed_steps,
+        "failed":          failed,
+        "failed_step":     failed_step,
+        "failed_time_sec": failed_time,
+        "convergence_log": convergence_log or [],
     }
 
 

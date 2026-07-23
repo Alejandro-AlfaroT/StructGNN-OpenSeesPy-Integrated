@@ -1,0 +1,75 @@
+{
+  "timestamp": "20260722_203307",
+  "rc_root": "C:\\Users\\andro\\StructGNN\\RC Structure",
+  "manifest": {
+    "manifest_path": "C:\\Users\\andro\\StructGNN\\RC Structure\\Ground_Motions\\metadata\\record_manifest.csv",
+    "manifest_backup": "C:\\Users\\andro\\StructGNN\\RC Structure\\Ground_Motions\\metadata\\record_manifest.backup_20260722_203307.csv",
+    "max_npts": 15000,
+    "long_pair_ids": [
+      12,
+      14,
+      24,
+      31,
+      32,
+      33,
+      34,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      71,
+      72,
+      73,
+      77,
+      78,
+      81
+    ],
+    "num_long_pairs": 28,
+    "num_manifest_rows_marked_unusable": 56
+  },
+  "hybrid_manifests_rewritten": [
+    {
+      "hybrid_manifest": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\hybrid_dataset\\hybrid_manifest.csv",
+      "backup": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\hybrid_dataset\\hybrid_manifest.backup_20260722_203307.csv",
+      "removed_rows": 3,
+      "remaining_rows": 54
+    }
+  ],
+  "quarantined_output_folders": [
+    {
+      "from": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\ntha\\peer_12",
+      "to": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\omitted_long_records\\20260722_203307\\ntha\\peer_12"
+    },
+    {
+      "from": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\ntha\\peer_14",
+      "to": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\omitted_long_records\\20260722_203307\\ntha\\peer_14"
+    },
+    {
+      "from": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\ntha\\peer_24",
+      "to": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\omitted_long_records\\20260722_203307\\ntha\\peer_24"
+    },
+    {
+      "from": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\hybrid_dataset\\peer_12",
+      "to": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\omitted_long_records\\20260722_203307\\hybrid_dataset\\peer_12"
+    },
+    {
+      "from": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\hybrid_dataset\\peer_14",
+      "to": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\omitted_long_records\\20260722_203307\\hybrid_dataset\\peer_14"
+    },
+    {
+      "from": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\hybrid_dataset\\peer_24",
+      "to": "C:\\Users\\andro\\StructGNN\\RC Structure\\outputs\\omitted_long_records\\20260722_203307\\hybrid_dataset\\peer_24"
+    }
+  ]
+}

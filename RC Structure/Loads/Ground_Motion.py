@@ -286,6 +286,14 @@ def _record_pair_key(row):
     )
 
 
+def _record_pair_sort_key(key):
+    """Sort PEER result IDs numerically instead of lexicographically."""
+    match = re.fullmatch(r"peer_result_id:([0-9]+)", str(key))
+    if match:
+        return 0, int(match.group(1))
+    return 1, str(key)
+
+
 def load_ground_motion_record(
     record_id,
     manifest_path=MANIFEST_PATH,
@@ -430,7 +438,7 @@ def ground_motion_pair_rows(
         )
         pairs.append((key, rows[0], rows[1]))
 
-    return sorted(pairs, key=lambda item: item[0])
+    return sorted(pairs, key=lambda item: _record_pair_sort_key(item[0]))
 
 
 def load_ground_motion_pairs(

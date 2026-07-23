@@ -13,7 +13,6 @@ if hasattr(sys.stdout, "reconfigure"):
 import openseespy.opensees as ops
 
 import Structure_Parameters as sp
-from Geometry_Overrides import apply_geometry_from_environment
 from Analysis.Gravity import run_gravity_analysis
 from Analysis.Modal import run_modal_analysis
 from Analysis.Pushover import run_pushover
@@ -61,7 +60,6 @@ def clear_failure_artifacts(outputs_dir):
 def model_summary():
     return {
         "analysis_method": selected_analysis_method(),
-        "geometry_variant": getattr(sp, "GEOMETRY_VARIANT_NAME", "baseline"),
         "asce_period_estimate": sp.asce_fundamental_period_check(),
         "num_bay_x": sp.NUM_BAY_X,
         "num_bay_y": sp.NUM_BAY_Y,
@@ -91,7 +89,6 @@ def model_summary():
 def print_model_summary(summary):
     print("\nModel summary:")
     print(f"  Analysis method: {summary.get('analysis_method', 'pushover')}")
-    print(f"  Geometry variant: {summary.get('geometry_variant', 'baseline')}")
     print(
         f"  Plan: {summary['num_bay_x']} bay(s) in X @ {summary['bay_x_in']:g} in, "
         f"{summary['num_bay_y']} bay(s) in Y @ {summary['bay_y_in']:g} in"
@@ -1311,7 +1308,6 @@ def run_modal_and_ntha(outputs_dir):
 def main():
     t_start = time.perf_counter()
     print(f"Run started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    apply_geometry_from_environment()
 
     project_dir = Path(__file__).resolve().parent
     outputs_dir = project_dir / "outputs"

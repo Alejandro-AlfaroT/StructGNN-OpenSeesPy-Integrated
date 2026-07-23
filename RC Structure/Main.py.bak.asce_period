@@ -13,7 +13,6 @@ if hasattr(sys.stdout, "reconfigure"):
 import openseespy.opensees as ops
 
 import Structure_Parameters as sp
-from Geometry_Overrides import apply_geometry_from_environment
 from Analysis.Gravity import run_gravity_analysis
 from Analysis.Modal import run_modal_analysis
 from Analysis.Pushover import run_pushover
@@ -61,8 +60,6 @@ def clear_failure_artifacts(outputs_dir):
 def model_summary():
     return {
         "analysis_method": selected_analysis_method(),
-        "geometry_variant": getattr(sp, "GEOMETRY_VARIANT_NAME", "baseline"),
-        "asce_period_estimate": sp.asce_fundamental_period_check(),
         "num_bay_x": sp.NUM_BAY_X,
         "num_bay_y": sp.NUM_BAY_Y,
         "num_stories": sp.NUM_FLOOR,
@@ -91,7 +88,6 @@ def model_summary():
 def print_model_summary(summary):
     print("\nModel summary:")
     print(f"  Analysis method: {summary.get('analysis_method', 'pushover')}")
-    print(f"  Geometry variant: {summary.get('geometry_variant', 'baseline')}")
     print(
         f"  Plan: {summary['num_bay_x']} bay(s) in X @ {summary['bay_x_in']:g} in, "
         f"{summary['num_bay_y']} bay(s) in Y @ {summary['bay_y_in']:g} in"
@@ -110,13 +106,6 @@ def print_model_summary(summary):
         f"  Beams: {beam['width_in']:g} in x {beam['depth_in']:g} in "
         f"(A={beam['area_in2']:.2f} in^2)"
     )
-    asce_check = summary.get("asce_period_estimate", {})
-    if asce_check:
-        print(
-            f"  ASCE approximate Ta: {asce_check['asce_ta_sec']:.4f} sec "
-            f"for h_n={asce_check['height_ft']:.2f} ft "
-            f"({asce_check['equation']})"
-        )
 
 
 def print_gravity_results(results):
@@ -148,40 +137,6 @@ def print_modal_results(modes):
             f"f = {item['frequency']:.6f} Hz"
         )
 
-
-
-def first_valid_modal_period(modes):
-    for item in modes:
-        if item.get("valid") and item.get("period") is not None:
-            return item["period"]
-    return None
-
-
-def asce_period_check_from_modal_results(modes, modal_source):
-    return sp.asce_fundamental_period_check(
-        model_period_sec=first_valid_modal_period(modes),
-        modal_source=modal_source,
-    )
-
-
-def print_asce_period_check(check):
-    print("\nASCE approximate fundamental period check:")
-    print(
-        f"  Ta = {check['asce_ta_sec']:.4f} sec "
-        f"({check['equation']}, Ct={check['ct']}, x={check['exponent']}, "
-        f"h_n={check['height_ft']:.2f} ft)"
-    )
-    if check.get("model_period_sec") is None:
-        print("  Model period: not available yet")
-        return
-
-    print(
-        f"  Model T1 = {check['model_period_sec']:.4f} sec "
-        f"from {check.get('modal_source') or 'unknown source'}"
-    )
-    print(f"  T1 / Ta = {check['period_ratio_to_asce_ta']:.3f}")
-    if check.get("warning"):
-        print(f"  [WARNING] {check['warning']}")
 
 def print_pushover_results(results, gravity_results):
     status = results["status"]
@@ -1043,13 +998,6 @@ def run_modal_and_pushover(outputs_dir, attempt_index):
 
     modal_results = run_modal_analysis()
     print_modal_results(modal_results)
-    pushover_period_check = asce_period_check_from_modal_results(
-        modal_results,
-        f"post_gravity_tangent_pushover_attempt_{attempt_index}",
-    )
-    print_asce_period_check(pushover_period_check)
-    with (outputs_dir / f"asce_period_check_pushover_attempt_{attempt_index}.json").open("w", encoding="utf-8") as file:
-        json.dump(pushover_period_check, file, indent=2)
 
     apply_lateral_loads()
     pushover_results = run_pushover(log_path=pushover_log_path(outputs_dir, attempt_index))
@@ -1213,11 +1161,6 @@ def run_modal_and_ntha(outputs_dir):
     reference_modal_results = run_modal_analysis()
     print("\nElastic/reference modal properties for Rayleigh damping:")
     print_modal_results(reference_modal_results)
-    reference_period_check = asce_period_check_from_modal_results(
-        reference_modal_results,
-        "elastic_reference_before_gravity",
-    )
-    print_asce_period_check(reference_period_check)
 
     apply_gravity_loads()
     gravity_results = run_gravity_analysis()
@@ -1225,11 +1168,6 @@ def run_modal_and_ntha(outputs_dir):
     modal_results = run_modal_analysis()
     print("\nPost-gravity tangent modal properties (diagnostic only):")
     print_modal_results(modal_results)
-    tangent_period_check = asce_period_check_from_modal_results(
-        modal_results,
-        "post_gravity_tangent_diagnostic",
-    )
-    print_asce_period_check(tangent_period_check)
 
     if getattr(sp, "NTHA_PRINT_CATALOG_SUMMARY", True):
         print("\nGround-motion catalog summary:")
@@ -1286,8 +1224,6 @@ def run_modal_and_ntha(outputs_dir):
         "post_gravity_tangent_period_mode_2_sec": tangent_valid_modes[1]["period"] if len(tangent_valid_modes) > 1 else None,
         "gravity_roof_ux_in": gravity_results.get("ux"),
         "gravity_roof_uy_in": gravity_results.get("uy"),
-        "asce_reference_period_check": reference_period_check,
-        "asce_post_gravity_period_check": tangent_period_check,
     }
     with (ntha_output_dir / "modal_diagnostics.json").open("w", encoding="utf-8") as file:
         json.dump(modal_diagnostics, file, indent=2)
@@ -1311,7 +1247,6 @@ def run_modal_and_ntha(outputs_dir):
 def main():
     t_start = time.perf_counter()
     print(f"Run started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    apply_geometry_from_environment()
 
     project_dir = Path(__file__).resolve().parent
     outputs_dir = project_dir / "outputs"
@@ -1321,8 +1256,6 @@ def main():
     print_model_summary(current_model_summary)
     with (outputs_dir / "model_summary.json").open("w") as file:
         json.dump(current_model_summary, file, indent=2)
-    with (outputs_dir / "asce_period_estimate.json").open("w", encoding="utf-8") as file:
-        json.dump(current_model_summary["asce_period_estimate"], file, indent=2)
 
     # ── Iterative steel redesign (gravity-driven inner loop) ─────────────────
     cfg = DesignConfig.from_structure_parameters()
@@ -1398,13 +1331,6 @@ def main():
 
     modal_results = run_modal_analysis()
     print_modal_results(modal_results)
-    initial_pushover_period_check = asce_period_check_from_modal_results(
-        modal_results,
-        "post_gravity_tangent_pushover_initial",
-    )
-    print_asce_period_check(initial_pushover_period_check)
-    with (outputs_dir / "asce_period_check_pushover_initial.json").open("w", encoding="utf-8") as file:
-        json.dump(initial_pushover_period_check, file, indent=2)
 
     apply_lateral_loads()
     pushover_results = run_pushover(log_path=pushover_log_path(outputs_dir, 0))

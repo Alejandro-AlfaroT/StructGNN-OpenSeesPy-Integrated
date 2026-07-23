@@ -151,44 +151,30 @@ def _orientation(member_type):
 
 
 def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment):
-    """
-    Define OpenSees IMKBilin using the current OpenSees argument order:
-
-        Ke, dp_pos, dpc_pos, du_pos, Fy_pos, FmaxFy_pos, FresFy_pos,
-        dp_neg, dpc_neg, du_neg, Fy_neg, FmaxFy_neg, FresFy_neg,
-        Lamda_S, Lamda_C, Lamda_K, c_S, c_C, c_K, D_pos, D_neg
-
-    All positive/negative-direction backbone parameters are passed as positive
-    values, matching the OpenSees IMKBilin documentation.
-    """
-
-    fmaxfy_pos = getattr(sp, "IMK_FMAXFY_POS", 1.10)
-    fmaxfy_neg = getattr(sp, "IMK_FMAXFY_NEG", 1.10)
-    fresfy_pos = getattr(sp, "IMK_FRESFY_POS", sp.IMK_RES_POS)
-    fresfy_neg = getattr(sp, "IMK_FRESFY_NEG", sp.IMK_RES_NEG)
-
     ops.uniaxialMaterial(
         sp.IMK_MATERIAL_TYPE,
         mat_tag,
         elastic_stiffness,
-        sp.IMK_THETA_P_POS,
-        sp.IMK_THETA_PC_POS,
-        sp.IMK_THETA_U_POS,
+        sp.IMK_POST_YIELD_RATIO_POS,
+        sp.IMK_POST_YIELD_RATIO_NEG,
         yield_moment,
-        fmaxfy_pos,
-        fresfy_pos,
-        sp.IMK_THETA_P_NEG,
-        sp.IMK_THETA_PC_NEG,
-        sp.IMK_THETA_U_NEG,
         yield_moment,
-        fmaxfy_neg,
-        fresfy_neg,
         sp.IMK_LAMBDA_S,
         sp.IMK_LAMBDA_C,
+        sp.IMK_LAMBDA_A,
         sp.IMK_LAMBDA_K,
         sp.IMK_C_S,
         sp.IMK_C_C,
+        sp.IMK_C_A,
         sp.IMK_C_K,
+        sp.IMK_THETA_P_POS,
+        sp.IMK_THETA_P_NEG,
+        sp.IMK_THETA_PC_POS,
+        sp.IMK_THETA_PC_NEG,
+        sp.IMK_RES_POS,
+        sp.IMK_RES_NEG,
+        sp.IMK_THETA_U_POS,
+        sp.IMK_THETA_U_NEG,
         sp.IMK_D_POS,
         sp.IMK_D_NEG,
     )

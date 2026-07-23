@@ -165,10 +165,10 @@ IMK_MATERIAL_TYPE = "IMKBilin"
 #   "member_stiffness_factor" = Ke = stiffness_factor * 6EI/L
 #   "max"                     = legacy rule: max(My/theta_y_input, stiffness_factor*6EI/L)
 #
-# Use "member_stiffness_factor" for concentrated-plasticity springs so the
-# elastic beam-column element carries member flexibility and the zeroLength
-# hinge remains stiff until its IMKBilin backbone reaches yield strength.
-IMK_HINGE_STIFFNESS_MODE = "member_stiffness_factor"
+# Use "yield_rotation" when IMK_BEAM_THETA_Y and IMK_COLUMN_THETA_Y are intended
+# to be the actual yield rotations. This prevents gravity from yielding hinges
+# solely because a very large elastic spring stiffness made My/Ke tiny.
+IMK_HINGE_STIFFNESS_MODE = "yield_rotation"
 IMK_HINGE_STIFFNESS_FACTOR = 20.0
 IMK_BEAM_THETA_Y = 0.005
 IMK_COLUMN_THETA_Y = 0.004
@@ -188,13 +188,6 @@ IMK_THETA_PC_POS = 0.060
 IMK_THETA_PC_NEG = 0.060
 IMK_RES_POS = 0.20
 IMK_RES_NEG = 0.20
-
-# Current OpenSees IMKBilin uses maximum/residual strength ratios, not
-# post-yield hardening ratios, in the material command.
-IMK_FMAXFY_POS = 1.10
-IMK_FMAXFY_NEG = 1.10
-IMK_FRESFY_POS = IMK_RES_POS
-IMK_FRESFY_NEG = IMK_RES_NEG
 IMK_THETA_U_POS = 0.120
 IMK_THETA_U_NEG = 0.120
 IMK_D_POS = 1.0

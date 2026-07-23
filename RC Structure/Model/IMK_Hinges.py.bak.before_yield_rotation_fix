@@ -66,22 +66,17 @@ def _elastic_rotational_stiffness(e_mod, inertia, length):
     return 6.0 * e_mod * inertia / length
 
 
-def _hinge_yield_data(props, rot_dir):
-    if rot_dir in (5, "rot_y"):
-        return props["my"], props["iy"]
-
-    if rot_dir in (6, "rot_z"):
-        return props["mz"], props["iz"]
-
-    raise ValueError(f"Unknown IMK hinge rotation direction: {rot_dir}")
-
-
-def imk_hinge_stiffness_components(member_type, rot_dir, length):
+def imk_hinge_stiffness(member_type, rot_dir, length):
     props = _member_properties(member_type)
-    yield_moment, inertia = _hinge_yield_data(props, rot_dir)
 
-    if props["theta_y"] <= 0.0:
-        raise ValueError(f"IMK theta_y must be positive for {member_type} {rot_dir}.")
+    if rot_dir in (5, "rot_y"):
+        yield_moment = props["my"]
+        inertia = props["iy"]
+    elif rot_dir in (6, "rot_z"):
+        yield_moment = props["mz"]
+        inertia = props["iz"]
+    else:
+        raise ValueError(f"Unknown IMK hinge rotation direction: {rot_dir}")
 
     yield_based_stiffness = yield_moment / props["theta_y"]
     member_based_stiffness = (
@@ -89,51 +84,26 @@ def imk_hinge_stiffness_components(member_type, rot_dir, length):
         * _elastic_rotational_stiffness(props["e"], inertia, length)
     )
 
-    mode = getattr(sp, "IMK_HINGE_STIFFNESS_MODE", "yield_rotation")
-
-    if mode == "yield_rotation":
-        selected_stiffness = yield_based_stiffness
-    elif mode == "member_stiffness_factor":
-        selected_stiffness = member_based_stiffness
-    elif mode == "max":
-        selected_stiffness = max(yield_based_stiffness, member_based_stiffness)
-    else:
-        raise ValueError(
-            "Unknown IMK_HINGE_STIFFNESS_MODE "
-            f"{mode!r}; use 'yield_rotation', 'member_stiffness_factor', or 'max'."
-        )
-
-    return {
-        "mode": mode,
-        "yield_moment": yield_moment,
-        "target_theta_y": props["theta_y"],
-        "yield_based_stiffness": yield_based_stiffness,
-        "member_based_stiffness": member_based_stiffness,
-        "selected_stiffness": selected_stiffness,
-        "actual_theta_y": yield_moment / selected_stiffness,
-    }
-
-
-def imk_hinge_stiffness(member_type, rot_dir, length):
-    return imk_hinge_stiffness_components(
-        member_type,
-        rot_dir,
-        length,
-    )["selected_stiffness"]
+    return max(yield_based_stiffness, member_based_stiffness)
 
 
 def imk_hinge_thresholds(member_type, rot_dir, length):
-    components = imk_hinge_stiffness_components(member_type, rot_dir, length)
-    theta_y = components["actual_theta_y"]
+    props = _member_properties(member_type)
+
+    if rot_dir in (5, "rot_y"):
+        yield_moment = props["my"]
+    elif rot_dir in (6, "rot_z"):
+        yield_moment = props["mz"]
+    else:
+        raise ValueError(f"Unknown IMK hinge rotation direction: {rot_dir}")
+
+    theta_y = yield_moment / imk_hinge_stiffness(member_type, rot_dir, length)
     theta_p = max(sp.IMK_THETA_P_POS, sp.IMK_THETA_P_NEG)
 
     return {
         "theta_y": theta_y,
-        "target_theta_y": components["target_theta_y"],
         "theta_cap": theta_y + theta_p,
         "theta_u": max(sp.IMK_THETA_U_POS, sp.IMK_THETA_U_NEG),
-        "stiffness_mode": components["mode"],
-        "selected_stiffness": components["selected_stiffness"],
     }
 
 
@@ -151,44 +121,30 @@ def _orientation(member_type):
 
 
 def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment):
-    """
-    Define OpenSees IMKBilin using the current OpenSees argument order:
-
-        Ke, dp_pos, dpc_pos, du_pos, Fy_pos, FmaxFy_pos, FresFy_pos,
-        dp_neg, dpc_neg, du_neg, Fy_neg, FmaxFy_neg, FresFy_neg,
-        Lamda_S, Lamda_C, Lamda_K, c_S, c_C, c_K, D_pos, D_neg
-
-    All positive/negative-direction backbone parameters are passed as positive
-    values, matching the OpenSees IMKBilin documentation.
-    """
-
-    fmaxfy_pos = getattr(sp, "IMK_FMAXFY_POS", 1.10)
-    fmaxfy_neg = getattr(sp, "IMK_FMAXFY_NEG", 1.10)
-    fresfy_pos = getattr(sp, "IMK_FRESFY_POS", sp.IMK_RES_POS)
-    fresfy_neg = getattr(sp, "IMK_FRESFY_NEG", sp.IMK_RES_NEG)
-
     ops.uniaxialMaterial(
         sp.IMK_MATERIAL_TYPE,
         mat_tag,
         elastic_stiffness,
-        sp.IMK_THETA_P_POS,
-        sp.IMK_THETA_PC_POS,
-        sp.IMK_THETA_U_POS,
+        sp.IMK_POST_YIELD_RATIO_POS,
+        sp.IMK_POST_YIELD_RATIO_NEG,
         yield_moment,
-        fmaxfy_pos,
-        fresfy_pos,
-        sp.IMK_THETA_P_NEG,
-        sp.IMK_THETA_PC_NEG,
-        sp.IMK_THETA_U_NEG,
         yield_moment,
-        fmaxfy_neg,
-        fresfy_neg,
         sp.IMK_LAMBDA_S,
         sp.IMK_LAMBDA_C,
+        sp.IMK_LAMBDA_A,
         sp.IMK_LAMBDA_K,
         sp.IMK_C_S,
         sp.IMK_C_C,
+        sp.IMK_C_A,
         sp.IMK_C_K,
+        sp.IMK_THETA_P_POS,
+        sp.IMK_THETA_P_NEG,
+        sp.IMK_THETA_PC_POS,
+        sp.IMK_THETA_PC_NEG,
+        sp.IMK_RES_POS,
+        sp.IMK_RES_NEG,
+        sp.IMK_THETA_U_POS,
+        sp.IMK_THETA_U_NEG,
         sp.IMK_D_POS,
         sp.IMK_D_NEG,
     )
