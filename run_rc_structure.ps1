@@ -6,7 +6,7 @@ if (-not $env:RC_SHOW_PLOTS) {
 }
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$python = "C:\Users\andro\anaconda3\envs\OpPy\python.exe"
+$python = Join-Path $env:USERPROFILE "anaconda3\envs\OpPy\python.exe"
 $main = Join-Path $projectRoot "RC Structure\Main.py"
 
 if (-not (Test-Path $python)) {

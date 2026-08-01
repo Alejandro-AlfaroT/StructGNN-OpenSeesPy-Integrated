@@ -38,6 +38,37 @@ from Loads.Ground_Motion import (
 from Model.Build_Model import build_model
 
 
+OUTPUT_IDENTITY_KEYS = (
+    "num_bay_x",
+    "num_bay_y",
+    "num_floor",
+    "bay_x_in",
+    "bay_y_in",
+    "story_h_in",
+    "fc_col_ksi",
+    "fc_beam_ksi",
+    "fy_ksi",
+    "b_col_in",
+    "h_col_in",
+    "b_beam_in",
+    "h_beam_in",
+    "col_bar_size",
+    "col_top_bars",
+    "col_bot_bars",
+    "col_side_bars",
+    "beam_bar_size",
+    "beam_top_bars",
+    "beam_bot_bars",
+    "beam_side_bars",
+    "element_formulation",
+    "imk_apply_to_columns",
+    "imk_apply_to_beams",
+    "imk_material_type",
+    "imk_hinge_stiffness_mode",
+    "imk_hinge_stiffness_factor",
+)
+
+
 def _write_json(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +89,83 @@ def _write_csv(path, fieldnames, rows):
 
 def _safe_name(value):
     return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in value)
+
+
+def _variant_value(value):
+    return (
+        f"{float(value):g}"
+        .replace("-", "m")
+        .replace("+", "")
+        .replace(".", "p")
+    )
+
+
+def analysis_run_name(
+    base_name,
+    *,
+    x_only=False,
+    scale_factor=None,
+    damping_ratio=0.05,
+    rayleigh_mode_i=0,
+    rayleigh_mode_j=2,
+    dt_factor=1.0,
+):
+    name = _safe_name(base_name)
+    suffixes = []
+    if x_only and not name.endswith("__x_only"):
+        suffixes.append("x_only")
+    if scale_factor is not None and abs(float(scale_factor) - 1.0) > 1.0e-12:
+        suffixes.append(f"sf_{_variant_value(scale_factor)}")
+    if abs(float(damping_ratio) - 0.05) > 1.0e-12:
+        suffixes.append(f"zeta_{_variant_value(damping_ratio)}")
+    if int(rayleigh_mode_i) != 0 or int(rayleigh_mode_j) != 2:
+        suffixes.append(f"rayleigh_{int(rayleigh_mode_i)}_{int(rayleigh_mode_j)}")
+    if abs(float(dt_factor) - 1.0) > 1.0e-12:
+        suffixes.append(f"dtf_{_variant_value(dt_factor)}")
+    if suffixes:
+        name += "__" + "__".join(suffixes)
+    return name
+
+
+def validate_ntha_output_compatibility(output_dir, overwrite_existing=False):
+    output_dir = Path(output_dir)
+    if overwrite_existing or not output_dir.exists():
+        return
+
+    generated_files = (
+        output_dir / "status.json",
+        output_dir / "summary.json",
+        output_dir / "global_parameters.json",
+    )
+    if not any(path.exists() for path in generated_files):
+        return
+
+    parameters_path = output_dir / "global_parameters.json"
+    if not parameters_path.exists():
+        raise RuntimeError(
+            f"Refusing to overwrite existing NTHA output without configuration "
+            f"metadata: {output_dir}. Use a different output directory or "
+            "--overwrite-existing."
+        )
+
+    with parameters_path.open(encoding="utf-8") as file:
+        previous = json.load(file)
+    current = collect_global_parameters()
+    differences = {
+        key: {"existing": previous.get(key), "requested": current.get(key)}
+        for key in OUTPUT_IDENTITY_KEYS
+        if previous.get(key) != current.get(key)
+    }
+    if differences:
+        preview = ", ".join(
+            f"{key}={values['existing']!r}->{values['requested']!r}"
+            for key, values in list(differences.items())[:8]
+        )
+        raise RuntimeError(
+            "Refusing to mix different model configurations in "
+            f"{output_dir}. Differences: {preview}. "
+            "Use a different output directory or --overwrite-existing."
+        )
 
 
 def _story_drift_rows(results):
@@ -342,6 +450,11 @@ def parse_args():
         default=str(Path(__file__).resolve().parent / "outputs" / "ntha"),
     )
     parser.add_argument("--catalog-summary", action="store_true")
+    parser.add_argument(
+        "--overwrite-existing",
+        action="store_true",
+        help="Allow replacing an existing run even when its model configuration differs.",
+    )
     add_geometry_arguments(parser)
     return parser.parse_args()
 
@@ -352,6 +465,8 @@ def main():
 
     if args.catalog_summary:
         print(json.dumps(ground_motion_catalog_summary(), indent=2))
+        if not args.record_id_x and args.result_id is None:
+            return
 
     selected = select_records(args)
     if not selected:
@@ -369,8 +484,21 @@ def main():
             name = _safe_name(
                 record_x.record_id + (f"__{record_y.record_id}" if record_y else "__x_only")
             )
+        name = analysis_run_name(
+            name,
+            x_only=record_y is None,
+            scale_factor=record_x.scale_factor,
+            damping_ratio=args.damping_ratio,
+            rayleigh_mode_i=args.rayleigh_mode_i,
+            rayleigh_mode_j=args.rayleigh_mode_j,
+            dt_factor=args.dt_factor,
+        )
 
         output_dir = base_output_dir / name
+        validate_ntha_output_compatibility(
+            output_dir,
+            overwrite_existing=args.overwrite_existing,
+        )
         summary = run_one(record_x, record_y, args, output_dir)
         summary["pair_key"] = key
         run_summaries.append(summary)

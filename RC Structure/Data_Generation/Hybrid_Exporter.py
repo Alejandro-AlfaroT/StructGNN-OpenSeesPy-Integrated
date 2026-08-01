@@ -33,9 +33,15 @@ import argparse
 import csv
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
+
+
+RC_STRUCTURE_DIR = Path(__file__).resolve().parents[1]
+GROUND_MOTION_DIR = RC_STRUCTURE_DIR / "Ground_Motions"
+GROUND_MOTION_MANIFEST = GROUND_MOTION_DIR / "metadata" / "record_manifest.csv"
 
 
 ELEMENT_TYPE_ID = {
@@ -286,20 +292,86 @@ def _json_to_feature_array(data, keys):
     return np.asarray([_global_to_float(key, data.get(key)) for key in keys], dtype=np.float32)
 
 
+def _resolve_acceleration_source(record_summary):
+    source_value = (record_summary or {}).get("source_path")
+    if source_value:
+        source_path = Path(source_value)
+        candidates = [source_path]
+        if not source_path.is_absolute():
+            candidates.insert(0, GROUND_MOTION_DIR / source_path)
+        else:
+            candidates.append(GROUND_MOTION_DIR / "processed" / source_path.name)
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate, (record_summary.get("units") or "in/sec^2")
+
+    record_id = (record_summary or {}).get("record_id")
+    if record_id and GROUND_MOTION_MANIFEST.exists():
+        for row in _read_csv(GROUND_MOTION_MANIFEST):
+            if row.get("record_id") != record_id:
+                continue
+            processed_file = (row.get("processed_file") or "").strip()
+            if processed_file:
+                processed_path = GROUND_MOTION_DIR / processed_file
+                if processed_path.exists():
+                    return processed_path, (row.get("processed_units") or "in/sec^2")
+            break
+
+    raise FileNotFoundError(
+        "Ground motion source file not found for "
+        f"{record_id or '<unknown record>'}: {source_value or '<no source_path>'}"
+    )
+
+
+def _acceleration_to_in_per_sec2(acceleration, units):
+    normalized = str(units or "in/sec^2").strip().lower().replace(" ", "")
+    if normalized in {"in/s2", "in/sec2", "in/sec^2"}:
+        return acceleration
+    if normalized in {"g", "grav", "gravity"}:
+        return acceleration * 386.4
+    if normalized in {"cm/s2", "cm/sec2", "cm/sec^2"}:
+        return acceleration / 2.54
+    if normalized in {"m/s2", "m/sec2", "m/sec^2"}:
+        return acceleration * 39.37007874015748
+    raise ValueError(f"Unsupported acceleration units in record summary: {units}")
+
+
 def _load_acceleration_from_summary(record_summary, target_steps):
     if not record_summary:
         return np.zeros(target_steps, dtype=np.float32)
 
-    source_path = record_summary.get("source_path")
-    if not source_path:
-        return np.zeros(target_steps, dtype=np.float32)
-
-    path = Path(source_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Ground motion source file not found: {path}")
-
+    path, source_units = _resolve_acceleration_source(record_summary)
     accel = np.loadtxt(path, dtype=np.float64)
-    accel = np.atleast_1d(accel).astype(np.float32)
+    accel = _acceleration_to_in_per_sec2(
+        np.atleast_1d(accel),
+        source_units,
+    )
+    accel = (
+        accel
+        * _to_float(record_summary.get("scale_factor"), default=1.0)
+    ).astype(np.float32)
+
+    source_dt = _to_float(record_summary.get("dt_sec"), default=0.0)
+    analysis_dt = _to_float(
+        record_summary.get("analysis_dt_sec"),
+        default=source_dt,
+    )
+    if (
+        target_steps > 0
+        and source_dt > 0.0
+        and analysis_dt > 0.0
+        and not math.isclose(source_dt, analysis_dt)
+    ):
+        source_time = np.arange(accel.size, dtype=np.float64) * source_dt
+        target_time = np.arange(target_steps, dtype=np.float64) * analysis_dt
+        return np.interp(
+            target_time,
+            source_time,
+            accel,
+            left=float(accel[0]),
+            right=0.0,
+        ).astype(np.float32)
 
     if accel.size >= target_steps:
         return accel[:target_steps]
@@ -307,6 +379,15 @@ def _load_acceleration_from_summary(record_summary, target_steps):
     padded = np.zeros(target_steps, dtype=np.float32)
     padded[: accel.size] = accel
     return padded
+
+
+def _portable_path(path, relative_to):
+    return Path(
+        os.path.relpath(
+            Path(path).resolve(),
+            start=Path(relative_to).resolve(),
+        )
+    ).as_posix()
 
 
 def _status_features(status):
@@ -390,9 +471,18 @@ def compile_hybrid_sample(
     metadata_path = output_dir / "hybrid_metadata.json"
     if sample_path.exists() and not overwrite:
         metadata = _read_json(metadata_path, default={}) or {}
-        metadata.setdefault("run_name", ntha_dir.name)
-        metadata.setdefault("sample_npz", str(sample_path))
-        if not metadata_path.exists() or metadata.get("run_name") != ntha_dir.name:
+        portable_source = _portable_path(ntha_dir, output_dir)
+        portable_sample = _portable_path(sample_path, output_dir)
+        needs_refresh = (
+            not metadata_path.exists()
+            or metadata.get("run_name") != ntha_dir.name
+            or metadata.get("source_ntha_dir") != portable_source
+            or metadata.get("sample_npz") != portable_sample
+        )
+        metadata["run_name"] = ntha_dir.name
+        metadata["source_ntha_dir"] = portable_source
+        metadata["sample_npz"] = portable_sample
+        if needs_refresh:
             _write_json(metadata_path, metadata)
         return metadata
 
@@ -508,10 +598,10 @@ def compile_hybrid_sample(
     )
 
     metadata = {
-        "schema_version": "hybrid_gnn_lstm_v1",
+        "schema_version": "hybrid_gnn_lstm_v2",
         "run_name": ntha_dir.name,
-        "source_ntha_dir": str(ntha_dir),
-        "sample_npz": str(sample_path),
+        "source_ntha_dir": _portable_path(ntha_dir, output_dir),
+        "sample_npz": _portable_path(sample_path, output_dir),
         "num_nodes": int(x.shape[0]),
         "num_edges": int(edge_index.shape[1]),
         "num_elements": int(element_attr.shape[0]),
@@ -579,9 +669,12 @@ def compile_ntha_root(
         already_compiled = (out_dir / "hybrid_sample.npz").exists()
         row = {
             "run_name": run_dir.name,
-            "source_ntha_dir": str(run_dir),
-            "sample_dir": str(out_dir),
-            "sample_npz": str(out_dir / "hybrid_sample.npz"),
+            "source_ntha_dir": _portable_path(run_dir, dataset_dir),
+            "sample_dir": _portable_path(out_dir, dataset_dir),
+            "sample_npz": _portable_path(
+                out_dir / "hybrid_sample.npz",
+                dataset_dir,
+            ),
             "compiled": False,
             "skipped": False,
             "error": "",

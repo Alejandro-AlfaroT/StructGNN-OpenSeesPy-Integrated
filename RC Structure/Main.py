@@ -28,7 +28,11 @@ from Loads.Ground_Motion import (
     load_ground_motion_pairs,
     load_ground_motion_record,
 )
-from Ground_Motion_Main import save_ntha_outputs
+from Ground_Motion_Main import (
+    analysis_run_name,
+    save_ntha_outputs,
+    validate_ntha_output_compatibility,
+)
 from Model.Build_Model import build_model
 from Plotting.Plot_Results import (
     plot_pushover_curve,
@@ -1236,8 +1240,17 @@ def run_modal_and_ntha(outputs_dir):
         print(json.dumps(ground_motion_catalog_summary(), indent=2))
 
     pair_key, record_x, record_y = select_ntha_records_from_config()
-    run_name = _safe_output_name(pair_key.replace("peer_result_id:", "peer_"))
+    run_name = analysis_run_name(
+        _safe_output_name(pair_key.replace("peer_result_id:", "peer_")),
+        x_only=record_y is None,
+        scale_factor=record_x.scale_factor,
+        damping_ratio=getattr(sp, "NTHA_DAMPING_RATIO", 0.05),
+        rayleigh_mode_i=getattr(sp, "NTHA_RAYLEIGH_MODE_I", 0),
+        rayleigh_mode_j=getattr(sp, "NTHA_RAYLEIGH_MODE_J", 2),
+        dt_factor=getattr(sp, "NTHA_DT_FACTOR", 1.0),
+    )
     ntha_output_dir = outputs_dir / "ntha" / run_name
+    validate_ntha_output_compatibility(ntha_output_dir)
 
     print(
         "\nRunning NTHA with "

@@ -187,12 +187,21 @@ def write_acceleration_file(record, output_path, units="in/sec^2"):
 
 def define_path_time_series(series_tag, record, accel_file_path=None, factor=1.0):
     if accel_file_path is None:
-        accel_file_path = (
-            GROUND_MOTION_DIR
-            / "processed"
-            / f"{record.record_id}_in_per_sec2.txt"
+        acceleration = to_in_per_sec2(
+            record.scaled_acceleration,
+            record.units,
         )
-        write_acceleration_file(record, accel_file_path, units="in/sec^2")
+        ops.timeSeries(
+            "Path",
+            series_tag,
+            "-dt",
+            record.dt_sec,
+            "-values",
+            *acceleration.tolist(),
+            "-factor",
+            factor,
+        )
+        return None
 
     ops.timeSeries(
         "Path",
@@ -200,7 +209,7 @@ def define_path_time_series(series_tag, record, accel_file_path=None, factor=1.0
         "-dt",
         record.dt_sec,
         "-filePath",
-        str(accel_file_path),
+        str(Path(accel_file_path)),
         "-factor",
         factor,
     )
@@ -551,6 +560,15 @@ def ground_motion_catalog_summary(
 
 
 def summarize_record(record):
+    source_path = record.source_path
+    if source_path:
+        try:
+            source_path = Path(source_path).resolve().relative_to(
+                GROUND_MOTION_DIR.resolve()
+            ).as_posix()
+        except ValueError:
+            source_path = str(source_path)
+
     return {
         "record_id": record.record_id,
         "dt_sec": record.dt_sec,
@@ -560,7 +578,7 @@ def summarize_record(record):
         "scale_factor": record.scale_factor,
         "pga_g": record.pga_g,
         "pga_in_per_sec2": record.pga_in_per_sec2,
-        "source_path": record.source_path,
+        "source_path": source_path,
     }
 
 

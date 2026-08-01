@@ -58,16 +58,13 @@ Do not encode scale factor in the record ID. Scale factors belong in metadata.
 
 ## Imported PEER MLE Catalog
 
-The current local catalog was imported from:
-
-```text
-C:\Users\andro\Downloads\MLEarthquakeRecords.zip
-```
-
-Import command:
+The current local catalog was imported from `MLEarthquakeRecords.zip`. From
+the repository root, import or refresh it with:
 
 ```powershell
-& "C:\Users\andro\anaconda3\envs\OpPy\python.exe" -B "C:\Users\andro\StructGNN\RC Structure\Ground_Motions\import_peer_zip.py" "C:\Users\andro\Downloads\MLEarthquakeRecords.zip" --overwrite
+$python = Join-Path $env:USERPROFILE "anaconda3\envs\OpPy\python.exe"
+& $python -B ".\RC Structure\Ground_Motions\import_peer_zip.py" `
+  (Join-Path $env:USERPROFILE "Downloads\MLEarthquakeRecords.zip") --overwrite
 ```
 
 The importer writes one manifest row per usable horizontal acceleration
@@ -76,9 +73,11 @@ current NTHA workflow is organized around horizontal excitation components.
 
 Current catalog summary:
 
-- 164 horizontal acceleration records.
-- 82 PEER selected record pairs.
-- 13 unique earthquake events.
+- 164 horizontal acceleration records in the catalog.
+- 108 usable records and 54 usable PEER pairs after the 15,000-point filter.
+- 13 unique earthquake events in the full catalog; 11 in the usable subset.
+- 56 records are retained but marked unusable because their pair exceeds
+  15,000 acceleration points.
 - Magnitude range: 6.53 to 7.36.
 - Rupture-distance range: 11.03 km to 39.91 km.
 - Vs30 range: 254.26 m/s to 442.61 m/s.
@@ -90,21 +89,26 @@ Current catalog summary:
 After importing the PEER records, run a single bidirectional record pair with:
 
 ```powershell
-& "C:\Users\andro\anaconda3\envs\OpPy\python.exe" -B "C:\Users\andro\StructGNN\RC Structure\Ground_Motion_Main.py" --result-id 1 --catalog-summary
+$python = Join-Path $env:USERPROFILE "anaconda3\envs\OpPy\python.exe"
+& $python -B ".\RC Structure\Ground_Motion_Main.py" --result-id 1 --catalog-summary
 ```
 
 Run the first three record pairs in the manifest-backed set:
 
 ```powershell
-& "C:\Users\andro\anaconda3\envs\OpPy\python.exe" -B "C:\Users\andro\StructGNN\RC Structure\Ground_Motion_Main.py" --limit 3
+& $python -B ".\RC Structure\Ground_Motion_Main.py" --limit 3
 ```
 
 Run X-only excitation for a specific component:
 
 ```powershell
-& "C:\Users\andro\anaconda3\envs\OpPy\python.exe" -B "C:\Users\andro\StructGNN\RC Structure\Ground_Motion_Main.py" --record-id-x RSN15_KERN_TAF021 --x-only
+& $python -B ".\RC Structure\Ground_Motion_Main.py" `
+  --record-id-x RSN15_KERN_TAF021 --x-only
 ```
 
 Outputs are written under `outputs/ntha/`. Each run stores status, record
 summaries, gravity and modal results, time history, story-drift peaks, node
 displacement envelopes, and element end-force envelopes.
+
+Scale factors are applied in memory during OpenSees analysis. The canonical
+files under `processed/` remain unscaled and must not be edited per run.

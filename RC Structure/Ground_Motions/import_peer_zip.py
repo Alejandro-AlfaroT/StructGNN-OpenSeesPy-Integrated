@@ -375,7 +375,7 @@ def main():
     parser.add_argument(
         "zip_path",
         nargs="?",
-        default=r"C:\Users\andro\Downloads\MLEarthquakeRecords.zip",
+        default=str(Path.home() / "Downloads" / "MLEarthquakeRecords.zip"),
         help="Path to the PEER ground-motion zip.",
     )
     parser.add_argument(

@@ -345,6 +345,21 @@ def _make_status(
     }
 
 
+def _analysis_step_schedule(record_x, record_y=None, dt_factor=1.0):
+    if dt_factor <= 0.0:
+        raise ValueError("dt_factor must be positive.")
+
+    dt = record_x.dt_sec * dt_factor
+    excitation_duration = record_x.dt_sec * record_x.npts
+    if record_y is not None:
+        excitation_duration = max(
+            excitation_duration,
+            record_y.dt_sec * record_y.npts,
+        )
+    n_steps = max(1, int(math.ceil(excitation_duration / dt - 1.0e-12)))
+    return dt, n_steps
+
+
 # ================================================================
 #  MAIN NTHA FUNCTION
 # ================================================================
@@ -455,8 +470,7 @@ def _run_ntha_impl(
     # ------------------------------------------------------------------
     # 5. Analysis loop
     # ------------------------------------------------------------------
-    dt = record_x.dt_sec * dt_factor
-    npts = record_x.npts
+    dt, n_steps = _analysis_step_schedule(record_x, record_y, dt_factor)
 
     time_history   = []
     roof_disp_x    = []
@@ -473,9 +487,13 @@ def _run_ntha_impl(
     failed_step     = None
     failed_time     = None
 
-    _log(log_fh, f"Starting NLTHA: record={record_x.record_id}, npts={npts}, dt={dt:.6f}s")
+    _log(
+        log_fh,
+        f"Starting NLTHA: record={record_x.record_id}, "
+        f"record_npts={record_x.npts}, analysis_steps={n_steps}, dt={dt:.6f}s",
+    )
 
-    for step in range(npts):
+    for step in range(n_steps):
         ok, strategy = _try_step(dt)
 
         if ok != 0:
@@ -521,7 +539,7 @@ def _run_ntha_impl(
     ops.wipeAnalysis()
 
     status = _make_status(
-        npts_requested  = npts,
+        npts_requested  = n_steps,
         completed_steps = len(time_history),
         failed          = failed,
         failed_step     = failed_step,
@@ -531,9 +549,25 @@ def _run_ntha_impl(
 
     _log(
         log_fh,
-        f"Completed {status['completed_steps']}/{npts} steps. "
+        f"Completed {status['completed_steps']}/{n_steps} steps. "
         f"{'FAILED' if failed else 'OK'}"
     )
+
+    record_summary_x = summarize_record(record_x)
+    record_summary_x.update(
+        {
+            "analysis_dt_sec": dt,
+            "analysis_steps": n_steps,
+        }
+    )
+    record_summary_y = summarize_record(record_y) if record_y else None
+    if record_summary_y is not None:
+        record_summary_y.update(
+            {
+                "analysis_dt_sec": dt,
+                "analysis_steps": n_steps,
+            }
+        )
 
     return {
         "status":             status,
@@ -545,8 +579,8 @@ def _run_ntha_impl(
         "element_envelope":   element_envelope,
         "hinge_envelope":     hinge_envelope,   # IMK spring forces
         "node_envelope":      node_envelope,
-        "record_summary_x":   summarize_record(record_x),
-        "record_summary_y":   summarize_record(record_y) if record_y else None,
+        "record_summary_x":   record_summary_x,
+        "record_summary_y":   record_summary_y,
         "damping_ratio":      damping_ratio,
         "rayleigh_a0":        a0,
         "rayleigh_a1":        a1,
