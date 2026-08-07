@@ -52,6 +52,8 @@ except ImportError:  # Direct script execution places Data_Generation on sys.pat
 
 STOP_FILE_NAME = "STOP_GENERATION.json"
 STATE_FILE_NAME = "generation_state.json"
+ATOMIC_REPLACE_ATTEMPTS = 10
+ATOMIC_REPLACE_INITIAL_DELAY_SEC = 0.05
 
 
 def _safe_name(value):
@@ -62,6 +64,20 @@ def _utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _replace_with_retry(source, destination):
+    """Replace a file atomically, tolerating brief Windows sharing locks."""
+    delay = ATOMIC_REPLACE_INITIAL_DELAY_SEC
+    for attempt in range(ATOMIC_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt + 1 == ATOMIC_REPLACE_ATTEMPTS:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2.0, 0.5)
+
+
 def _write_json_atomic(path, payload):
     """Write a checkpoint without exposing a partially written JSON file."""
     path = Path(path)
@@ -70,7 +86,7 @@ def _write_json_atomic(path, payload):
     with temporary.open("w", encoding="utf-8") as file:
         json.dump(payload, file, indent=2)
         file.write("\n")
-    os.replace(temporary, path)
+    _replace_with_retry(temporary, path)
 
 
 def _stop_file_path(args, dataset_dir):
