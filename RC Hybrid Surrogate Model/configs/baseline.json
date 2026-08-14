@@ -1,0 +1,21 @@
+{
+  "seed": 20260809,
+  "train_fraction": 0.70,
+  "validation_fraction": 0.15,
+  "sequence_stride": 4,
+  "maximum_steps": null,
+  "batch_size": 2,
+  "data_loader_workers": 0,
+  "epochs": 100,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "gradient_clip_norm": 1.0,
+  "huber_beta": 0.5,
+  "mixed_precision": true,
+  "graph_hidden_dim": 128,
+  "graph_layers": 4,
+  "condition_dim": 128,
+  "lstm_hidden_dim": 192,
+  "lstm_layers": 2,
+  "dropout": 0.1
+}

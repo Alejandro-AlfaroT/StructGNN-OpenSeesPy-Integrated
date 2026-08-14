@@ -34,3 +34,7 @@ RC Structure/Ground_Motions/scaled/*
 checkpoints_sap2000/
 Results/
 .rc_structure_monitor/
+
+# Hybrid surrogate training artifacts
+RC Hybrid Surrogate Model/outputs/
+RC Hybrid Surrogate Model/checkpoints/

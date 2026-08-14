@@ -406,6 +406,11 @@ def parse_args():
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--python-exe", default=sys.executable)
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument(
+        "--refresh-status",
+        action="store_true",
+        help="Rescan existing case artifacts and rebuild manifests without running analyses.",
+    )
     parser.add_argument("--request-stop", action="store_true")
     return parser.parse_args()
 
@@ -429,6 +434,29 @@ def main():
         return
     results = load_results(root)
     completed_ids = scan_completed(root, cases)
+    if args.refresh_status:
+        previous_state_path = root / "generation_state.json"
+        previous_state = (
+            json.loads(previous_state_path.read_text(encoding="utf-8"))
+            if previous_state_path.exists()
+            else {}
+        )
+        state = progress(
+            root,
+            cases,
+            results,
+            {},
+            "refreshed",
+            previous_state.get("started_at") or now(),
+            completed_ids,
+            write_manifest=True,
+        )
+        print(
+            f"Refreshed manifests: {state['completed_count']}/{state['planned_count']} "
+            f"complete; {state['failed_count']} failed; "
+            f"{state['remaining_count']} remaining."
+        )
+        return
     scope, selected = select_pending_cases(
         cases,
         completed_ids,
