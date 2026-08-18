@@ -19,10 +19,20 @@ from rc_hybrid_surrogate.data import (
     collate_hybrid,
     discover_samples,
     grouped_split,
+    stratified_grouped_split,
 )
 from rc_hybrid_surrogate.losses import masked_smooth_l1
 from rc_hybrid_surrogate.model import HybridGNNLSTM
 from rc_hybrid_surrogate.embeddings import export_parameter_space
+from rc_hybrid_surrogate.plotting import LossPlotter
+from rc_hybrid_surrogate.features import (
+    ENGINEERED_FEATURE_NAMES,
+    MOTION_FEATURE_NAMES,
+    EngineeredFeatureCache,
+    GRAVITY_IN_PER_SEC2,
+    load_group_intensity_scores,
+    pseudo_spectral_acceleration,
+)
 
 
 def _write_sample(root: Path, case_number: int, record_number: int, steps: int):
@@ -70,6 +80,38 @@ def _write_sample(root: Path, case_number: int, record_number: int, steps: int):
 
 
 class HybridPipelineTests(unittest.TestCase):
+    def test_engineered_feature_group_selection(self):
+        full = EngineeredFeatureCache(
+            feature_names=list(ENGINEERED_FEATURE_NAMES),
+            values={
+                "case_0001/peer_1": np.arange(
+                    len(ENGINEERED_FEATURE_NAMES), dtype=np.float32
+                )
+            },
+        )
+
+        selected = full.select_groups(["modal", "interaction"])
+
+        self.assertEqual(selected.dimension, 10)
+        self.assertEqual(tuple(selected.vector("case_0001/peer_1").shape), (10,))
+        self.assertNotIn("x_pgv_in_per_sec", selected.feature_names)
+        self.assertIn("period_x_mode_1_sec", selected.feature_names)
+        self.assertIn("psa_x_at_period_x_g", selected.feature_names)
+
+    def test_response_spectrum_peaks_near_sine_period(self):
+        dt = 0.01
+        time = np.arange(0.0, 20.0, dt)
+        acceleration = (
+            0.1 * GRAVITY_IN_PER_SEC2 * np.sin(2.0 * np.pi * time)
+        )
+        periods = np.asarray([0.2, 1.0, 2.0], dtype=np.float64)
+
+        spectrum = pseudo_spectral_acceleration(acceleration, dt, periods)
+
+        self.assertEqual(tuple(spectrum.shape), (3,))
+        self.assertTrue(np.isfinite(spectrum).all())
+        self.assertEqual(int(np.argmax(spectrum)), 1)
+
     def test_parameter_embedding_export_has_projector_rows(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -111,14 +153,132 @@ class HybridPipelineTests(unittest.TestCase):
             self.assertFalse(groups["validation"] & groups["test"])
             self.assertEqual(sum(map(len, splits.values())), 6)
 
+    def test_fixed_test_group_count_moves_remaining_groups_to_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for index in range(1, 7):
+                _write_sample(root, index, index, steps=8)
+            records = discover_samples([root])
+            splits = grouped_split(
+                records,
+                train_fraction=0.5,
+                validation_fraction=0.15,
+                test_group_count=1,
+                seed=7,
+            )
+
+            groups = {
+                name: {record.record_group for record in values}
+                for name, values in splits.items()
+            }
+            self.assertEqual(len(groups["train"]), 3)
+            self.assertEqual(len(groups["validation"]), 2)
+            self.assertEqual(len(groups["test"]), 1)
+            self.assertFalse(groups["train"] & groups["validation"])
+            self.assertFalse(groups["train"] & groups["test"])
+            self.assertFalse(groups["validation"] & groups["test"])
+
+    def test_group_intensity_scores_rank_groups_by_severity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cache_path = Path(temporary) / "engineered_features.json"
+            feature_count = len(MOTION_FEATURE_NAMES)
+            payload = {
+                "motion_groups": {
+                    "low": {"motion_features": [1.0] * feature_count},
+                    "mid": {"motion_features": [5.0] * feature_count},
+                    "high": {"motion_features": [10.0] * feature_count},
+                }
+            }
+            cache_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            scores = load_group_intensity_scores(cache_path)
+
+            self.assertEqual(set(scores), {"low", "mid", "high"})
+            self.assertAlmostEqual(scores["low"], 0.0)
+            self.assertAlmostEqual(scores["mid"], 0.5)
+            self.assertAlmostEqual(scores["high"], 1.0)
+
+    def test_stratified_split_balances_group_scores_across_splits(self):
+        # Regression guard: a plain random shuffle of a small group pool can
+        # hand one split a systematically more (or less) severe subset by
+        # chance (see RC Hybrid Surrogate Model/README.md discussion of the
+        # 54-group interim dataset). Stratifying by score should keep every
+        # split's mean close to the overall mean instead.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for index in range(1, 21):
+                _write_sample(root, index, index, steps=8)
+            records = discover_samples([root])
+            group_scores = {
+                record.record_group: (index - 1) / 19.0
+                for index, record in enumerate(records, start=1)
+            }
+
+            splits = stratified_grouped_split(
+                records,
+                group_scores,
+                train_fraction=0.7,
+                validation_fraction=0.15,
+                seed=3,
+            )
+
+            groups = {
+                name: {record.record_group for record in values}
+                for name, values in splits.items()
+            }
+            self.assertFalse(groups["train"] & groups["validation"])
+            self.assertFalse(groups["train"] & groups["test"])
+            self.assertFalse(groups["validation"] & groups["test"])
+            self.assertEqual(len(groups["train"]), 14)
+            self.assertEqual(len(groups["validation"]), 3)
+            self.assertEqual(len(groups["test"]), 3)
+
+            for name in ("train", "validation", "test"):
+                mean_score = sum(group_scores[g] for g in groups[name]) / len(groups[name])
+                self.assertLess(abs(mean_score - 0.5), 0.15)
+
+    def test_loss_plotter_writes_live_html(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "loss_curves.html"
+            plotter = LossPlotter(output, live=True)
+            plotter.update(
+                [
+                    {
+                        "epoch": 1,
+                        "train": {"loss": 0.5},
+                        "validation": {"loss": 0.7},
+                    },
+                    {
+                        "epoch": 2,
+                        "train": {"loss": 0.4},
+                        "validation": {"loss": 0.6},
+                    },
+                ]
+            )
+            self.assertTrue(output.exists())
+            self.assertGreater(output.stat().st_size, 0)
+            contents = output.read_text(encoding="utf-8")
+            self.assertIn('http-equiv="refresh"', contents)
+            self.assertIn("Training loss: 0.400000", contents)
+            self.assertIn("Validation loss: 0.600000", contents)
+
     def test_variable_graph_sequence_batch_forward_and_backward(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             _write_sample(root, 1, 1, steps=11)
             _write_sample(root, 2, 2, steps=7)
             records = discover_samples([root])
-            stats = NormalizationStats.calculate(records)
-            dataset = HybridDataset(records, stats)
+            engineered = EngineeredFeatureCache(
+                feature_names=["feature_0", "feature_1", "feature_2", "feature_3"],
+                values={
+                    record.sample_id: np.asarray(
+                        [index, index + 1, index + 2, index + 3], dtype=np.float32
+                    )
+                    for index, record in enumerate(records)
+                },
+            )
+            stats = NormalizationStats.calculate(records, engineered)
+            dataset = HybridDataset(records, stats, engineered_features=engineered)
             loader = DataLoader(
                 dataset,
                 batch_size=2,
@@ -133,12 +293,14 @@ class HybridPipelineTests(unittest.TestCase):
                 lstm_hidden_dim=20,
                 lstm_layers=1,
                 dropout=0.0,
+                engineered_dim=4,
             )
             prediction = model(batch)
             loss = masked_smooth_l1(prediction, batch["target"], batch["mask"])
             loss.backward()
 
             self.assertEqual(tuple(prediction.shape), (2, 11, 2))
+            self.assertEqual(tuple(batch["engineered_features"].shape), (2, 4))
             self.assertEqual(int(batch["mask"].sum()), 18)
             self.assertTrue(torch.isfinite(loss))
             self.assertTrue(

@@ -65,6 +65,7 @@ class HybridGNNLSTM(nn.Module):
         edge_dim: int = 14,
         global_dim: int = 43,
         record_dim: int = 12,
+        engineered_dim: int = 0,
         graph_hidden_dim: int = 128,
         graph_layers: int = 4,
         condition_dim: int = 128,
@@ -91,8 +92,17 @@ class HybridGNNLSTM(nn.Module):
             nn.LayerNorm(graph_hidden_dim),
             nn.SiLU(),
         )
+        self.engineered_encoder = None
+        condition_blocks = 4
+        if engineered_dim > 0:
+            self.engineered_encoder = nn.Sequential(
+                nn.Linear(engineered_dim, graph_hidden_dim),
+                nn.LayerNorm(graph_hidden_dim),
+                nn.SiLU(),
+            )
+            condition_blocks += 1
         self.condition_encoder = nn.Sequential(
-            nn.Linear(graph_hidden_dim * 4, condition_dim),
+            nn.Linear(graph_hidden_dim * condition_blocks, condition_dim),
             nn.LayerNorm(condition_dim),
             nn.SiLU(),
         )
@@ -115,9 +125,10 @@ class HybridGNNLSTM(nn.Module):
         graph_embedding = self.graph_encoder(batch["graph"])
         global_embedding = self.global_encoder(batch["global_features"])
         record_embedding = self.record_encoder(batch["record_features"])
-        return self.condition_encoder(
-            torch.cat((graph_embedding, global_embedding, record_embedding), dim=-1)
-        )
+        embeddings = [graph_embedding, global_embedding, record_embedding]
+        if self.engineered_encoder is not None:
+            embeddings.append(self.engineered_encoder(batch["engineered_features"]))
+        return self.condition_encoder(torch.cat(embeddings, dim=-1))
 
     def forward(self, batch: dict) -> torch.Tensor:
         condition = self.encode_condition(batch)

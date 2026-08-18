@@ -506,7 +506,6 @@ def collect_global_parameters():
         "imk_material_type": sp.IMK_MATERIAL_TYPE,
         "imk_hinge_stiffness_mode": getattr(sp, "IMK_HINGE_STIFFNESS_MODE", "member_stiffness_factor"),
         "imk_hinge_stiffness_factor": sp.IMK_HINGE_STIFFNESS_FACTOR,
-        "imk_hinge_stiffness_model": getattr(sp, "IMK_HINGE_STIFFNESS_MODE", "member_stiffness_factor"),
         "imk_beam_theta_y": sp.IMK_BEAM_THETA_Y,
         "imk_column_theta_y": sp.IMK_COLUMN_THETA_Y,
         "imk_theta_p_pos": sp.IMK_THETA_P_POS,

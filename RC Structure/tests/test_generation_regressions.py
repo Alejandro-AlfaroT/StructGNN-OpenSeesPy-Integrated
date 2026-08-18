@@ -14,6 +14,7 @@ RC_STRUCTURE_DIR = Path(__file__).resolve().parents[1]
 if str(RC_STRUCTURE_DIR) not in sys.path:
     sys.path.insert(0, str(RC_STRUCTURE_DIR))
 
+import Structure_Parameters as sp
 from Analysis.NTHA import _analysis_step_schedule
 from Data_Generation import Generate_Hybrid_Dataset
 from Data_Generation import Generate_Parameterized_Dataset
@@ -25,6 +26,7 @@ from Ground_Motion_Main import (
 )
 from Loads import Ground_Motion
 from Loads.Ground_Motion import GroundMotionRecord
+from Model import IMK_Hinges
 
 
 class GenerationRegressionTests(unittest.TestCase):
@@ -341,6 +343,99 @@ class GenerationRegressionTests(unittest.TestCase):
             analysis_run_name("peer_1", x_only=True, dt_factor=0.5),
             "peer_1__x_only__dtf_0p5",
         )
+
+    def test_imk_material_definition_uses_documented_argument_order(self):
+        # Regression guard: this call has previously shipped with a wrong
+        # OpenSees IMKBilin argument order (a nonexistent "A" deterioration
+        # mode standing in for the FmaxFy/FresFy strength ratios). Pin the
+        # exact positional order the current IMKBilin signature requires.
+        with mock.patch.object(IMK_Hinges.ops, "uniaxialMaterial") as uniaxial_material:
+            IMK_Hinges._define_imk_peak_material(
+                mat_tag=101,
+                elastic_stiffness=5000.0,
+                yield_moment=250.0,
+            )
+
+        uniaxial_material.assert_called_once()
+        args = uniaxial_material.call_args.args
+        self.assertEqual(len(args), 23)
+        self.assertEqual(
+            args,
+            (
+                sp.IMK_MATERIAL_TYPE,
+                101,
+                5000.0,
+                sp.IMK_THETA_P_POS,
+                sp.IMK_THETA_PC_POS,
+                sp.IMK_THETA_U_POS,
+                250.0,
+                getattr(sp, "IMK_FMAXFY_POS", 1.10),
+                getattr(sp, "IMK_FRESFY_POS", sp.IMK_RES_POS),
+                sp.IMK_THETA_P_NEG,
+                sp.IMK_THETA_PC_NEG,
+                sp.IMK_THETA_U_NEG,
+                250.0,
+                getattr(sp, "IMK_FMAXFY_NEG", 1.10),
+                getattr(sp, "IMK_FRESFY_NEG", sp.IMK_RES_NEG),
+                sp.IMK_LAMBDA_S,
+                sp.IMK_LAMBDA_C,
+                sp.IMK_LAMBDA_K,
+                sp.IMK_C_S,
+                sp.IMK_C_C,
+                sp.IMK_C_K,
+                sp.IMK_D_POS,
+                sp.IMK_D_NEG,
+            ),
+        )
+
+    def test_hinge_stiffness_mode_selects_correct_basis(self):
+        # Regression guard: hinge calibration previously used a
+        # "yield_rotation" basis that was later changed to
+        # "member_stiffness_factor". Pin the behavior of every supported
+        # mode so a future edit can't silently change which basis is used.
+        length = 120.0
+
+        with mock.patch.object(sp, "IMK_HINGE_STIFFNESS_MODE", "yield_rotation"):
+            components = IMK_Hinges.imk_hinge_stiffness_components(
+                "column", "rot_z", length
+            )
+        self.assertEqual(components["mode"], "yield_rotation")
+        self.assertAlmostEqual(
+            components["selected_stiffness"], components["yield_based_stiffness"]
+        )
+
+        with mock.patch.object(sp, "IMK_HINGE_STIFFNESS_MODE", "member_stiffness_factor"):
+            components = IMK_Hinges.imk_hinge_stiffness_components(
+                "column", "rot_z", length
+            )
+        self.assertEqual(components["mode"], "member_stiffness_factor")
+        self.assertAlmostEqual(
+            components["selected_stiffness"], components["member_based_stiffness"]
+        )
+
+        with mock.patch.object(sp, "IMK_HINGE_STIFFNESS_MODE", "max"):
+            components = IMK_Hinges.imk_hinge_stiffness_components(
+                "column", "rot_z", length
+            )
+        self.assertAlmostEqual(
+            components["selected_stiffness"],
+            max(
+                components["yield_based_stiffness"],
+                components["member_based_stiffness"],
+            ),
+        )
+
+        with mock.patch.object(sp, "IMK_HINGE_STIFFNESS_MODE", "bogus"):
+            with self.assertRaises(ValueError):
+                IMK_Hinges.imk_hinge_stiffness_components("column", "rot_z", length)
+
+    def test_member_orientation_ties_expected_dofs(self):
+        self.assertEqual(IMK_Hinges._orientation("column")[1], (1, 2, 3, 6))
+        self.assertEqual(IMK_Hinges._orientation("beam_x")[1], (1, 2, 3, 4))
+        self.assertEqual(IMK_Hinges._orientation("beam_y")[1], (1, 2, 3, 5))
+
+        with self.assertRaises(ValueError):
+            IMK_Hinges._orientation("brace")
 
 
 if __name__ == "__main__":

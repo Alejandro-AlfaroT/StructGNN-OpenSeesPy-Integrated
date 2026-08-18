@@ -76,11 +76,37 @@ def discover_samples(dataset_roots: Iterable[str | Path]) -> list[SampleRecord]:
     return sorted(records, key=lambda item: item.sample_id)
 
 
+def _group_targets(
+    group_count: int,
+    train_fraction: float,
+    validation_fraction: float,
+    test_group_count: int | None,
+) -> dict[str, int]:
+    train_groups = max(1, int(round(group_count * train_fraction)))
+    if test_group_count is None:
+        validation_groups = max(1, int(round(group_count * validation_fraction)))
+        if train_groups + validation_groups >= group_count:
+            validation_groups = 1
+            train_groups = group_count - 2
+        test_groups = group_count - train_groups - validation_groups
+    else:
+        test_groups = int(test_group_count)
+        if not 1 <= test_groups <= group_count - 2:
+            raise ValueError(
+                "test_group_count must leave at least one train and one validation group."
+            )
+        if train_groups + test_groups >= group_count:
+            train_groups = group_count - test_groups - 1
+        validation_groups = group_count - train_groups - test_groups
+    return {"train": train_groups, "validation": validation_groups, "test": test_groups}
+
+
 def grouped_split(
     records: Sequence[SampleRecord],
     train_fraction: float = 0.70,
     validation_fraction: float = 0.15,
     seed: int = 20260809,
+    test_group_count: int | None = None,
 ) -> dict[str, list[SampleRecord]]:
     """Split by ground-motion pair so no earthquake pair leaks across splits."""
     if not 0.0 < train_fraction < 1.0:
@@ -98,17 +124,85 @@ def grouped_split(
         raise ValueError("At least three distinct ground-motion groups are required.")
     random.Random(seed).shuffle(group_names)
 
-    train_groups = max(1, int(round(len(group_names) * train_fraction)))
-    validation_groups = max(1, int(round(len(group_names) * validation_fraction)))
-    if train_groups + validation_groups >= len(group_names):
-        validation_groups = 1
-        train_groups = len(group_names) - 2
+    targets = _group_targets(
+        len(group_names), train_fraction, validation_fraction, test_group_count
+    )
+    train_groups = targets["train"]
+    validation_groups = targets["validation"]
+    test_groups = targets["test"]
 
     assignments = {
         "train": set(group_names[:train_groups]),
         "validation": set(group_names[train_groups:train_groups + validation_groups]),
-        "test": set(group_names[train_groups + validation_groups:]),
+        "test": set(group_names[-test_groups:]),
     }
+    return {
+        split: [record for record in records if record.record_group in selected]
+        for split, selected in assignments.items()
+    }
+
+
+def stratified_grouped_split(
+    records: Sequence[SampleRecord],
+    group_scores: dict[str, float],
+    train_fraction: float = 0.70,
+    validation_fraction: float = 0.15,
+    seed: int = 20260809,
+    test_group_count: int | None = None,
+) -> dict[str, list[SampleRecord]]:
+    """Group-safe split that also balances a per-group score across splits.
+
+    Same leakage guarantee as ``grouped_split`` (a whole ground-motion pair
+    goes to exactly one split) but, instead of a single random shuffle,
+    orders groups by ``group_scores`` and hands them out with a deficit
+    round-robin so every split gets a proportional spread of low-to-high
+    scores. With only a few dozen distinct ground-motion pairs, a plain
+    random shuffle can easily give one split (typically validation, since
+    it is small) a subset that is systematically more or less severe than
+    train purely by chance -- see ``load_group_intensity_scores``.
+    """
+    if not 0.0 < train_fraction < 1.0:
+        raise ValueError("train_fraction must be between zero and one.")
+    if not 0.0 <= validation_fraction < 1.0:
+        raise ValueError("validation_fraction must be in [0, 1).")
+    if train_fraction + validation_fraction >= 1.0:
+        raise ValueError("train and validation fractions must sum to less than one.")
+
+    groups: dict[str, list[SampleRecord]] = {}
+    for record in records:
+        groups.setdefault(record.record_group, []).append(record)
+    group_names = sorted(groups)
+    if len(group_names) < 3:
+        raise ValueError("At least three distinct ground-motion groups are required.")
+    missing = [name for name in group_names if name not in group_scores]
+    if missing:
+        raise ValueError(
+            f"Missing intensity scores for {len(missing)} record group(s); "
+            "rebuild the engineered-feature cache before stratifying a split."
+        )
+
+    targets = _group_targets(
+        len(group_names), train_fraction, validation_fraction, test_group_count
+    )
+
+    # Sort low -> high score; a seeded tie-breaker keeps the order
+    # deterministic without letting exact ties fall back on group name.
+    jitter = random.Random(seed)
+    ordered = sorted(group_names, key=lambda name: (group_scores[name], jitter.random()))
+
+    assigned: dict[str, list[str]] = {"train": [], "validation": [], "test": []}
+    counts = {name: 0 for name in targets}
+    for group_name in ordered:
+        split_name = max(
+            targets,
+            key=lambda name: (
+                (targets[name] - counts[name]) / targets[name] if targets[name] else -1.0
+            ),
+        )
+        assigned[split_name].append(group_name)
+        counts[split_name] += 1
+
+    assignments = {name: set(names) for name, names in assigned.items()}
     return {
         split: [record for record in records if record.record_group in selected]
         for split, selected in assignments.items()
@@ -163,7 +257,9 @@ class NormalizationStats:
     std: dict[str, list[float]]
 
     @classmethod
-    def calculate(cls, records: Sequence[SampleRecord]) -> "NormalizationStats":
+    def calculate(
+        cls, records: Sequence[SampleRecord], engineered_features=None
+    ) -> "NormalizationStats":
         dimensions = {
             "x": 8,
             "edge_attr": 14,
@@ -172,6 +268,8 @@ class NormalizationStats:
             "ground_motion": 2,
             "response": 2,
         }
+        if engineered_features is not None:
+            dimensions["engineered_features"] = engineered_features.dimension
         running = {key: _RunningMoments(size) for key, size in dimensions.items()}
         for record in records:
             with np.load(record.path, allow_pickle=False) as sample:
@@ -181,6 +279,10 @@ class NormalizationStats:
                 running["record_features"].update(sample["record_features"].reshape(1, -1))
                 running["ground_motion"].update(sample["ground_motion"])
                 running["response"].update(sample["response_time_history"][:, :2])
+            if engineered_features is not None:
+                running["engineered_features"].update(
+                    engineered_features.vector(record.sample_id)
+                )
         mean: dict[str, list[float]] = {}
         std: dict[str, list[float]] = {}
         for key, moments in running.items():
@@ -218,6 +320,7 @@ class HybridDataset(Dataset):
         self,
         records: Sequence[SampleRecord],
         normalization: NormalizationStats | None = None,
+        engineered_features=None,
         sequence_stride: int = 1,
         maximum_steps: int | None = None,
     ):
@@ -225,6 +328,7 @@ class HybridDataset(Dataset):
             raise ValueError("sequence_stride must be positive.")
         self.records = list(records)
         self.normalization = normalization
+        self.engineered_features = engineered_features
         self.sequence_stride = sequence_stride
         self.maximum_steps = maximum_steps
 
@@ -260,7 +364,7 @@ class HybridDataset(Dataset):
             edge_index=torch.from_numpy(np.ascontiguousarray(edge_index)),
             edge_attr=torch.from_numpy(np.ascontiguousarray(edge_attr)),
         )
-        return {
+        result = {
             "graph": graph,
             "global_features": torch.from_numpy(np.ascontiguousarray(global_features)),
             "record_features": torch.from_numpy(np.ascontiguousarray(record_features)),
@@ -270,6 +374,15 @@ class HybridDataset(Dataset):
             "sample_id": record.sample_id,
             "path": str(record.path),
         }
+        if self.engineered_features is not None:
+            engineered = self._normal(
+                "engineered_features",
+                self.engineered_features.vector(record.sample_id),
+            )
+            result["engineered_features"] = torch.from_numpy(
+                np.ascontiguousarray(engineered)
+            )
+        return result
 
 
 def collate_hybrid(samples: Sequence[dict]) -> dict:
@@ -281,7 +394,7 @@ def collate_hybrid(samples: Sequence[dict]) -> dict:
     target = pad_sequence([item["target"] for item in samples], batch_first=True)
     time_index = torch.arange(ground_motion.shape[1]).unsqueeze(0)
     mask = time_index < lengths.unsqueeze(1)
-    return {
+    result = {
         "graph": Batch.from_data_list([item["graph"] for item in samples]),
         "global_features": torch.stack([item["global_features"] for item in samples]),
         "record_features": torch.stack([item["record_features"] for item in samples]),
@@ -292,6 +405,11 @@ def collate_hybrid(samples: Sequence[dict]) -> dict:
         "sample_ids": [item["sample_id"] for item in samples],
         "paths": [item["path"] for item in samples],
     }
+    if "engineered_features" in samples[0]:
+        result["engineered_features"] = torch.stack(
+            [item["engineered_features"] for item in samples]
+        )
+    return result
 
 
 def move_batch(batch: dict, device: torch.device) -> dict:

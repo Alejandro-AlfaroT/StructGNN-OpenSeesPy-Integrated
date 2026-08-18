@@ -38,3 +38,4 @@ Results/
 # Hybrid surrogate training artifacts
 RC Hybrid Surrogate Model/outputs/
 RC Hybrid Surrogate Model/checkpoints/
+RC Hybrid Surrogate Model/derived_features/
