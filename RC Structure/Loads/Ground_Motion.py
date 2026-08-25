@@ -16,6 +16,8 @@ PEER_DT_RE = re.compile(r"DT\s*=\s*([0-9.+\-Ee]+)", re.IGNORECASE)
 GROUND_MOTION_DIR = Path(__file__).resolve().parents[1] / "Ground_Motions"
 MANIFEST_PATH = GROUND_MOTION_DIR / "metadata" / "record_manifest.csv"
 RECORD_SETS_PATH = GROUND_MOTION_DIR / "metadata" / "record_sets.csv"
+NPTS_POLICY_OVERRIDE = "allow_npts_policy_excluded=true"
+NPTS_POLICY_EXCLUSION = "omitted_from_generation=max_npts_gt_15000"
 
 
 @dataclass
@@ -419,17 +421,28 @@ def ground_motion_pair_rows(
         for row in load_record_manifest(manifest_path)
     }
 
-    selected_rows = [
-        manifest_rows[row["record_id"]]
-        for row in load_record_sets(record_sets_path)
-        if row.get("set_name") == set_name
-        and (split is None or row.get("split") == split)
-        and row.get("record_id") in manifest_rows
-    ]
+    selected_rows = []
+    for set_row in load_record_sets(record_sets_path):
+        if (
+            set_row.get("set_name") != set_name
+            or (split is not None and set_row.get("split") != split)
+            or set_row.get("record_id") not in manifest_rows
+        ):
+            continue
+        row = dict(manifest_rows[set_row["record_id"]])
+        policy_override = (
+            NPTS_POLICY_OVERRIDE in (set_row.get("notes") or "").lower()
+            and NPTS_POLICY_EXCLUSION in (row.get("notes") or "").lower()
+        )
+        row["_allow_npts_policy_excluded"] = policy_override
+        selected_rows.append(row)
 
     groups = {}
     for row in selected_rows:
-        if not _manifest_bool(row, "usable", default=True):
+        if (
+            not _manifest_bool(row, "usable", default=True)
+            and not row.get("_allow_npts_policy_excluded")
+        ):
             continue
         groups.setdefault(_record_pair_key(row), []).append(row)
 
@@ -481,12 +494,14 @@ def load_ground_motion_pairs(
                     manifest_path=manifest_path,
                     prefer_processed=prefer_processed,
                     scale_factor=scale_factor,
+                    require_usable=not row_x.get("_allow_npts_policy_excluded", False),
                 ),
                 load_ground_motion_record(
                     row_y["record_id"],
                     manifest_path=manifest_path,
                     prefer_processed=prefer_processed,
                     scale_factor=scale_factor,
+                    require_usable=not row_y.get("_allow_npts_policy_excluded", False),
                 ),
             )
         )

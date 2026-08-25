@@ -30,6 +30,63 @@ from Model import IMK_Hinges
 
 
 class GenerationRegressionTests(unittest.TestCase):
+    def test_scheduler_sha256_is_uppercase_and_reproducible(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "plan.csv"
+            path.write_bytes(b"deterministic plan\n")
+
+            digest = Generate_Parameterized_Dataset.sha256_file(path)
+
+            self.assertEqual(
+                digest,
+                "E70AA1A390E16921CD8F5E1328E38406BA88590FEBC5D66545FDB4DF4A4F2A2E",
+            )
+
+    def test_expansion_record_set_enables_only_pairs_up_to_30000_points(self):
+        hybrid_pairs = Generate_Hybrid_Dataset._all_pair_keys(
+            "peer_expansion_30k", None, 30000
+        )
+        hybrid_ids = [item[1] for item in hybrid_pairs]
+        scheduler_ids = Generate_Parameterized_Dataset.eligible_record_ids(
+            "peer_expansion_30k", 30000
+        )
+
+        self.assertEqual(len(hybrid_ids), 26)
+        self.assertEqual(scheduler_ids, hybrid_ids)
+        self.assertNotIn(34, hybrid_ids)
+        self.assertNotIn(51, hybrid_ids)
+        self.assertLessEqual(max(item[2] for item in hybrid_pairs), 30000)
+
+    def test_expansion_plan_uses_new_case_ids_and_unused_geometries(self):
+        base = Generate_Parameterized_Dataset.build_plan(
+            2500, [1], seed=Generate_Parameterized_Dataset.SEED
+        )
+        expansion = Generate_Parameterized_Dataset.build_plan(
+            1300,
+            list(range(1, 27)),
+            seed=Generate_Parameterized_Dataset.SEED,
+            geometry_offset=2500,
+            case_id_offset=2500,
+        )
+        geometry_keys = (
+            "num_bay_x",
+            "num_bay_y",
+            "num_floor",
+            "story_height_ft",
+            "bay_width_ft",
+        )
+        base_geometries = {
+            tuple(case[key] for key in geometry_keys) for case in base
+        }
+        expansion_geometries = {
+            tuple(case[key] for key in geometry_keys) for case in expansion
+        }
+
+        self.assertEqual(expansion[0]["case_id"], "case_2501")
+        self.assertEqual(expansion[-1]["case_id"], "case_3800")
+        self.assertEqual(len(expansion_geometries), 1300)
+        self.assertFalse(base_geometries & expansion_geometries)
+
     def test_parameterized_scheduler_uses_lightweight_record_catalog(self):
         expected = [
             item[1]

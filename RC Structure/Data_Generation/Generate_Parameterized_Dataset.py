@@ -3,6 +3,7 @@
 import argparse
 import csv
 from datetime import datetime, timezone
+import hashlib
 from itertools import product
 import json
 import os
@@ -39,6 +40,8 @@ RECORD_SETS = RC_DIR / "Ground_Motions" / "metadata" / "record_sets.csv"
 PEER_RESULT_RE = re.compile(r"PEER result_id=([0-9]+)")
 ATOMIC_REPLACE_ATTEMPTS = 10
 ATOMIC_REPLACE_INITIAL_DELAY_SEC = 0.05
+NPTS_POLICY_OVERRIDE = "allow_npts_policy_excluded=true"
+NPTS_POLICY_EXCLUSION = "omitted_from_generation=max_npts_gt_15000"
 
 
 def now():
@@ -79,22 +82,37 @@ def write_csv(path, rows):
     replace_with_retry(temp, path)
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest().upper()
+
+
 def eligible_record_ids(set_name, max_npts):
     """Read eligible PEER pairs without importing OpenSees into the scheduler."""
     with RECORD_MANIFEST.open(newline="", encoding="utf-8-sig") as file:
         manifest = {row["record_id"]: row for row in csv.DictReader(file)}
     with RECORD_SETS.open(newline="", encoding="utf-8-sig") as file:
-        selected_ids = {
-            row["record_id"]
+        selected = {
+            row["record_id"]: row
             for row in csv.DictReader(file)
             if row.get("set_name") == set_name
         }
     pairs = {}
-    for record_id in selected_ids:
+    for record_id, set_row in selected.items():
         row = manifest.get(record_id)
-        if not row or (row.get("usable") or "true").strip().lower() not in {
+        if not row:
+            continue
+        usable = (row.get("usable") or "true").strip().lower() in {
             "1", "true", "yes", "y",
-        }:
+        }
+        policy_override = (
+            NPTS_POLICY_OVERRIDE in (set_row.get("notes") or "").lower()
+            and NPTS_POLICY_EXCLUSION in (row.get("notes") or "").lower()
+        )
+        if not usable and not policy_override:
             continue
         match = PEER_RESULT_RE.search(row.get("notes") or "")
         if match:
@@ -109,28 +127,42 @@ def eligible_record_ids(set_name, max_npts):
     return sorted(eligible)
 
 
-def build_plan(num_cases, record_ids, seed=SEED):
+def build_plan(
+    num_cases,
+    record_ids,
+    seed=SEED,
+    geometry_offset=0,
+    case_id_offset=0,
+):
     geometries = list(product(*RANGES.values()))
-    if not 1 <= num_cases <= len(geometries):
-        raise ValueError(f"num_cases must be within 1..{len(geometries)}")
+    if geometry_offset < 0 or case_id_offset < 0:
+        raise ValueError("geometry-offset and case-id-offset must be nonnegative.")
+    if not 1 <= num_cases or geometry_offset + num_cases > len(geometries):
+        raise ValueError(
+            "Requested geometry slice must fit within the "
+            f"{len(geometries)} available combinations; received offset="
+            f"{geometry_offset}, num_cases={num_cases}."
+        )
     if not record_ids:
         raise ValueError("No eligible seismic record pairs were found.")
     random.Random(seed).shuffle(geometries)
     records = sorted(set(map(int, record_ids)))
     random.Random(seed + 1).shuffle(records)
     cases = []
-    for index, values in enumerate(geometries[:num_cases], 1):
+    selected_geometries = geometries[geometry_offset:geometry_offset + num_cases]
+    for local_index, values in enumerate(selected_geometries, 1):
         bx, by, floors, story_ft, width_ft = values
-        case_id = f"case_{index:04d}"
+        case_index = case_id_offset + local_index
+        case_id = f"case_{case_index:04d}"
         cases.append(
             {
-                "case_index": index,
+                "case_index": case_index,
                 "case_id": case_id,
                 "geometry_name": (
                     f"{case_id}_bx{bx}_by{by}_s{floors}_"
                     f"sh{story_ft}ft_bw{width_ft}ft"
                 ),
-                "result_id": records[(index - 1) % len(records)],
+                "result_id": records[(local_index - 1) % len(records)],
                 "num_bay_x": bx,
                 "num_bay_y": by,
                 "num_floor": floors,
@@ -144,15 +176,34 @@ def build_plan(num_cases, record_ids, seed=SEED):
     return cases
 
 
-def load_plan(root, num_cases, records, seed, max_npts):
+def load_plan(
+    root,
+    num_cases,
+    records,
+    seed,
+    max_npts,
+    set_name="peer_mle_all",
+    geometry_offset=0,
+    case_id_offset=0,
+):
     path = root / "parameter_plan.json"
+    plan_version = 2 if geometry_offset or case_id_offset else 1
     expected = {
-        "version": 1,
+        "version": plan_version,
         "seed": seed,
         "num_cases": num_cases,
         "max_npts": max_npts,
         "ranges": {key: list(value) for key, value in RANGES.items()},
     }
+    if plan_version >= 2:
+        expected.update(
+            {
+                "set_name": set_name,
+                "geometry_offset": geometry_offset,
+                "case_id_offset": case_id_offset,
+                "eligible_result_ids": list(records),
+            }
+        )
     if path.exists():
         payload = json.loads(path.read_text(encoding="utf-8"))
         mismatches = {
@@ -166,7 +217,13 @@ def load_plan(root, num_cases, records, seed, max_npts):
                 "Choose another --output-root for a new plan."
             )
         return payload["cases"]
-    cases = build_plan(num_cases, records, seed)
+    cases = build_plan(
+        num_cases,
+        records,
+        seed,
+        geometry_offset=geometry_offset,
+        case_id_offset=case_id_offset,
+    )
     payload = dict(expected)
     payload.update(
         {
@@ -403,6 +460,18 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--set-name", default="peer_mle_all")
     parser.add_argument("--max-npts", type=int, default=15000)
+    parser.add_argument(
+        "--geometry-offset",
+        type=int,
+        default=0,
+        help="Skip this many entries in the deterministic shuffled geometry pool.",
+    )
+    parser.add_argument(
+        "--case-id-offset",
+        type=int,
+        default=0,
+        help="Add this offset to generated case IDs; 2500 starts at case_2501.",
+    )
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--python-exe", default=sys.executable)
     parser.add_argument("--plan-only", action="store_true")
@@ -428,8 +497,19 @@ def main():
         print(f"Stop requested: {stop_path}")
         return
     records = eligible_record_ids(args.set_name, args.max_npts)
-    cases = load_plan(root, args.num_cases, records, args.seed, args.max_npts)
+    cases = load_plan(
+        root,
+        args.num_cases,
+        records,
+        args.seed,
+        args.max_npts,
+        set_name=args.set_name,
+        geometry_offset=args.geometry_offset,
+        case_id_offset=args.case_id_offset,
+    )
+    plan_csv = root / "parameter_plan.csv"
     print(f"Plan: {root / 'parameter_plan.json'} ({len(cases)} cases, {len(records)} records)")
+    print(f"Plan SHA256 (parameter_plan.csv): {sha256_file(plan_csv)}")
     if args.plan_only:
         return
     results = load_results(root)

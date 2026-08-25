@@ -34,8 +34,8 @@ from rc_hybrid_surrogate.features import EngineeredFeatureCache, load_group_inte
 MODEL_ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = MODEL_ROOT.parent
 DEFAULT_DATASET_ROOT = REPOSITORY_ROOT / "RC Structure" / "outputs" / "parameterized_2500"
-DEFAULT_CONFIG = MODEL_ROOT / "configs" / "interim_1899_physics10_stratified.json"
-DEFAULT_OUTPUT_DIR = MODEL_ROOT / "outputs" / "interim_1899_physics10_stratified_bs4_v1"
+DEFAULT_CONFIG = MODEL_ROOT / "configs" / "full_2500_physics10_stratified_lstm256_dropout012.json"
+DEFAULT_OUTPUT_DIR = MODEL_ROOT / "outputs" / "full_2500_physics10_stratified_lstm256_dropout012_v1"
 DEFAULT_ENGINEERED_FEATURE_CACHE = (
     MODEL_ROOT / "derived_features" / "engineered_features.json"
 )

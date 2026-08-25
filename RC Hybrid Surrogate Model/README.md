@@ -52,12 +52,12 @@ features are computed once per unique record pair and reused across structures.
 & 'C:\Users\andro\anaconda3\envs\OpPy\python.exe' 'RC Hybrid Surrogate Model\train.py'
 ```
 
-Running `train.py` without arguments uses the 10-feature physics ablation for
-the 1,899-case interim dataset, with the intensity-stratified split described
+Running `train.py` without arguments uses the 10-feature physics model for
+the complete 2,500-case dataset, with the intensity-stratified split described
 below. It retains raw X/Y acceleration, four modal features, and six
 structure-spectrum interaction features while excluding the 42 standalone
 motion descriptors. It reads `derived_features/engineered_features.json`,
-writes to `outputs/interim_1899_physics10_stratified_v1`, and enables the
+writes to `outputs/full_2500_physics10_stratified_bs4_v1`, and enables the
 auto-refreshing loss dashboard. The non-stratified version of this config is
 still available at `configs/interim_1899_physics10.json` if you need to
 reproduce the original split; the reusable baseline configuration remains in
@@ -74,7 +74,7 @@ ten-sample test would split a record pair and leak ground motions between
 validation and test.
 
 To generate an auto-refreshing training/validation loss dashboard, open
-`outputs/interim_1899_physics10_stratified_v1/loss_curves.html` in a browser
+`outputs/full_2500_physics10_stratified_bs4_v1/loss_curves.html` in a browser
 after epoch 1. With `--live-plot`, that page refreshes every three seconds and
 the training script rewrites its embedded SVG curve after every epoch:
 
@@ -82,8 +82,8 @@ the training script rewrites its embedded SVG curve after every epoch:
 & 'C:\Users\andro\anaconda3\envs\OpPy\python.exe' `
   'RC Hybrid Surrogate Model\train.py' `
   --dataset-root 'RC Structure\outputs\parameterized_2500' `
-  --config 'RC Hybrid Surrogate Model\configs\interim_1899_physics10_stratified.json' `
-  --output-dir 'RC Hybrid Surrogate Model\outputs\interim_1899_physics10_stratified_v1' `
+  --config 'RC Hybrid Surrogate Model\configs\full_2500_physics10_stratified.json' `
+  --output-dir 'RC Hybrid Surrogate Model\outputs\full_2500_physics10_stratified_bs4_v1' `
   --engineered-feature-cache 'RC Hybrid Surrogate Model\derived_features\engineered_features.json' `
   --device cuda `
   --live-plot
@@ -134,3 +134,18 @@ the TensorBoard Embedding Projector. The exporter also writes raw vectors,
 feature names, standardization values, and three-component PCA coordinates.
 These visualization statistics use all discovered cases for exploratory data
 coverage only; model-training normalization remains training-split-only.
+## Held-out test evaluation
+
+After model selection is complete, evaluate the saved, record-group-isolated test
+split with:
+
+```powershell
+python evaluate.py
+```
+
+The evaluator uses `best.pt`, `splits.json`, and `normalization.json` from the
+selected run. It does not generate a new split. Results are written beneath the
+run directory in `test_evaluation`, including an HTML report, aggregate JSON,
+per-case CSV, grouped summaries, peak parity plots, and representative response
+histories. Treat this test set as final assessment data rather than another set
+for model tuning.

@@ -33,6 +33,7 @@ from rc_hybrid_surrogate.features import (
     load_group_intensity_scores,
     pseudo_spectral_acceleration,
 )
+from evaluate import calculate_case_metrics
 
 
 def _write_sample(root: Path, case_number: int, record_number: int, steps: int):
@@ -80,6 +81,25 @@ def _write_sample(root: Path, case_number: int, record_number: int, steps: int):
 
 
 class HybridPipelineTests(unittest.TestCase):
+    def test_case_evaluation_metrics_use_physical_peaks(self):
+        target = np.asarray([[0.0, 0.0], [2.0, -4.0]], dtype=np.float64)
+        prediction = np.asarray([[0.0, 0.0], [1.0, -2.0]], dtype=np.float64)
+
+        metrics = calculate_case_metrics(
+            prediction,
+            target,
+            prediction,
+            target,
+            huber_beta=0.5,
+        )
+
+        self.assertAlmostEqual(metrics["rmse_in"], np.sqrt(1.25))
+        self.assertAlmostEqual(metrics["mae_in"], 0.75)
+        self.assertAlmostEqual(metrics["true_peak_x_in"], 2.0)
+        self.assertAlmostEqual(metrics["predicted_peak_y_in"], 2.0)
+        self.assertAlmostEqual(metrics["peak_error_x_in"], 1.0)
+        self.assertAlmostEqual(metrics["peak_error_y_in"], 2.0)
+
     def test_engineered_feature_group_selection(self):
         full = EngineeredFeatureCache(
             feature_names=list(ENGINEERED_FEATURE_NAMES),
