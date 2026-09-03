@@ -23,7 +23,7 @@
   "condition_dim": 128,
   "lstm_hidden_dim": 256,
   "lstm_layers": 2,
-  "dropout": 0.12,
+  "dropout": 0.1,
   "engineered_feature_groups": ["modal", "interaction"],
   "engineered_feature_dim": 10
 }

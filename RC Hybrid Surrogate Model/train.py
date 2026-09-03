@@ -33,9 +33,12 @@ from rc_hybrid_surrogate.features import EngineeredFeatureCache, load_group_inte
 
 MODEL_ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = MODEL_ROOT.parent
-DEFAULT_DATASET_ROOT = REPOSITORY_ROOT / "RC Structure" / "outputs" / "parameterized_2500"
-DEFAULT_CONFIG = MODEL_ROOT / "configs" / "full_2500_physics10_stratified_lstm256_dropout012.json"
-DEFAULT_OUTPUT_DIR = MODEL_ROOT / "outputs" / "full_2500_physics10_stratified_lstm256_dropout012_v1"
+DEFAULT_DATASET_ROOTS = [
+    REPOSITORY_ROOT / "RC Structure" / "outputs" / "parameterized_2500",
+    REPOSITORY_ROOT / "RC Structure" / "outputs" / "parameterized_expansion_2501_3800",
+]
+DEFAULT_CONFIG = MODEL_ROOT / "configs" / "full_3800_physics10_stratified_lstm256.json"
+DEFAULT_OUTPUT_DIR = MODEL_ROOT / "outputs" / "full_3800_physics10_stratified_lstm256_v1"
 DEFAULT_ENGINEERED_FEATURE_CACHE = (
     MODEL_ROOT / "derived_features" / "engineered_features.json"
 )
@@ -271,7 +274,7 @@ def main():
     args = parse_args()
     config = json.loads(Path(args.config).read_text(encoding="utf-8"))
     seed_everything(int(config["seed"]))
-    roots = args.dataset_root or [str(DEFAULT_DATASET_ROOT)]
+    roots = args.dataset_root or [str(path) for path in DEFAULT_DATASET_ROOTS]
     records = discover_samples(roots)
     print(f"Discovered {len(records)} successful hybrid samples.")
     engineered_features = None
