@@ -1,0 +1,10 @@
+{
+  "embeddings": [
+    {
+      "tensorName": "RC structure-record parameter space (3,800 cases)",
+      "tensorShape": [3800, 55],
+      "tensorPath": "https://raw.githubusercontent.com/Alejandro-AlfaroT/StructGNN-OpenSeesPy-Integrated/main/projector_share/structure_record_3800/vectors.tsv",
+      "metadataPath": "https://raw.githubusercontent.com/Alejandro-AlfaroT/StructGNN-OpenSeesPy-Integrated/main/projector_share/structure_record_3800/metadata.tsv"
+    }
+  ]
+}
