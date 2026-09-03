@@ -6,6 +6,10 @@
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/.venv1" />
       <excludeFolder url="file://$MODULE_DIR$/.venv312" />
+      <excludeFolder url="file://$MODULE_DIR$/RC Structure/outputs" />
+      <excludeFolder url="file://$MODULE_DIR$/RC Hybrid Surrogate Model/outputs" />
+      <excludeFolder url="file://$MODULE_DIR$/Data" />
+      <excludeFolder url="file://$MODULE_DIR$/Data_SAP2000" />
     </content>
     <orderEntry type="jdk" jdkName="~\anaconda3\envs\OpPy" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
