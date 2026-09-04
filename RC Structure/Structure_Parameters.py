@@ -146,7 +146,14 @@ BEAM_Y_TRANSF_TAG = 3
 #   "fiber" = distributed forceBeamColumn fiber sections
 #   "imk"   = elastic interior members with IMKPeakOriented rotational hinges
 ELEMENT_FORMULATION = "imk"
-IMK_APPLY_TO_COLUMNS = False
+
+# Columns previously fell through to distributed-plasticity fiber sections
+# while beams used concentrated IMK springs. That mixed formulation gave the
+# columns no cyclic strength degradation -- Concrete02 fibers yield but never
+# soften -- so collapse-relevant column behaviour could not be represented at
+# any intensity. Both member types now use the same concentrated-plasticity
+# formulation, with per-member backbones from Model/IMK_Calibration.py.
+IMK_APPLY_TO_COLUMNS = True
 IMK_APPLY_TO_BEAMS = True
 
 # IMK lumped hinge tags
@@ -158,6 +165,16 @@ IMK_HINGE_ELEMENT_TAG_BASE = 4000000
 # These are intentionally centralized because IMK behavior should eventually be
 # calibrated from design/code equations or experiments rather than hidden in the
 # element builder.
+# Backbone calibration source.
+#   True  = per-member Haselton et al. (2008) rotation capacities and a yield
+#           moment read off the nominal P-M surface at the member's axial load
+#   False = the fixed IMK_THETA_* constants below, identical for every element
+#
+# The fixed constants cannot represent a column, whose plastic rotation
+# capacity falls steeply with axial load. With them, no column in the model
+# can degrade faster than any other and soft-story mechanisms cannot form.
+IMK_USE_CALIBRATED_BACKBONE = True
+
 IMK_MATERIAL_TYPE = "IMKBilin"
 
 # IMK rotational spring stiffness calibration.
@@ -400,6 +417,12 @@ NTHA_DAMPING_RATIO = 0.05
 NTHA_RAYLEIGH_MODE_I = 0
 NTHA_RAYLEIGH_MODE_J = 2
 NTHA_DT_FACTOR = 1.0
+# Hinge rotation histories are the largest response array by far: one value
+# per spring per direction per step. Peaks are tracked every step so no peak
+# is missed; the history itself is decimated, since it exists to show the
+# shape of the hysteresis rather than to resolve every cycle exactly.
+NTHA_HINGE_HISTORY_STRIDE = 8
+
 NTHA_PROGRESS_EVERY = 100
 NTHA_PRINT_CATALOG_SUMMARY = True
 

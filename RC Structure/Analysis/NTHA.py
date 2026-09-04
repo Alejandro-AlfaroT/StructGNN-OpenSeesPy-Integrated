@@ -224,6 +224,97 @@ def _all_non_base_node_tags():
     return tags
 
 
+def _floor_master_nodes():
+    """Diaphragm master node for every elevated floor, in floor order."""
+    return [floor_master_node(k) for k in range(1, sp.NUM_FLOOR + 1)]
+
+
+def _query_floor_kinematics(masters):
+    """Displacement, velocity and acceleration at each floor, X and Y.
+
+    Returns three flat lists of length 2 * NUM_FLOOR ordered
+    [floor1_x, floor1_y, floor2_x, ...]. Velocity and acceleration are
+    recorded because the equation of motion and any energy balance need them;
+    displacement alone cannot express either. Accelerations are relative to
+    the ground, matching the UniformExcitation formulation.
+    """
+    displacement, velocity, acceleration = [], [], []
+    for master in masters:
+        for dof in (1, 2):
+            displacement.append(ops.nodeDisp(master, dof))
+            velocity.append(ops.nodeVel(master, dof))
+            acceleration.append(ops.nodeAccel(master, dof))
+    return displacement, velocity, acceleration
+
+
+def _base_story_column_tags():
+    """Element tags of the first-story columns.
+
+    create_column_elements numbers columns with the story index outermost
+    starting at tag 1, so the first (nx+1)(ny+1) tags are the base story.
+    """
+    per_story = (sp.NUM_BAY_X + 1) * (sp.NUM_BAY_Y + 1)
+    return list(range(1, per_story + 1))
+
+
+def _base_shear_xy(base_column_tags):
+    """Total base shear in global X and Y, kips.
+
+    Summed from the first-story column forces rather than from support
+    reactions. With IMK columns the member attaches to a hinge node that is
+    tied to the fixed base node through equalDOF, and nodeReaction does not
+    report force transferred across a multi-point constraint -- it returns
+    zero translational reaction, which silently reads as zero base shear.
+    Column forces are also already global, and cost less than a reactions()
+    assembly.
+    """
+    shear_x = 0.0
+    shear_y = 0.0
+    for tag in base_column_tags:
+        forces = ops.eleForce(tag)
+        if not forces:
+            continue
+        shear_x += forces[0]
+        shear_y += forces[1]
+    return -shear_x, -shear_y
+
+
+def _query_hinge_rotations(hinge_ele_tags):
+    """Rotation of every IMK spring, keyed by hinge element tag.
+
+    The hinge force envelope saturates at the capping strength, so it cannot
+    distinguish a spring that just yielded from one about to fail. Rotation is
+    the only quantity that separates them, and it is what every damage measure
+    downstream is built from.
+    """
+    rotations = {}
+    for tag in hinge_ele_tags:
+        response = ops.eleResponse(tag, "deformation")
+        if response:
+            rotations[tag] = list(response)
+    return rotations
+
+
+def _update_rotation_envelope(envelope, current):
+    """Track peak positive, negative and absolute rotation per hinge."""
+    for tag, values in current.items():
+        entry = envelope.get(tag)
+        if entry is None:
+            envelope[tag] = {
+                "max": list(values),
+                "min": list(values),
+                "abs_max": [abs(value) for value in values],
+            }
+            continue
+        for index, value in enumerate(values):
+            if value > entry["max"][index]:
+                entry["max"][index] = value
+            if value < entry["min"][index]:
+                entry["min"][index] = value
+            if abs(value) > entry["abs_max"][index]:
+                entry["abs_max"][index] = abs(value)
+
+
 # ================================================================
 #  CONVERGENCE / RECOVERY
 # ================================================================
@@ -482,6 +573,25 @@ def _run_ntha_impl(
     hinge_envelope   = {}
     node_envelope    = {}
 
+    # Spatial and kinematic response. Previously the only stored time series
+    # was roof displacement, so the per-step cost of querying the whole model
+    # was paid and then discarded, and nothing downstream could see how
+    # response was distributed over the height.
+    floor_masters  = _floor_master_nodes()
+    base_columns   = _base_story_column_tags()
+    floor_disp_history  = []
+    floor_vel_history   = []
+    floor_accel_history = []
+    story_drift_history = []
+    base_shear_x = []
+    base_shear_y = []
+
+    hinge_rotation_envelope = {}
+    hinge_rotation_history  = []
+    hinge_history_steps     = []
+    hinge_stride = max(1, int(getattr(sp, "NTHA_HINGE_HISTORY_STRIDE", 8)))
+    hinge_tag_order = list(hinge_ele_tags)
+
     convergence_log = []
     failed          = False
     failed_step     = None
@@ -519,6 +629,16 @@ def _run_ntha_impl(
         roof_disp_x.append(ux_r)
         roof_disp_y.append(uy_r)
 
+        displacement, velocity, acceleration = _query_floor_kinematics(floor_masters)
+        floor_disp_history.append(displacement)
+        floor_vel_history.append(velocity)
+        floor_accel_history.append(acceleration)
+        story_drift_history.append(list(dx) + list(dy))
+
+        shear_x, shear_y = _base_shear_xy(base_columns)
+        base_shear_x.append(shear_x)
+        base_shear_y.append(shear_y)
+
         for k in range(sp.NUM_FLOOR):
             if dx[k] > peak_drift_x[k]:
                 peak_drift_x[k] = dx[k]
@@ -529,6 +649,15 @@ def _run_ntha_impl(
         _update_envelope(element_envelope, _query_element_forces(phys_ele_tags))
         if hinge_ele_tags:
             _update_envelope(hinge_envelope, _query_element_forces(hinge_ele_tags))
+
+            # Peaks every step so none is missed; history decimated.
+            rotations = _query_hinge_rotations(hinge_tag_order)
+            _update_rotation_envelope(hinge_rotation_envelope, rotations)
+            if step % hinge_stride == 0:
+                hinge_history_steps.append(step)
+                hinge_rotation_history.append(
+                    [value for tag in hinge_tag_order for value in rotations.get(tag, (0.0, 0.0))]
+                )
 
         # Node displacement envelopes
         _update_node_envelope(node_envelope, _query_node_displacements(non_base_nodes))
@@ -578,7 +707,19 @@ def _run_ntha_impl(
         "peak_story_drift_y": peak_drift_y,
         "element_envelope":   element_envelope,
         "hinge_envelope":     hinge_envelope,   # IMK spring forces
+        "hinge_rotation_envelope": hinge_rotation_envelope,
+        "hinge_rotation_history":  hinge_rotation_history,
+        "hinge_rotation_steps":    hinge_history_steps,
+        "hinge_tag_order":         hinge_tag_order,
+        "hinge_history_stride":    hinge_stride,
         "node_envelope":      node_envelope,
+        "floor_disp_history":  floor_disp_history,
+        "floor_vel_history":   floor_vel_history,
+        "floor_accel_history": floor_accel_history,
+        "story_drift_history": story_drift_history,
+        "base_shear_x":        base_shear_x,
+        "base_shear_y":        base_shear_y,
+        "floor_master_nodes":  floor_masters,
         "record_summary_x":   record_summary_x,
         "record_summary_y":   record_summary_y,
         "damping_ratio":      damping_ratio,
