@@ -11,6 +11,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
+import numpy as np
 import openseespy.opensees as ops
 
 import Structure_Parameters as sp
@@ -27,6 +28,7 @@ from Data_Generation.Graph_Exporter import (
     collect_graph_edge_rows,
     collect_node_rows,
 )
+from Model.IMK_Hinges import hinge_registry
 from Run_Naming import analysis_run_name, safe_name, variant_value
 from Design.Design_Driver import DESIGN_ARTIFACT_NAME, load_or_create_design
 from Loads.Gravity_Loads import apply_gravity_loads
@@ -158,6 +160,8 @@ def _story_drift_rows(results):
 
 
 def _time_history_rows(results):
+    shear_x = results.get("base_shear_x") or []
+    shear_y = results.get("base_shear_y") or []
     rows = []
     for i, t in enumerate(results["time_history"]):
         ux = results["roof_disp_x"][i]
@@ -169,9 +173,93 @@ def _time_history_rows(results):
                 "roof_disp_x_in": ux,
                 "roof_disp_y_in": uy,
                 "roof_disp_resultant_in": (ux * ux + uy * uy) ** 0.5,
+                "base_shear_x_kip": shear_x[i] if i < len(shear_x) else 0.0,
+                "base_shear_y_kip": shear_y[i] if i < len(shear_y) else 0.0,
             }
         )
     return rows
+
+
+def _hinge_backbone_rows(results):
+    """One row per IMK spring: its calibrated backbone and rotation envelope.
+
+    Joins the per-build hinge registry, which records what each spring was
+    actually given, against the rotation peaks it reached. This is the table
+    every damage measure is computed from: without theta_p a rotation is just
+    a number, and without the rotation the backbone says nothing about damage.
+    """
+    registry = hinge_registry()
+    envelope = results.get("hinge_rotation_envelope") or {}
+    base = sp.IMK_HINGE_ELEMENT_TAG_BASE
+
+    rows = []
+    for hinge_tag, peaks in sorted(envelope.items(), key=lambda item: int(item[0])):
+        offset = int(hinge_tag) - base
+        ele_tag, end_id = divmod(offset, 10)
+        backbone = registry.get(ele_tag, {})
+        theta_p = backbone.get("theta_p") or 0.0
+        theta_y = backbone.get("theta_y_target") or 0.0
+        rotation = max(peaks["abs_max"])
+        plastic = max(0.0, rotation - theta_y)
+        rows.append(
+            {
+                "hinge_ele_tag": int(hinge_tag),
+                "ele_tag": ele_tag,
+                "end_id": end_id,
+                "member_type": backbone.get("member_type", ""),
+                "axial_kip": backbone.get("axial_kip", 0.0),
+                "axial_ratio": backbone.get("axial_ratio", 0.0),
+                "yield_moment_kip_in": backbone.get("yield_moment_y_kip_in", 0.0),
+                "theta_y": theta_y,
+                "theta_p": theta_p,
+                "theta_pc": backbone.get("theta_pc", 0.0),
+                "theta_u": backbone.get("theta_u", 0.0),
+                "rot_y_max": peaks["max"][0],
+                "rot_y_min": peaks["min"][0],
+                "rot_z_max": peaks["max"][1] if len(peaks["max"]) > 1 else 0.0,
+                "rot_z_min": peaks["min"][1] if len(peaks["min"]) > 1 else 0.0,
+                "rot_abs_max": rotation,
+                "plastic_rotation": plastic,
+                # Damage ratio: plastic rotation as a fraction of the capping
+                # plastic rotation. 0 is elastic, 1 is the onset of strength
+                # loss. Unlike the moment ratio this does not saturate.
+                "damage_ratio": (plastic / theta_p) if theta_p > 0 else 0.0,
+                "yielded": 1 if rotation > theta_y else 0,
+                "past_capping": 1 if theta_p > 0 and plastic >= theta_p else 0,
+            }
+        )
+    return rows
+
+
+def _write_response_arrays(output_dir, results):
+    """Store the large response arrays compressed rather than as CSV.
+
+    Per-floor kinematics and hinge rotation histories are far too large for
+    the CSV interchange the smaller tables use: at full resolution they run
+    to tens of megabytes per run, which would dominate dataset storage.
+    """
+    hinge_history = results.get("hinge_rotation_history") or []
+    payload = {
+        "floor_disp": np.asarray(results.get("floor_disp_history") or [], dtype=np.float32),
+        "floor_vel": np.asarray(results.get("floor_vel_history") or [], dtype=np.float32),
+        "floor_accel": np.asarray(results.get("floor_accel_history") or [], dtype=np.float32),
+        "story_drift": np.asarray(results.get("story_drift_history") or [], dtype=np.float32),
+        "base_shear": np.asarray(
+            [results.get("base_shear_x") or [], results.get("base_shear_y") or []],
+            dtype=np.float32,
+        ).T,
+        "hinge_rotation": np.asarray(hinge_history, dtype=np.float32),
+        "hinge_rotation_steps": np.asarray(
+            results.get("hinge_rotation_steps") or [], dtype=np.int32
+        ),
+        "hinge_tag_order": np.asarray(results.get("hinge_tag_order") or [], dtype=np.int64),
+        "floor_master_nodes": np.asarray(
+            results.get("floor_master_nodes") or [], dtype=np.int64
+        ),
+    }
+    path = Path(output_dir) / "response_arrays.npz"
+    np.savez_compressed(path, **payload)
+    return path
 
 
 def _node_envelope_rows(results):
@@ -237,6 +325,7 @@ def save_ntha_outputs(output_dir, results, gravity_results, modal_results):
     story_rows = _story_drift_rows(results)
     time_rows = _time_history_rows(results)
     node_env_rows = _node_envelope_rows(results)
+    hinge_rows = _hinge_backbone_rows(results)
 
     _write_json(output_dir / "status.json", results["status"])
     _write_json(output_dir / "record_summary_x.json", results["record_summary_x"])
@@ -246,6 +335,9 @@ def save_ntha_outputs(output_dir, results, gravity_results, modal_results):
     _write_json(output_dir / "modal_results.json", modal_results)
     _write_json(output_dir / "global_parameters.json", collect_global_parameters())
     _write_json(output_dir / "hinge_envelope.json", results["hinge_envelope"])
+    _write_response_arrays(output_dir, results)
+    if hinge_rows:
+        _write_csv(output_dir / "hinge_backbone.csv", list(hinge_rows[0].keys()), hinge_rows)
 
     _write_csv(output_dir / "nodes.csv", list(node_rows[0].keys()), node_rows)
     _write_csv(output_dir / "elements.csv", list(element_rows[0].keys()), element_rows)
@@ -262,6 +354,7 @@ def save_ntha_outputs(output_dir, results, gravity_results, modal_results):
 
     return {
         "num_time_steps": len(time_rows),
+        "num_hinges": len(hinge_rows),
         "num_nodes": len(node_rows),
         "num_elements": len(element_rows),
         "num_edges": len(edge_rows),

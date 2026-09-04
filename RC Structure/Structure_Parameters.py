@@ -105,7 +105,7 @@ CONCRETE_UNIT_WEIGHT_KCI = CONCRETE_UNIT_WEIGHT_KCF / 1728.0  # kip/in³
 # Live load is the design occupancy load (50 psf = office, ASCE 7 Table 4.3-1).
 # Both are applied in full for gravity analysis (unfactored service loads).
 # The combined value is used for seismic mass (ASCE 7 §12.7.2 effective weight).
-FLOOR_DEAD_LOAD_KSF = 0.10   # kip/ft²  (superimposed dead: slab + finishes + MEP)
+FLOOR_DEAD_LOAD_KSF = 0.15   # kip/ft²  (slab self-weight + finishes + MEP)
 FLOOR_LIVE_LOAD_KSF = 0.05   # kip/ft²  (office occupancy)
 
 FX_FLOOR = 10.0
