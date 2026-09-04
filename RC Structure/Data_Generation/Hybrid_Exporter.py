@@ -198,6 +198,45 @@ RECORD_FEATURE_KEYS = [
     "pga_in_per_sec2",
 ]
 
+HINGE_FEATURE_COLUMNS = [
+    "ele_tag",
+    "end_id",
+    "axial_kip",
+    "axial_ratio",
+    "yield_moment_kip_in",
+    "theta_y",
+    "theta_p",
+    "theta_pc",
+    "theta_u",
+    "rot_abs_max",
+    "plastic_rotation",
+    "damage_ratio",
+    "yielded",
+    "past_capping",
+]
+
+# Case-level damage summary. The inelasticity gate is recorded with the data
+# rather than recomputed downstream so that what counted as inelastic is
+# fixed at generation time and auditable afterwards.
+DAMAGE_METRIC_COLUMNS = [
+    "peak_interstory_drift_ratio",
+    "roof_drift_ratio",
+    "drift_concentration_factor",
+    "residual_interstory_drift_ratio",
+    "peak_hinge_damage_ratio",
+    "fraction_hinges_yielded",
+    "fraction_hinges_past_capping",
+    "peak_base_shear_kip",
+    "is_inelastic",
+    "collapse_flag",
+]
+
+INELASTIC_DRIFT_THRESHOLD = 0.010
+INELASTIC_ROOF_DRIFT_THRESHOLD = 0.00775
+INELASTIC_DAMAGE_RATIO_THRESHOLD = 0.25
+INELASTIC_YIELDED_FRACTION_THRESHOLD = 0.10
+COLLAPSE_DRIFT_RATIO = 0.10
+
 TARGET_PEAK_COLUMNS = [
     "max_abs_roof_disp_x_in",
     "max_abs_roof_disp_y_in",
@@ -416,6 +455,75 @@ def _target_peak_array(summary, status):
     return np.asarray([values[column] for column in TARGET_PEAK_COLUMNS], dtype=np.float32)
 
 
+def _damage_metrics(arrays, hinge_rows, global_parameters, status):
+    """Case-level damage summary and the inelasticity gate.
+
+    Peak drift alone is a poor gate: in the predecessor dataset 63 percent of
+    cases already had a hinge at yield while almost none showed meaningful
+    plastic action, because the hinge moment saturates at the capping
+    strength. The gate therefore combines a global drift measure with a
+    rotation-based one that does not saturate.
+    """
+    story_drift = arrays.get("story_drift")
+    num_floor = int(_to_float(global_parameters.get("num_floor"), default=0.0)) or 1
+    story_height = _to_float(global_parameters.get("story_h_in"), default=0.0)
+    total_height = num_floor * story_height
+
+    peak_drift = 0.0
+    residual_drift = 0.0
+    if story_drift is not None and story_drift.size:
+        drift_x = story_drift[:, :num_floor]
+        drift_y = story_drift[:, num_floor:2 * num_floor]
+        resultant = np.sqrt(drift_x**2 + drift_y**2)
+        peak_drift = float(resultant.max())
+        # Average the final few percent of steps so a single noisy last step
+        # does not decide the residual.
+        tail = max(1, int(0.02 * resultant.shape[0]))
+        residual_drift = float(resultant[-tail:].max(axis=1).mean())
+
+    roof_drift = 0.0
+    floor_disp = arrays.get("floor_disp")
+    if floor_disp is not None and floor_disp.size and total_height > 0:
+        roof = np.hypot(floor_disp[:, -2], floor_disp[:, -1])
+        roof_drift = float(roof.max() / total_height)
+
+    peak_shear = 0.0
+    base_shear = arrays.get("base_shear")
+    if base_shear is not None and base_shear.size:
+        peak_shear = float(np.abs(base_shear).max())
+
+    damage = [float(row.get("damage_ratio") or 0.0) for row in hinge_rows]
+    yielded = [int(float(row.get("yielded") or 0)) for row in hinge_rows]
+    capping = [int(float(row.get("past_capping") or 0)) for row in hinge_rows]
+    peak_damage = max(damage) if damage else 0.0
+    yielded_fraction = (sum(yielded) / len(yielded)) if yielded else 0.0
+    capping_fraction = (sum(capping) / len(capping)) if capping else 0.0
+
+    collapse = bool(
+        peak_drift >= COLLAPSE_DRIFT_RATIO
+        or (status.get("failed") and peak_drift >= INELASTIC_DRIFT_THRESHOLD)
+    )
+    inelastic = bool(
+        peak_drift >= INELASTIC_DRIFT_THRESHOLD
+        and roof_drift >= INELASTIC_ROOF_DRIFT_THRESHOLD
+        and peak_damage >= INELASTIC_DAMAGE_RATIO_THRESHOLD
+        and yielded_fraction >= INELASTIC_YIELDED_FRACTION_THRESHOLD
+    )
+
+    return {
+        "peak_interstory_drift_ratio": peak_drift,
+        "roof_drift_ratio": roof_drift,
+        "drift_concentration_factor": (peak_drift / roof_drift) if roof_drift > 0 else 0.0,
+        "residual_interstory_drift_ratio": residual_drift,
+        "peak_hinge_damage_ratio": peak_damage,
+        "fraction_hinges_yielded": yielded_fraction,
+        "fraction_hinges_past_capping": capping_fraction,
+        "peak_base_shear_kip": peak_shear,
+        "is_inelastic": 1.0 if inelastic else 0.0,
+        "collapse_flag": 1.0 if collapse else 0.0,
+    }
+
+
 def _completed_ok(status):
     if not status:
         return False
@@ -438,6 +546,8 @@ def required_files_present(ntha_dir):
         "record_summary_x.json",
         "status.json",
         "summary.json",
+        "response_arrays.npz",
+        "hinge_backbone.csv",
     ]
     missing = [name for name in required if not (ntha_dir / name).exists()]
     return missing
@@ -504,7 +614,17 @@ def compile_hybrid_sample(
     record_x = _read_json(ntha_dir / "record_summary_x.json", default={}) or {}
     record_y = _read_json(ntha_dir / "record_summary_y.json", default=None)
 
-    if require_success and not _completed_ok(status):
+    arrays = dict(np.load(ntha_dir / "response_arrays.npz"))
+    hinge_rows = _read_csv(ntha_dir / "hinge_backbone.csv")
+    damage = _damage_metrics(arrays, hinge_rows, global_parameters, status)
+
+    # A run that stopped early because the structure collapsed is the most
+    # informative sample in a fragility dataset, not a failure to discard.
+    # It is kept and labelled. A run that stopped early while still nearly
+    # elastic is a genuine numerical failure and is still rejected.
+    collapsed = bool(damage["collapse_flag"])
+    has_data = _to_int(status.get("completed_steps"), default=0) > 0
+    if require_success and not _completed_ok(status) and not (collapsed and has_data):
         raise RuntimeError(f"NTHA run is not a complete successful sample: {ntha_dir}")
 
     n_steps = len(time_rows)
@@ -563,6 +683,10 @@ def compile_hybrid_sample(
     )
     element_force_envelope = _rows_to_array(force_env_rows, ELEMENT_FORCE_COLUMNS)
 
+    hinge_features = _rows_to_array(hinge_rows, HINGE_FEATURE_COLUMNS)
+    damage_metrics = np.asarray(
+        [damage[column] for column in DAMAGE_METRIC_COLUMNS], dtype=np.float32
+    )
     global_features = _json_to_feature_array(global_parameters, GLOBAL_FEATURE_KEYS)
     record_features = np.stack(
         [
@@ -595,10 +719,26 @@ def compile_hybrid_sample(
         global_features=global_features,
         record_features=record_features,
         target_peak=target_peak,
+        hinge_features=hinge_features,
+        damage_metrics=damage_metrics,
+        floor_disp=arrays.get("floor_disp"),
+        floor_vel=arrays.get("floor_vel"),
+        floor_accel=arrays.get("floor_accel"),
+        story_drift_history=arrays.get("story_drift"),
+        base_shear=arrays.get("base_shear"),
+        hinge_rotation=arrays.get("hinge_rotation"),
+        element_force_history=arrays.get("element_force"),
+        element_force_steps=arrays.get("element_force_steps"),
+        element_force_tag_order=arrays.get("element_tag_order"),
+        joint_force_history=arrays.get("joint_force"),
+        joint_force_node_order=arrays.get("joint_node_order"),
+        hinge_rotation_steps=arrays.get("hinge_rotation_steps"),
+        hinge_tag_order=arrays.get("hinge_tag_order"),
+        floor_master_nodes=arrays.get("floor_master_nodes"),
     )
 
     metadata = {
-        "schema_version": "hybrid_gnn_lstm_v2",
+        "schema_version": "hybrid_gnn_lstm_v3",
         "run_name": ntha_dir.name,
         "source_ntha_dir": _portable_path(ntha_dir, output_dir),
         "sample_npz": _portable_path(sample_path, output_dir),
@@ -625,6 +765,33 @@ def compile_hybrid_sample(
         "global_feature_keys": GLOBAL_FEATURE_KEYS,
         "record_feature_keys": RECORD_FEATURE_KEYS,
         "target_peak_columns": TARGET_PEAK_COLUMNS,
+        "hinge_feature_columns": HINGE_FEATURE_COLUMNS,
+        "element_force_history_columns": [
+            "axial_i", "shear_y_i", "shear_z_i", "torsion_i", "moment_y_i", "moment_z_i",
+            "axial_j", "shear_y_j", "shear_z_j", "torsion_j", "moment_y_j", "moment_z_j",
+        ],
+        "element_force_history_frame": "member local",
+        "joint_force_history_columns": ["fx", "fy", "fz", "mx", "my", "mz"],
+        "joint_force_history_frame": "global",
+        "joint_force_description": (
+            "Internal force delivered to each joint, summed over the element "
+            "ends framing into it, in the global frame."
+        ),
+        "damage_metric_columns": DAMAGE_METRIC_COLUMNS,
+        "num_hinges": int(hinge_features.shape[0]) if hinge_features.size else 0,
+        "hinge_history_stride": int(
+            arrays["hinge_rotation_steps"][1] - arrays["hinge_rotation_steps"][0]
+        ) if arrays.get("hinge_rotation_steps") is not None
+             and len(arrays["hinge_rotation_steps"]) > 1 else 1,
+        "damage": damage,
+        "is_inelastic": bool(damage["is_inelastic"]),
+        "collapse": bool(damage["collapse_flag"]),
+        "inelastic_gate": {
+            "peak_interstory_drift_ratio": INELASTIC_DRIFT_THRESHOLD,
+            "roof_drift_ratio": INELASTIC_ROOF_DRIFT_THRESHOLD,
+            "peak_hinge_damage_ratio": INELASTIC_DAMAGE_RATIO_THRESHOLD,
+            "fraction_hinges_yielded": INELASTIC_YIELDED_FRACTION_THRESHOLD,
+        },
         "summary": {
             "max_abs_roof_disp_x_in": summary.get("max_abs_roof_disp_x_in"),
             "max_abs_roof_disp_y_in": summary.get("max_abs_roof_disp_y_in"),

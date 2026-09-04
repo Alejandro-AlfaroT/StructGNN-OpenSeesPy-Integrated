@@ -143,20 +143,55 @@ def apply_geometry_overrides(overrides, variant_name=None, emit=True):
     return sp.GEOMETRY_VARIANT_NAME
 
 
+def apply_seismic_site_from_args(args, emit=True):
+    """Apply the per-case seismic hazard, if one was requested.
+
+    The hazard is a named entry rather than an override tuple because SDS,
+    SD1 and S1 are not independent: they describe one design spectrum and
+    have to move together. Kept in this module so every entry point that
+    already calls the geometry helpers picks it up without new plumbing.
+    """
+    label = getattr(args, "seismic_site", None)
+    if not label:
+        return sp.SEISMIC_SITE_LABEL
+
+    applied = sp.apply_seismic_site(label)
+    if emit:
+        print(
+            f"  Seismic hazard: {applied} "
+            f"(SDS={sp.ASCE_SDS:g}, SD1={sp.ASCE_SD1:g}, S1={sp.ASCE_S1:g})"
+        )
+    return applied
+
+
+def apply_seismic_site_from_environment(emit=True):
+    label = os.environ.get("RC_SEISMIC_SITE")
+    if not label:
+        return sp.SEISMIC_SITE_LABEL
+    applied = sp.apply_seismic_site(label)
+    if emit:
+        print(f"  Seismic hazard: {applied}")
+    return applied
+
+
 def apply_geometry_from_args(args, emit=True):
-    return apply_geometry_overrides(
+    name = apply_geometry_overrides(
         geometry_overrides_from_args(args),
         variant_name=getattr(args, "geometry_name", None),
         emit=emit,
     )
+    apply_seismic_site_from_args(args, emit=emit)
+    return name
 
 
 def apply_geometry_from_environment(emit=True):
-    return apply_geometry_overrides(
+    name = apply_geometry_overrides(
         geometry_overrides_from_environment(),
         variant_name=os.environ.get("RC_GEOMETRY_NAME"),
         emit=emit,
     )
+    apply_seismic_site_from_environment(emit=emit)
+    return name
 
 
 def add_geometry_arguments(parser):
@@ -171,6 +206,15 @@ def add_geometry_arguments(parser):
     parser.add_argument("--h-col", type=float, default=None, help="Column depth, inches.")
     parser.add_argument("--b-beam", type=float, default=None, help="Beam width, inches.")
     parser.add_argument("--h-beam", type=float, default=None, help="Beam depth, inches.")
+    parser.add_argument(
+        "--seismic-site",
+        default=None,
+        help=(
+            "Named ASCE 7 design hazard for this case, one of "
+            + ", ".join(entry[0] for entry in sp.SEISMIC_SITE_OPTIONS)
+            + ". Sets SDS, SD1 and S1 together."
+        ),
+    )
 
 
 def geometry_cli_args_for_command(args):
@@ -183,5 +227,9 @@ def geometry_cli_args_for_command(args):
         value = getattr(args, attr, None)
         if value is not None:
             command_args.extend([f"--{attr.replace('_', '-')}", str(value)])
+
+    seismic_site = getattr(args, "seismic_site", None)
+    if seismic_site:
+        command_args.extend(["--seismic-site", str(seismic_site)])
 
     return command_args

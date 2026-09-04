@@ -3,6 +3,50 @@ import math
 import openseespy.opensees as ops
 
 import Structure_Parameters as sp
+from Model.IMK_Calibration import (
+    backbone_for_member,
+    column_gravity_axial,
+    column_grid_position,
+    column_moment_at_axial,
+    column_pm_nominal,
+)
+
+
+# Per-hinge backbones recorded as the model is built, keyed by physical
+# element tag. Consumers that need to know what a specific hinge was actually
+# given -- mechanism checks, hysteresis recording, dataset export -- read this
+# instead of recomputing from globals, which cannot capture the axial
+# dependence of a column.
+_HINGE_REGISTRY = {}
+
+# The nominal P-M sweep is identical for every column in a build, so it is
+# computed once per model rather than once per member.
+_PM_DIAGRAM_CACHE = {}
+
+
+def reset_hinge_registry():
+    """Clear per-build hinge state. Called when a new model is built."""
+    _HINGE_REGISTRY.clear()
+    _PM_DIAGRAM_CACHE.clear()
+
+
+def hinge_registry():
+    """All recorded hinge backbones, keyed by physical element tag."""
+    return dict(_HINGE_REGISTRY)
+
+
+def hinge_backbone(ele_tag):
+    """Backbone recorded for one element, or None if it has no IMK hinges."""
+    return _HINGE_REGISTRY.get(int(ele_tag))
+
+
+def _cached_pm_diagram():
+    key = (sp.B_COL, sp.H_COL, sp.FC_COL_KSI, sp.COL_BAR_SIZE,
+           sp.COL_TOP_BARS, sp.COL_BOT_BARS, sp.COL_SIDE_BARS)
+    if key not in _PM_DIAGRAM_CACHE:
+        _PM_DIAGRAM_CACHE.clear()
+        _PM_DIAGRAM_CACHE[key] = column_pm_nominal()
+    return _PM_DIAGRAM_CACHE[key]
 
 
 def hinge_node_tag(ele_tag, end_id):
@@ -31,30 +75,48 @@ def _member_length(n_i, n_j):
     return length
 
 
-def _member_properties(member_type):
+def _member_properties(member_type, axial_kip=0.0):
+    """Elastic properties for an IMK member, on effective (cracked) stiffness.
+
+    The stiffness modifier is applied once, here, so it reaches both the
+    elastic element between the springs and the spring calibration itself
+    (Ke = n * 6EI/L), keeping the two consistent.
+    """
+    modifier = sp.section_stiffness_modifier(member_type)
+
     if member_type == "column":
+        # Zero-axial flexural capacity understates a column badly: it ignores
+        # the compression and side steel, and ignores axial load entirely.
+        # Both moments come off the nominal P-M surface instead.
+        if getattr(sp, "IMK_USE_CALIBRATED_BACKBONE", True):
+            capacity = column_moment_at_axial(axial_kip, _cached_pm_diagram())
+            my = mz = capacity
+        else:
+            my, mz = sp.column_nominal_moment_y(), sp.column_nominal_moment_z()
         return {
             "area": sp.rect_area(sp.B_COL, sp.H_COL),
             "e": sp.concrete_ec_ksi(sp.FC_COL_KSI),
             "g": sp.concrete_shear_modulus_ksi(sp.concrete_ec_ksi(sp.FC_COL_KSI)),
-            "j": sp.approx_rect_j(sp.B_COL, sp.H_COL),
-            "iy": sp.rect_iy(sp.B_COL, sp.H_COL),
-            "iz": sp.rect_iz(sp.B_COL, sp.H_COL),
-            "my": sp.column_nominal_moment_y(),
-            "mz": sp.column_nominal_moment_z(),
+            "j": modifier * sp.approx_rect_j(sp.B_COL, sp.H_COL),
+            "iy": modifier * sp.rect_iy(sp.B_COL, sp.H_COL),
+            "iz": modifier * sp.rect_iz(sp.B_COL, sp.H_COL),
+            "my": my,
+            "mz": mz,
             "theta_y": sp.IMK_COLUMN_THETA_Y,
+            "stiffness_modifier": modifier,
         }
 
     return {
         "area": sp.rect_area(sp.B_BEAM, sp.H_BEAM),
         "e": sp.concrete_ec_ksi(sp.FC_BEAM_KSI),
         "g": sp.concrete_shear_modulus_ksi(sp.concrete_ec_ksi(sp.FC_BEAM_KSI)),
-        "j": sp.approx_rect_j(sp.B_BEAM, sp.H_BEAM),
-        "iy": sp.rect_iy(sp.B_BEAM, sp.H_BEAM),
-        "iz": sp.rect_iz(sp.B_BEAM, sp.H_BEAM),
+        "j": modifier * sp.approx_rect_j(sp.B_BEAM, sp.H_BEAM),
+        "iy": modifier * sp.rect_iy(sp.B_BEAM, sp.H_BEAM),
+        "iz": modifier * sp.rect_iz(sp.B_BEAM, sp.H_BEAM),
         "my": sp.beam_nominal_moment_y(),
         "mz": sp.beam_nominal_moment_z(),
         "theta_y": sp.IMK_BEAM_THETA_Y,
+        "stiffness_modifier": modifier,
     }
 
 
@@ -137,6 +199,29 @@ def imk_hinge_thresholds(member_type, rot_dir, length):
     }
 
 
+def imk_elastic_inertia_factor():
+    """(n+1)/n stiffness correction for the elastic segment between springs.
+
+    With a rotational spring of stiffness Ke = n * (6EI/L) at each end, the
+    elastic element between them must use I * (n+1)/n so the composite
+    spring-element-spring assembly reproduces the real member stiffness
+    (Ibarra & Krawinkler 2005; Zareian & Medina 2010). Without it the member
+    is softer than intended by exactly that factor.
+
+    Only the member-stiffness calibration carries this correction. The
+    yield-rotation mode sets Ke from My/theta_y, which is not referenced to
+    6EI/L, so no correction applies.
+    """
+    mode = getattr(sp, "IMK_HINGE_STIFFNESS_MODE", "yield_rotation")
+    if mode != "member_stiffness_factor":
+        return 1.0
+
+    n = float(sp.IMK_HINGE_STIFFNESS_FACTOR)
+    if n <= 0.0:
+        raise ValueError("IMK_HINGE_STIFFNESS_FACTOR must be positive.")
+    return (n + 1.0) / n
+
+
 def _orientation(member_type):
     if member_type == "column":
         return (0.0, 0.0, 1.0, 1.0, 0.0, 0.0), (1, 2, 3, 6)
@@ -150,7 +235,7 @@ def _orientation(member_type):
     raise ValueError(f"Unknown member_type: {member_type}")
 
 
-def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment):
+def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment, backbone=None):
     """
     Define OpenSees IMKBilin using the current OpenSees argument order:
 
@@ -162,6 +247,12 @@ def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment):
     values, matching the OpenSees IMKBilin documentation.
     """
 
+    # Rotation capacities come from the per-member backbone when one is
+    # supplied. Falling back to the globals keeps the uncalibrated path usable.
+    theta_p = backbone["theta_p"] if backbone else sp.IMK_THETA_P_POS
+    theta_pc = backbone["theta_pc"] if backbone else sp.IMK_THETA_PC_POS
+    theta_u = backbone["theta_u"] if backbone else sp.IMK_THETA_U_POS
+
     fmaxfy_pos = getattr(sp, "IMK_FMAXFY_POS", 1.10)
     fmaxfy_neg = getattr(sp, "IMK_FMAXFY_NEG", 1.10)
     fresfy_pos = getattr(sp, "IMK_FRESFY_POS", sp.IMK_RES_POS)
@@ -171,15 +262,15 @@ def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment):
         sp.IMK_MATERIAL_TYPE,
         mat_tag,
         elastic_stiffness,
-        sp.IMK_THETA_P_POS,
-        sp.IMK_THETA_PC_POS,
-        sp.IMK_THETA_U_POS,
+        theta_p,
+        theta_pc,
+        theta_u,
         yield_moment,
         fmaxfy_pos,
         fresfy_pos,
-        sp.IMK_THETA_P_NEG,
-        sp.IMK_THETA_PC_NEG,
-        sp.IMK_THETA_U_NEG,
+        theta_p,
+        theta_pc,
+        theta_u,
         yield_moment,
         fmaxfy_neg,
         fresfy_neg,
@@ -198,7 +289,9 @@ def _create_hinge_node(source_node, hinge_node):
     ops.node(hinge_node, *ops.nodeCoord(source_node))
 
 
-def _create_end_hinge(ele_tag, end_id, retained_node, hinge_node, member_type, props, length):
+def _create_end_hinge(
+    ele_tag, end_id, retained_node, hinge_node, member_type, props, length, backbone=None
+):
     orient, tied_dofs = _orientation(member_type)
     for dof in tied_dofs:
         ops.equalDOF(retained_node, hinge_node, dof)
@@ -208,8 +301,8 @@ def _create_end_hinge(ele_tag, end_id, retained_node, hinge_node, member_type, p
     ke_y = imk_hinge_stiffness(member_type, "rot_y", length)
     ke_z = imk_hinge_stiffness(member_type, "rot_z", length)
 
-    _define_imk_peak_material(mat_y, ke_y, props["my"])
-    _define_imk_peak_material(mat_z, ke_z, props["mz"])
+    _define_imk_peak_material(mat_y, ke_y, props["my"], backbone)
+    _define_imk_peak_material(mat_z, ke_z, props["mz"], backbone)
 
     ops.element(
         "zeroLength",
@@ -228,16 +321,42 @@ def _create_end_hinge(ele_tag, end_id, retained_node, hinge_node, member_type, p
 
 
 def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
-    props = _member_properties(member_type)
+    # A column's backbone depends on how hard it is being squeezed, so the
+    # gravity axial load is estimated from tributary area before its hinge
+    # properties are fixed. Beams carry no meaningful axial force.
+    axial_kip = 0.0
+    if member_type == "column":
+        story_index, grid_i, grid_j = column_grid_position(n_i)
+        axial_kip = column_gravity_axial(story_index, grid_i, grid_j)
+
+    props = _member_properties(member_type, axial_kip=axial_kip)
+    backbone = backbone_for_member(member_type, axial_kip=axial_kip)
     length = _member_length(n_i, n_j)
     i_hinge_node = hinge_node_tag(ele_tag, 1)
     j_hinge_node = hinge_node_tag(ele_tag, 2)
 
     _create_hinge_node(n_i, i_hinge_node)
     _create_hinge_node(n_j, j_hinge_node)
-    _create_end_hinge(ele_tag, 1, n_i, i_hinge_node, member_type, props, length)
-    _create_end_hinge(ele_tag, 2, n_j, j_hinge_node, member_type, props, length)
+    _create_end_hinge(ele_tag, 1, n_i, i_hinge_node, member_type, props, length, backbone)
+    _create_end_hinge(ele_tag, 2, n_j, j_hinge_node, member_type, props, length, backbone)
 
+    _HINGE_REGISTRY[int(ele_tag)] = {
+        "ele_tag": int(ele_tag),
+        "member_type": member_type,
+        # The element spans the two hinge nodes, so ops.eleNodes reports those
+        # rather than the structural joints. Anything assembling forces at
+        # joints needs the physical end nodes recorded here.
+        "node_i": int(n_i),
+        "node_j": int(n_j),
+        "length_in": length,
+        "yield_moment_y_kip_in": props["my"],
+        "yield_moment_z_kip_in": props["mz"],
+        "theta_y_target": props["theta_y"],
+        "stiffness_modifier": props["stiffness_modifier"],
+        **backbone,
+    }
+
+    inertia_factor = imk_elastic_inertia_factor()
     ops.element(
         "elasticBeamColumn",
         ele_tag,
@@ -247,7 +366,7 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         props["e"],
         props["g"],
         props["j"],
-        props["iy"],
-        props["iz"],
+        inertia_factor * props["iy"],
+        inertia_factor * props["iz"],
         transf_tag,
     )

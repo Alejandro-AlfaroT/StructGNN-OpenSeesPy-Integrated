@@ -89,7 +89,7 @@ STIRRUP_SPACING_STEP = 1.0
 
 # Design DCR target band (iterative steel redesign)
 DESIGN_DCR_MIN = 0.60   # lower bound — avoid over-design
-DESIGN_DCR_MAX = 0.95   # upper bound — demand must be met
+DESIGN_DCR_MAX = 0.90   # upper bound — demand must be met
 
 # Loading / mass
 G = 386.4
@@ -105,7 +105,7 @@ CONCRETE_UNIT_WEIGHT_KCI = CONCRETE_UNIT_WEIGHT_KCF / 1728.0  # kip/in³
 # Live load is the design occupancy load (50 psf = office, ASCE 7 Table 4.3-1).
 # Both are applied in full for gravity analysis (unfactored service loads).
 # The combined value is used for seismic mass (ASCE 7 §12.7.2 effective weight).
-FLOOR_DEAD_LOAD_KSF = 0.10   # kip/ft²  (superimposed dead: slab + finishes + MEP)
+FLOOR_DEAD_LOAD_KSF = 0.15   # kip/ft²  (slab self-weight + finishes + MEP)
 FLOOR_LIVE_LOAD_KSF = 0.05   # kip/ft²  (office occupancy)
 
 FX_FLOOR = 10.0
@@ -146,7 +146,14 @@ BEAM_Y_TRANSF_TAG = 3
 #   "fiber" = distributed forceBeamColumn fiber sections
 #   "imk"   = elastic interior members with IMKPeakOriented rotational hinges
 ELEMENT_FORMULATION = "imk"
-IMK_APPLY_TO_COLUMNS = False
+
+# Columns previously fell through to distributed-plasticity fiber sections
+# while beams used concentrated IMK springs. That mixed formulation gave the
+# columns no cyclic strength degradation -- Concrete02 fibers yield but never
+# soften -- so collapse-relevant column behaviour could not be represented at
+# any intensity. Both member types now use the same concentrated-plasticity
+# formulation, with per-member backbones from Model/IMK_Calibration.py.
+IMK_APPLY_TO_COLUMNS = True
 IMK_APPLY_TO_BEAMS = True
 
 # IMK lumped hinge tags
@@ -158,6 +165,16 @@ IMK_HINGE_ELEMENT_TAG_BASE = 4000000
 # These are intentionally centralized because IMK behavior should eventually be
 # calibrated from design/code equations or experiments rather than hidden in the
 # element builder.
+# Backbone calibration source.
+#   True  = per-member Haselton et al. (2008) rotation capacities and a yield
+#           moment read off the nominal P-M surface at the member's axial load
+#   False = the fixed IMK_THETA_* constants below, identical for every element
+#
+# The fixed constants cannot represent a column, whose plastic rotation
+# capacity falls steeply with axial load. With them, no column in the model
+# can degrade faster than any other and soft-story mechanisms cannot form.
+IMK_USE_CALIBRATED_BACKBONE = True
+
 IMK_MATERIAL_TYPE = "IMKBilin"
 
 # IMK rotational spring stiffness calibration.
@@ -195,6 +212,25 @@ IMK_THETA_U_POS = 0.120
 IMK_THETA_U_NEG = 0.120
 IMK_D_POS = 1.0
 IMK_D_NEG = 1.0
+
+# Effective (cracked) section stiffness for seismic analysis.
+# ACI 318-19 Table 6.6.3.1.1(a): beams 0.35*Ig, columns 0.70*Ig.
+#
+# These apply only to members built as elastic elements with concentrated
+# IMK springs, where cracking is not represented by the material model.
+# Fiber-section members capture cracking through Concrete02 directly, so
+# applying a modifier to them would double-count the stiffness reduction.
+CRACKED_SECTION_ANALYSIS = True
+BEAM_STIFFNESS_MODIFIER = 0.35
+COLUMN_STIFFNESS_MODIFIER = 0.70
+
+
+def section_stiffness_modifier(member_type):
+    """Effective-stiffness multiplier on Ig for an elastic IMK member."""
+    if not CRACKED_SECTION_ANALYSIS:
+        return 1.0
+    return COLUMN_STIFFNESS_MODIFIER if member_type == "column" else BEAM_STIFFNESS_MODIFIER
+
 
 # Fiber section mesh settings
 CORE_PATCH_NY = 12
@@ -244,6 +280,67 @@ ASCE_PERIOD_CT = 0.016
 ASCE_PERIOD_EXPONENT = 0.90
 ASCE_PERIOD_WARN_RATIO_LOW = 0.50
 ASCE_PERIOD_WARN_RATIO_HIGH = 2.00
+
+# ASCE 7-22 seismic design parameters for the equivalent lateral force
+# procedure (Loads/Seismic_ELF.py), which drives the iterative design loop.
+#
+# Defaults describe a high-seismicity site with a special reinforced concrete
+# moment frame. High seismicity is deliberate: the dataset needs structures
+# whose design is governed by earthquake demand rather than gravity, otherwise
+# member sizes barely respond to building height.
+ASCE_SDS = 1.00     # design spectral response acceleration, short period
+ASCE_SD1 = 0.60     # design spectral response acceleration, 1 second
+ASCE_S1 = 0.60      # mapped MCE spectral acceleration at 1 second
+ASCE_R = 8.0        # response modification factor, special RC moment frame
+ASCE_IE = 1.0       # importance factor, risk category II
+ASCE_CU = 1.4       # upper-limit coefficient on the calculated period
+ASCE_TL = 8.0       # long-period transition period, seconds
+
+# ACI 318-19 18.7.3 strong column / weak beam: sum(Mnc) >= 1.2 * sum(Mnb).
+# Columns are capacity-protected rather than designed to the DCR band, so this
+# ratio, not the band, is what sizes them.
+SCWB_RATIO_MIN = 1.2
+
+# Seismic hazard varied per generated case.
+#
+# Geometry alone barely moves design demand: a minimum-size column is adequate
+# for most low-rise frames, so height and span variation alone produced nearly
+# identical sections. Varying the design spectral accelerations changes the
+# base shear by roughly 3x across this list, which is what actually
+# differentiates one designed structure from another.
+#
+# Each entry is (label, SDS, SD1, S1). Values span Seismic Design Category C
+# through E; lower categories are excluded because a special moment frame
+# (R = 8) would not be the system of choice there, and gravity would govern
+# the design and flatten the variety again.
+SEISMIC_SITE_OPTIONS = (
+    ("sdc_c",      0.50, 0.25, 0.25),
+    ("sdc_d_low",  0.75, 0.38, 0.38),
+    ("sdc_d_high", 1.00, 0.60, 0.60),
+    ("sdc_e",      1.25, 0.75, 0.75),
+    ("sdc_e_near", 1.50, 0.90, 0.90),
+)
+
+SEISMIC_SITE_LABEL = "sdc_d_high"
+
+
+def seismic_site_by_label(label):
+    """Look up a (label, SDS, SD1, S1) hazard entry by its label."""
+    for entry in SEISMIC_SITE_OPTIONS:
+        if entry[0] == label:
+            return entry
+    raise ValueError(
+        f"Unknown seismic site label {label!r}; expected one of "
+        f"{[entry[0] for entry in SEISMIC_SITE_OPTIONS]}."
+    )
+
+
+def apply_seismic_site(label):
+    """Set the ASCE design accelerations from a named hazard entry."""
+    global SEISMIC_SITE_LABEL, ASCE_SDS, ASCE_SD1, ASCE_S1
+    label, sds, sd1, s1 = seismic_site_by_label(label)
+    SEISMIC_SITE_LABEL, ASCE_SDS, ASCE_SD1, ASCE_S1 = label, sds, sd1, s1
+    return label
 
 
 def building_height_ft():
@@ -320,6 +417,17 @@ NTHA_DAMPING_RATIO = 0.05
 NTHA_RAYLEIGH_MODE_I = 0
 NTHA_RAYLEIGH_MODE_J = 2
 NTHA_DT_FACTOR = 1.0
+# Hinge rotation histories are the largest response array by far: one value
+# per spring per direction per step. Peaks are tracked every step so no peak
+# is missed; the history itself is decimated, since it exists to show the
+# shape of the hysteresis rather than to resolve every cycle exactly.
+NTHA_HINGE_HISTORY_STRIDE = 8
+
+# Element end forces and assembled joint forces share the hinge stride by
+# default. The analysis already queries every element every step for the
+# envelope, so storing them costs storage rather than compute.
+NTHA_ELEMENT_HISTORY_STRIDE = 8
+
 NTHA_PROGRESS_EVERY = 100
 NTHA_PRINT_CATALOG_SUMMARY = True
 
@@ -341,11 +449,23 @@ def rect_area(b, h):
 
 
 def rect_iy(b, h):
-    return h * b**3 / 12.0
+    """Second moment of area about the local y-axis: Iy = integral(z^2) dA.
+
+    Arguments follow the section's local frame, matching the OpenSees
+    elasticBeamColumn signature (..., Iy, Iz, transfTag):
+      b = width  measured along local y
+      h = depth  measured along local z
+
+    Bending in the local x-z plane -- vertical bending for a floor beam, whose
+    geomTransf vecxz is (0, 0, 1) -- is governed by Iy, so this must be the
+    strong-axis value for a beam deeper than it is wide.
+    """
+    return b * h**3 / 12.0
 
 
 def rect_iz(b, h):
-    return b * h**3 / 12.0
+    """Second moment of area about the local z-axis: Iz = integral(y^2) dA."""
+    return h * b**3 / 12.0
 
 
 def approx_rect_j(b, h):
@@ -377,6 +497,25 @@ def column_nominal_moment_y():
 def column_nominal_moment_z():
     steel_area = max(COL_TOP_BARS, COL_BOT_BARS) * COL_BAR_AREA
     return rc_nominal_moment_ksi(FC_COL_KSI, H_COL, B_COL, steel_area)
+
+
+# ASCE 7-22 2.3.6 load combination 6 for seismic design: 1.2D + Ev + Eh + 0.5L.
+# The floor load lumps dead and live together, so the design loop applies a
+# single equivalent factor to it and the full dead factor to self weight.
+SEISMIC_COMBINATION_DEAD_FACTOR = 1.2
+SEISMIC_COMBINATION_LIVE_FACTOR = 0.5
+
+
+def seismic_combination_floor_factor():
+    """Equivalent factor on the combined dead+live floor load for 1.2D + 0.5L."""
+    total = FLOOR_DEAD_LOAD_KSF + FLOOR_LIVE_LOAD_KSF
+    if total <= 0.0:
+        return SEISMIC_COMBINATION_DEAD_FACTOR
+    factored = (
+        SEISMIC_COMBINATION_DEAD_FACTOR * FLOOR_DEAD_LOAD_KSF
+        + SEISMIC_COMBINATION_LIVE_FACTOR * FLOOR_LIVE_LOAD_KSF
+    )
+    return factored / total
 
 
 def floor_load_ksi():

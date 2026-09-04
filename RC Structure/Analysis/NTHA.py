@@ -49,6 +49,7 @@ from Loads.Ground_Motion import (
     apply_uniform_excitation,
     summarize_record,
 )
+from Model.IMK_Hinges import hinge_registry
 from Model.diaphragms import floor_master_node
 from Model.nodes import node_tag
 
@@ -222,6 +223,143 @@ def _all_non_base_node_tags():
             for i in range(sp.NUM_BAY_X + 1):
                 tags.append(node_tag(k, i, j))
     return tags
+
+
+def _floor_master_nodes():
+    """Diaphragm master node for every elevated floor, in floor order."""
+    return [floor_master_node(k) for k in range(1, sp.NUM_FLOOR + 1)]
+
+
+def _query_floor_kinematics(masters):
+    """Displacement, velocity and acceleration at each floor, X and Y.
+
+    Returns three flat lists of length 2 * NUM_FLOOR ordered
+    [floor1_x, floor1_y, floor2_x, ...]. Velocity and acceleration are
+    recorded because the equation of motion and any energy balance need them;
+    displacement alone cannot express either. Accelerations are relative to
+    the ground, matching the UniformExcitation formulation.
+    """
+    displacement, velocity, acceleration = [], [], []
+    for master in masters:
+        for dof in (1, 2):
+            displacement.append(ops.nodeDisp(master, dof))
+            velocity.append(ops.nodeVel(master, dof))
+            acceleration.append(ops.nodeAccel(master, dof))
+    return displacement, velocity, acceleration
+
+
+def _base_story_column_tags():
+    """Element tags of the first-story columns.
+
+    create_column_elements numbers columns with the story index outermost
+    starting at tag 1, so the first (nx+1)(ny+1) tags are the base story.
+    """
+    per_story = (sp.NUM_BAY_X + 1) * (sp.NUM_BAY_Y + 1)
+    return list(range(1, per_story + 1))
+
+
+def _base_shear_xy(base_column_tags):
+    """Total base shear in global X and Y, kips.
+
+    Summed from the first-story column forces rather than from support
+    reactions. With IMK columns the member attaches to a hinge node that is
+    tied to the fixed base node through equalDOF, and nodeReaction does not
+    report force transferred across a multi-point constraint -- it returns
+    zero translational reaction, which silently reads as zero base shear.
+    Column forces are also already global, and cost less than a reactions()
+    assembly.
+    """
+    shear_x = 0.0
+    shear_y = 0.0
+    for tag in base_column_tags:
+        forces = ops.eleForce(tag)
+        if not forces:
+            continue
+        shear_x += forces[0]
+        shear_y += forces[1]
+    return -shear_x, -shear_y
+
+
+def _element_node_map(ele_tags):
+    """Structural end nodes for each physical element.
+
+    For an IMK member the element spans two zero-length hinge nodes, so
+    ops.eleNodes reports those rather than the joints the member frames into.
+    Assembling joint forces from them silently matches nothing and yields an
+    all-zero result, so the physical end nodes recorded at build time are
+    preferred wherever they exist.
+    """
+    registry = hinge_registry()
+    node_map = {}
+    for tag in ele_tags:
+        entry = registry.get(int(tag))
+        if entry and "node_i" in entry:
+            node_map[tag] = [entry["node_i"], entry["node_j"]]
+        else:
+            node_map[tag] = list(ops.eleNodes(tag))
+    return node_map
+
+
+def _assemble_joint_forces(ele_tags, node_map, node_positions):
+    """Internal force delivered to each joint, summed over framing members.
+
+    Element end forces are summed in the GLOBAL frame. Local forces cannot be
+    added across members that point in different directions, so the local
+    values recorded for element-level targets are not usable here.
+
+    Returns a flat list of 6 * len(node_positions) values, ordered by the
+    node_positions mapping.
+    """
+    totals = [0.0] * (6 * len(node_positions))
+    for tag in ele_tags:
+        forces = ops.eleForce(tag)
+        if not forces or len(forces) < 12:
+            continue
+        for end, node in enumerate(node_map.get(tag, ())):
+            slot = node_positions.get(node)
+            if slot is None:
+                continue
+            offset = 6 * slot
+            base = 6 * end
+            for dof in range(6):
+                totals[offset + dof] += forces[base + dof]
+    return totals
+
+
+def _query_hinge_rotations(hinge_ele_tags):
+    """Rotation of every IMK spring, keyed by hinge element tag.
+
+    The hinge force envelope saturates at the capping strength, so it cannot
+    distinguish a spring that just yielded from one about to fail. Rotation is
+    the only quantity that separates them, and it is what every damage measure
+    downstream is built from.
+    """
+    rotations = {}
+    for tag in hinge_ele_tags:
+        response = ops.eleResponse(tag, "deformation")
+        if response:
+            rotations[tag] = list(response)
+    return rotations
+
+
+def _update_rotation_envelope(envelope, current):
+    """Track peak positive, negative and absolute rotation per hinge."""
+    for tag, values in current.items():
+        entry = envelope.get(tag)
+        if entry is None:
+            envelope[tag] = {
+                "max": list(values),
+                "min": list(values),
+                "abs_max": [abs(value) for value in values],
+            }
+            continue
+        for index, value in enumerate(values):
+            if value > entry["max"][index]:
+                entry["max"][index] = value
+            if value < entry["min"][index]:
+                entry["min"][index] = value
+            if abs(value) > entry["abs_max"][index]:
+                entry["abs_max"][index] = abs(value)
 
 
 # ================================================================
@@ -482,6 +620,38 @@ def _run_ntha_impl(
     hinge_envelope   = {}
     node_envelope    = {}
 
+    # Spatial and kinematic response. Previously the only stored time series
+    # was roof displacement, so the per-step cost of querying the whole model
+    # was paid and then discarded, and nothing downstream could see how
+    # response was distributed over the height.
+    floor_masters  = _floor_master_nodes()
+    base_columns   = _base_story_column_tags()
+    floor_disp_history  = []
+    floor_vel_history   = []
+    floor_accel_history = []
+    story_drift_history = []
+    base_shear_x = []
+    base_shear_y = []
+
+    # Element end forces over time. The envelope query below already
+    # computes these every step; only the strided copies are kept, since at
+    # full resolution they would dominate dataset storage.
+    element_stride = max(1, int(getattr(sp, "NTHA_ELEMENT_HISTORY_STRIDE", 8)))
+    element_tag_order = list(phys_ele_tags)
+    element_force_history = []
+    element_history_steps = []
+
+    joint_node_order = list(non_base_nodes)
+    joint_node_positions = {tag: index for index, tag in enumerate(joint_node_order)}
+    element_node_map = _element_node_map(element_tag_order)
+    joint_force_history = []
+
+    hinge_rotation_envelope = {}
+    hinge_rotation_history  = []
+    hinge_history_steps     = []
+    hinge_stride = max(1, int(getattr(sp, "NTHA_HINGE_HISTORY_STRIDE", 8)))
+    hinge_tag_order = list(hinge_ele_tags)
+
     convergence_log = []
     failed          = False
     failed_step     = None
@@ -519,6 +689,16 @@ def _run_ntha_impl(
         roof_disp_x.append(ux_r)
         roof_disp_y.append(uy_r)
 
+        displacement, velocity, acceleration = _query_floor_kinematics(floor_masters)
+        floor_disp_history.append(displacement)
+        floor_vel_history.append(velocity)
+        floor_accel_history.append(acceleration)
+        story_drift_history.append(list(dx) + list(dy))
+
+        shear_x, shear_y = _base_shear_xy(base_columns)
+        base_shear_x.append(shear_x)
+        base_shear_y.append(shear_y)
+
         for k in range(sp.NUM_FLOOR):
             if dx[k] > peak_drift_x[k]:
                 peak_drift_x[k] = dx[k]
@@ -526,9 +706,34 @@ def _run_ntha_impl(
                 peak_drift_y[k] = dy[k]
 
         # Element force envelopes
-        _update_envelope(element_envelope, _query_element_forces(phys_ele_tags))
+        element_forces = _query_element_forces(phys_ele_tags)
+        _update_envelope(element_envelope, element_forces)
+
+        if step % element_stride == 0:
+            element_history_steps.append(step)
+            element_force_history.append(
+                [
+                    value
+                    for tag in element_tag_order
+                    for value in (element_forces.get(tag) or [0.0] * 12)[:12]
+                ]
+            )
+            joint_force_history.append(
+                _assemble_joint_forces(
+                    element_tag_order, element_node_map, joint_node_positions
+                )
+            )
         if hinge_ele_tags:
             _update_envelope(hinge_envelope, _query_element_forces(hinge_ele_tags))
+
+            # Peaks every step so none is missed; history decimated.
+            rotations = _query_hinge_rotations(hinge_tag_order)
+            _update_rotation_envelope(hinge_rotation_envelope, rotations)
+            if step % hinge_stride == 0:
+                hinge_history_steps.append(step)
+                hinge_rotation_history.append(
+                    [value for tag in hinge_tag_order for value in rotations.get(tag, (0.0, 0.0))]
+                )
 
         # Node displacement envelopes
         _update_node_envelope(node_envelope, _query_node_displacements(non_base_nodes))
@@ -578,7 +783,25 @@ def _run_ntha_impl(
         "peak_story_drift_y": peak_drift_y,
         "element_envelope":   element_envelope,
         "hinge_envelope":     hinge_envelope,   # IMK spring forces
+        "hinge_rotation_envelope": hinge_rotation_envelope,
+        "hinge_rotation_history":  hinge_rotation_history,
+        "hinge_rotation_steps":    hinge_history_steps,
+        "hinge_tag_order":         hinge_tag_order,
+        "element_force_history":   element_force_history,
+        "element_force_steps":     element_history_steps,
+        "element_tag_order":       element_tag_order,
+        "element_history_stride":  element_stride,
+        "joint_force_history":     joint_force_history,
+        "joint_node_order":        joint_node_order,
+        "hinge_history_stride":    hinge_stride,
         "node_envelope":      node_envelope,
+        "floor_disp_history":  floor_disp_history,
+        "floor_vel_history":   floor_vel_history,
+        "floor_accel_history": floor_accel_history,
+        "story_drift_history": story_drift_history,
+        "base_shear_x":        base_shear_x,
+        "base_shear_y":        base_shear_y,
+        "floor_master_nodes":  floor_masters,
         "record_summary_x":   record_summary_x,
         "record_summary_y":   record_summary_y,
         "damping_ratio":      damping_ratio,

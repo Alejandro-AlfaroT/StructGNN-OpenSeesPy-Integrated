@@ -19,7 +19,7 @@ def _column_count():
     return sp.NUM_FLOOR * (sp.NUM_BAY_X + 1) * (sp.NUM_BAY_Y + 1)
 
 
-def _apply_nodal_gravity_loads():
+def _apply_nodal_gravity_loads(load_factor=1.0):
     for k in range(1, sp.NUM_FLOOR + 1):
         for j in range(sp.NUM_BAY_Y + 1):
             for i in range(sp.NUM_BAY_X + 1):
@@ -27,14 +27,14 @@ def _apply_nodal_gravity_loads():
                     node_tag(k, i, j),
                     0.0,
                     0.0,
-                    -sp.node_gravity_load_kip(i, j),
+                    -load_factor * sp.node_gravity_load_kip(i, j),
                     0.0,
                     0.0,
                     0.0,
                 )
 
 
-def _apply_beam_uniform_gravity_loads():
+def _apply_beam_uniform_gravity_loads(load_factor=1.0):
     """
     Apply tributary-area-scaled uniform loads to all floor beams.
 
@@ -58,7 +58,7 @@ def _apply_beam_uniform_gravity_loads():
     # ── X beams (half-tributary in the Y-direction) ───────────────────────────
     for k in range(1, sp.NUM_FLOOR + 1):
         for j in range(sp.NUM_BAY_Y + 1):
-            wz = sp.beam_gravity_wz_kip_per_in("x", j) / 2.0
+            wz = load_factor * sp.beam_gravity_wz_kip_per_in("x", j) / 2.0
             for i in range(sp.NUM_BAY_X):
                 ops.eleLoad("-ele", ele_tag, "-type", "-beamUniform", 0.0, wz, 0.0)
                 ele_tag += 1
@@ -67,12 +67,12 @@ def _apply_beam_uniform_gravity_loads():
     for k in range(1, sp.NUM_FLOOR + 1):
         for j in range(sp.NUM_BAY_Y):
             for i in range(sp.NUM_BAY_X + 1):
-                wz = sp.beam_gravity_wz_kip_per_in("y", i) / 2.0
+                wz = load_factor * sp.beam_gravity_wz_kip_per_in("y", i) / 2.0
                 ops.eleLoad("-ele", ele_tag, "-type", "-beamUniform", 0.0, wz, 0.0)
                 ele_tag += 1
 
 
-def _apply_element_self_weight():
+def _apply_element_self_weight(load_factor=1.0):
     """
     Apply distributed self-weight to all physical column and beam elements.
 
@@ -91,8 +91,8 @@ def _apply_element_self_weight():
     n_beam_x = sp.NUM_FLOOR * sp.NUM_BAY_X       * (sp.NUM_BAY_Y + 1)
     n_beam_y = sp.NUM_FLOOR * (sp.NUM_BAY_X + 1) * sp.NUM_BAY_Y
 
-    w_col  = sp.col_self_weight_kip_per_in()   # kip/in, magnitude
-    w_beam = sp.beam_self_weight_kip_per_in()  # kip/in, magnitude
+    w_col  = load_factor * sp.col_self_weight_kip_per_in()   # kip/in, magnitude
+    w_beam = load_factor * sp.beam_self_weight_kip_per_in()  # kip/in, magnitude
 
     # Columns — self-weight along local -x (axial, downward for vertical column)
     for tag in range(1, n_col + 1):
@@ -103,15 +103,29 @@ def _apply_element_self_weight():
         ops.eleLoad("-ele", tag, "-type", "-beamUniform", 0.0, -w_beam, 0.0)
 
 
-def apply_gravity_loads():
+def apply_gravity_loads(floor_factor=1.0, self_weight_factor=None):
+    """Apply gravity loads, optionally factored for a design load combination.
+
+    floor_factor
+        Multiplier on the combined dead+live floor load. Pass
+        sp.seismic_combination_floor_factor() for the ASCE 7 2.3.6 seismic
+        combination; leave at 1.0 for the unfactored service-load state used
+        by the response-history analyses.
+    self_weight_factor
+        Multiplier on element self weight, which is pure dead load. Defaults
+        to floor_factor when not given.
+    """
+    if self_weight_factor is None:
+        self_weight_factor = floor_factor
+
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
 
     if sp.GRAVITY_LOAD_MODEL == "nodal":
-        _apply_nodal_gravity_loads()
+        _apply_nodal_gravity_loads(floor_factor)
     elif sp.GRAVITY_LOAD_MODEL == "beam_uniform":
-        _apply_beam_uniform_gravity_loads()
+        _apply_beam_uniform_gravity_loads(floor_factor)
     else:
         raise ValueError(f"Unknown GRAVITY_LOAD_MODEL: {sp.GRAVITY_LOAD_MODEL}")
 
-    _apply_element_self_weight()
+    _apply_element_self_weight(self_weight_factor)

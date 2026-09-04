@@ -11,6 +11,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
+import numpy as np
 import openseespy.opensees as ops
 
 import Structure_Parameters as sp
@@ -27,6 +28,9 @@ from Data_Generation.Graph_Exporter import (
     collect_graph_edge_rows,
     collect_node_rows,
 )
+from Model.IMK_Hinges import hinge_registry
+from Run_Naming import analysis_run_name, safe_name, variant_value
+from Design.Design_Driver import DESIGN_ARTIFACT_NAME, load_or_create_design
 from Loads.Gravity_Loads import apply_gravity_loads
 from Loads.Ground_Motion import (
     ground_motion_catalog_summary,
@@ -87,44 +91,10 @@ def _write_csv(path, fieldnames, rows):
     return path
 
 
-def _safe_name(value):
-    return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in value)
-
-
-def _variant_value(value):
-    return (
-        f"{float(value):g}"
-        .replace("-", "m")
-        .replace("+", "")
-        .replace(".", "p")
-    )
-
-
-def analysis_run_name(
-    base_name,
-    *,
-    x_only=False,
-    scale_factor=None,
-    damping_ratio=0.05,
-    rayleigh_mode_i=0,
-    rayleigh_mode_j=2,
-    dt_factor=1.0,
-):
-    name = _safe_name(base_name)
-    suffixes = []
-    if x_only and not name.endswith("__x_only"):
-        suffixes.append("x_only")
-    if scale_factor is not None and abs(float(scale_factor) - 1.0) > 1.0e-12:
-        suffixes.append(f"sf_{_variant_value(scale_factor)}")
-    if abs(float(damping_ratio) - 0.05) > 1.0e-12:
-        suffixes.append(f"zeta_{_variant_value(damping_ratio)}")
-    if int(rayleigh_mode_i) != 0 or int(rayleigh_mode_j) != 2:
-        suffixes.append(f"rayleigh_{int(rayleigh_mode_i)}_{int(rayleigh_mode_j)}")
-    if abs(float(dt_factor) - 1.0) > 1.0e-12:
-        suffixes.append(f"dtf_{_variant_value(dt_factor)}")
-    if suffixes:
-        name += "__" + "__".join(suffixes)
-    return name
+# Run-directory naming lives in Run_Naming so the dataset scheduler, which
+# must not import OpenSees, can predict the same names this module creates.
+_safe_name = safe_name
+_variant_value = variant_value
 
 
 def validate_ntha_output_compatibility(output_dir, overwrite_existing=False):
@@ -190,6 +160,8 @@ def _story_drift_rows(results):
 
 
 def _time_history_rows(results):
+    shear_x = results.get("base_shear_x") or []
+    shear_y = results.get("base_shear_y") or []
     rows = []
     for i, t in enumerate(results["time_history"]):
         ux = results["roof_disp_x"][i]
@@ -201,9 +173,112 @@ def _time_history_rows(results):
                 "roof_disp_x_in": ux,
                 "roof_disp_y_in": uy,
                 "roof_disp_resultant_in": (ux * ux + uy * uy) ** 0.5,
+                "base_shear_x_kip": shear_x[i] if i < len(shear_x) else 0.0,
+                "base_shear_y_kip": shear_y[i] if i < len(shear_y) else 0.0,
             }
         )
     return rows
+
+
+def _hinge_backbone_rows(results):
+    """One row per IMK spring: its calibrated backbone and rotation envelope.
+
+    Joins the per-build hinge registry, which records what each spring was
+    actually given, against the rotation peaks it reached. This is the table
+    every damage measure is computed from: without theta_p a rotation is just
+    a number, and without the rotation the backbone says nothing about damage.
+    """
+    registry = hinge_registry()
+    envelope = results.get("hinge_rotation_envelope") or {}
+    base = sp.IMK_HINGE_ELEMENT_TAG_BASE
+
+    rows = []
+    for hinge_tag, peaks in sorted(envelope.items(), key=lambda item: int(item[0])):
+        offset = int(hinge_tag) - base
+        ele_tag, end_id = divmod(offset, 10)
+        backbone = registry.get(ele_tag, {})
+        theta_p = backbone.get("theta_p") or 0.0
+        theta_y = backbone.get("theta_y_target") or 0.0
+        rotation = max(peaks["abs_max"])
+        plastic = max(0.0, rotation - theta_y)
+        rows.append(
+            {
+                "hinge_ele_tag": int(hinge_tag),
+                "ele_tag": ele_tag,
+                "end_id": end_id,
+                "member_type": backbone.get("member_type", ""),
+                "axial_kip": backbone.get("axial_kip", 0.0),
+                "axial_ratio": backbone.get("axial_ratio", 0.0),
+                "yield_moment_kip_in": backbone.get("yield_moment_y_kip_in", 0.0),
+                "theta_y": theta_y,
+                "theta_p": theta_p,
+                "theta_pc": backbone.get("theta_pc", 0.0),
+                "theta_u": backbone.get("theta_u", 0.0),
+                "rot_y_max": peaks["max"][0],
+                "rot_y_min": peaks["min"][0],
+                "rot_z_max": peaks["max"][1] if len(peaks["max"]) > 1 else 0.0,
+                "rot_z_min": peaks["min"][1] if len(peaks["min"]) > 1 else 0.0,
+                "rot_abs_max": rotation,
+                "plastic_rotation": plastic,
+                # Damage ratio: plastic rotation as a fraction of the capping
+                # plastic rotation. 0 is elastic, 1 is the onset of strength
+                # loss. Unlike the moment ratio this does not saturate.
+                "damage_ratio": (plastic / theta_p) if theta_p > 0 else 0.0,
+                "yielded": 1 if rotation > theta_y else 0,
+                "past_capping": 1 if theta_p > 0 and plastic >= theta_p else 0,
+            }
+        )
+    return rows
+
+
+def _write_response_arrays(output_dir, results):
+    """Store the large response arrays compressed rather than as CSV.
+
+    Per-floor kinematics and hinge rotation histories are far too large for
+    the CSV interchange the smaller tables use: at full resolution they run
+    to tens of megabytes per run, which would dominate dataset storage.
+    """
+    hinge_history = results.get("hinge_rotation_history") or []
+    payload = {
+        "floor_disp": np.asarray(results.get("floor_disp_history") or [], dtype=np.float32),
+        "floor_vel": np.asarray(results.get("floor_vel_history") or [], dtype=np.float32),
+        "floor_accel": np.asarray(results.get("floor_accel_history") or [], dtype=np.float32),
+        "story_drift": np.asarray(results.get("story_drift_history") or [], dtype=np.float32),
+        "base_shear": np.asarray(
+            [results.get("base_shear_x") or [], results.get("base_shear_y") or []],
+            dtype=np.float32,
+        ).T,
+        "hinge_rotation": np.asarray(hinge_history, dtype=np.float32),
+        "hinge_rotation_steps": np.asarray(
+            results.get("hinge_rotation_steps") or [], dtype=np.int32
+        ),
+        "hinge_tag_order": np.asarray(results.get("hinge_tag_order") or [], dtype=np.int64),
+        # Element end forces in the member local frame, for element-level
+        # targets. Joint forces are assembled separately in the global frame,
+        # because local forces cannot be summed across differently oriented
+        # members.
+        "element_force": np.asarray(
+            results.get("element_force_history") or [], dtype=np.float32
+        ),
+        "element_force_steps": np.asarray(
+            results.get("element_force_steps") or [], dtype=np.int32
+        ),
+        "element_tag_order": np.asarray(
+            results.get("element_tag_order") or [], dtype=np.int64
+        ),
+        "joint_force": np.asarray(
+            results.get("joint_force_history") or [], dtype=np.float32
+        ),
+        "joint_node_order": np.asarray(
+            results.get("joint_node_order") or [], dtype=np.int64
+        ),
+        "floor_master_nodes": np.asarray(
+            results.get("floor_master_nodes") or [], dtype=np.int64
+        ),
+    }
+    path = Path(output_dir) / "response_arrays.npz"
+    np.savez_compressed(path, **payload)
+    return path
 
 
 def _node_envelope_rows(results):
@@ -269,6 +344,7 @@ def save_ntha_outputs(output_dir, results, gravity_results, modal_results):
     story_rows = _story_drift_rows(results)
     time_rows = _time_history_rows(results)
     node_env_rows = _node_envelope_rows(results)
+    hinge_rows = _hinge_backbone_rows(results)
 
     _write_json(output_dir / "status.json", results["status"])
     _write_json(output_dir / "record_summary_x.json", results["record_summary_x"])
@@ -278,6 +354,9 @@ def save_ntha_outputs(output_dir, results, gravity_results, modal_results):
     _write_json(output_dir / "modal_results.json", modal_results)
     _write_json(output_dir / "global_parameters.json", collect_global_parameters())
     _write_json(output_dir / "hinge_envelope.json", results["hinge_envelope"])
+    _write_response_arrays(output_dir, results)
+    if hinge_rows:
+        _write_csv(output_dir / "hinge_backbone.csv", list(hinge_rows[0].keys()), hinge_rows)
 
     _write_csv(output_dir / "nodes.csv", list(node_rows[0].keys()), node_rows)
     _write_csv(output_dir / "elements.csv", list(element_rows[0].keys()), element_rows)
@@ -294,6 +373,7 @@ def save_ntha_outputs(output_dir, results, gravity_results, modal_results):
 
     return {
         "num_time_steps": len(time_rows),
+        "num_hinges": len(hinge_rows),
         "num_nodes": len(node_rows),
         "num_elements": len(element_rows),
         "num_edges": len(edge_rows),
@@ -451,6 +531,25 @@ def parse_args():
     )
     parser.add_argument("--catalog-summary", action="store_true")
     parser.add_argument(
+        "--design-file",
+        default=None,
+        help=(
+            "ACI design artifact for this structure. Defaults to "
+            f"<output-dir>/../{DESIGN_ARTIFACT_NAME}, so every record and "
+            "intensity run of one case shares a single design. Created on "
+            "first use and reused afterwards."
+        ),
+    )
+    parser.add_argument(
+        "--skip-design",
+        action="store_true",
+        help=(
+            "Analyze with the Structure_Parameters sections instead of running "
+            "the design loop. Reproduces pre-design behaviour; not for dataset "
+            "generation, where it would give every structure identical members."
+        ),
+    )
+    parser.add_argument(
         "--overwrite-existing",
         action="store_true",
         help="Allow replacing an existing run even when its model configuration differs.",
@@ -476,6 +575,38 @@ def main():
     default_output_dir = Path(__file__).resolve().parent / "outputs" / "ntha"
     if geometry_name and base_output_dir == default_output_dir:
         base_output_dir = base_output_dir / geometry_name
+    design_record = None
+    if args.skip_design:
+        print()
+        print(
+            '[design] SKIPPED -- analyzing with the Structure_Parameters '
+            'defaults. Every structure will share identical members.'
+        )
+    else:
+        design_path = (
+            Path(args.design_file)
+            if args.design_file
+            else base_output_dir.parent / DESIGN_ARTIFACT_NAME
+        )
+        design_record, created = load_or_create_design(design_path, verbose=True)
+        sections = design_record['sections']
+        dcr = design_record['dcr']
+        print()
+        print(f"[design] {'created' if created else 'reused'} {design_path}")
+        print(
+            f"  columns {sections['b_col_in']:g}x{sections['h_col_in']:g} in, "
+            f"fc {sections['fc_col_ksi']:g} ksi"
+        )
+        print(
+            f"  beams   {sections['b_beam_in']:g}x{sections['h_beam_in']:g} in, "
+            f"fc {sections['fc_beam_ksi']:g} ksi"
+        )
+        print(
+            f"  DCR beam {dcr['beam']:.3f} "
+            f"(band {dcr['band_lo']:.2f}-{dcr['band_hi']:.2f}), "
+            f"column {dcr['column']:.3f}; governed by {dcr['governed_by']}"
+        )
+
     run_summaries = []
 
     for key, record_x, record_y in selected:
@@ -501,6 +632,7 @@ def main():
         )
         summary = run_one(record_x, record_y, args, output_dir)
         summary["pair_key"] = key
+        summary["design"] = design_record
         run_summaries.append(summary)
 
     _write_json(base_output_dir / "ntha_batch_summary.json", run_summaries)
