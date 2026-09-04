@@ -157,7 +157,7 @@ def eligible_record_ids(set_name, max_npts):
     return sorted(eligible)
 
 
-def build_runs(case_records, intensity_levels):
+def build_runs(case_records, intensity_levels, scale_factors=None):
     """Expand a case's record and intensity assignments into concrete runs.
 
     Run names are produced by the same helper the analysis uses, so the
@@ -165,8 +165,14 @@ def build_runs(case_records, intensity_levels):
     OpenSees or guessing at the naming convention.
     """
     runs = []
-    for result_id in case_records:
-        for scale in intensity_levels:
+    per_record = len(intensity_levels)
+    for record_index, result_id in enumerate(case_records):
+        for slot in range(per_record):
+            scale = (
+                scale_factors[record_index * per_record + slot]
+                if scale_factors is not None
+                else intensity_levels[slot]
+            )
             runs.append(
                 {
                     "run_index": len(runs) + 1,
@@ -180,6 +186,71 @@ def build_runs(case_records, intensity_levels):
     return runs
 
 
+def eligible_record_pairs(set_name, max_npts):
+    """Map each eligible PEER result_id to its (X, Y) record ids.
+
+    eligible_record_ids answers which pairs may be used; the calibration also
+    needs to know which physical records those are, so it can read their
+    spectra. Component order follows the manifest's horizontal_component note
+    so X and Y stay consistent with what the analysis actually applies.
+    """
+    with RECORD_MANIFEST.open(newline="", encoding="utf-8-sig") as file:
+        manifest = list(csv.DictReader(file))
+    allowed = set(eligible_record_ids(set_name, max_npts))
+
+    grouped = {}
+    for row in manifest:
+        match = PEER_RESULT_RE.search(row.get("notes") or "")
+        if not match:
+            continue
+        result_id = int(match.group(1))
+        if result_id not in allowed:
+            continue
+        component = 2 if "horizontal_component=2" in (row.get("notes") or "") else 1
+        grouped.setdefault(result_id, {})[component] = row["record_id"]
+
+    pairs = {}
+    for result_id, components in grouped.items():
+        first = components.get(1)
+        second = components.get(2, first)
+        if first:
+            pairs[result_id] = (first, second)
+    return pairs
+
+
+def _calibrated_scale_factors(calibration, case_geometry, record_pairs, case_records, targets):
+    """Scale factors predicted to land each run on its target drift."""
+    from Calibrate_Intensity import (
+        estimated_period,
+        geometric_mean_sa,
+        scale_factor_for,
+    )
+
+    coefficients = calibration["coefficients"]
+    spectra = calibration["record_spectra_g"]
+    period = estimated_period(
+        case_geometry["num_floor"],
+        case_geometry["story_height_in"],
+        calibration["period_ratio"],
+    )
+
+    factors = []
+    index = 0
+    for result_id in case_records:
+        pair = record_pairs.get(int(result_id))
+        for _ in range(len(targets) // max(1, len(case_records))):
+            target = targets[index % len(targets)]
+            index += 1
+            if not pair:
+                factors.append(1.0)
+                continue
+            unscaled = geometric_mean_sa(spectra, pair[0], pair[1], period)
+            factors.append(
+                round(scale_factor_for(target, period, unscaled, coefficients), 3)
+            )
+    return factors, period
+
+
 def build_plan(
     num_cases,
     record_ids,
@@ -189,6 +260,8 @@ def build_plan(
     seismic_sites=SEISMIC_SITES,
     intensity_levels=DEFAULT_INTENSITY_LEVELS,
     records_per_case=DEFAULT_RECORDS_PER_CASE,
+    calibration=None,
+    record_pairs=None,
 ):
     geometries = list(product(*RANGES.values()))
     if geometry_offset < 0 or case_id_offset < 0:
@@ -222,6 +295,18 @@ def build_plan(
     sites = list(seismic_sites)
     random.Random(seed + 2).shuffle(sites)
 
+    # With a calibration, intensity is chosen per run to hit a target drift
+    # rather than taken from a fixed ladder. Targets are drawn once for the
+    # whole plan so the realized drift distribution matches the intent across
+    # the dataset, not merely within each case.
+    runs_per_case = records_per_case * len(intensity_levels)
+    plan_targets = None
+    if calibration is not None:
+        from Calibrate_Intensity import target_drift_sequence
+
+        plan_targets = target_drift_sequence(num_cases * runs_per_case, seed=seed)
+        record_pairs = record_pairs or {}
+
     cases = []
     selected_geometries = geometries[geometry_offset:geometry_offset + num_cases]
     for local_index, values in enumerate(selected_geometries, 1):
@@ -238,6 +323,18 @@ def build_plan(
             records[(start + offset) % len(records)]
             for offset in range(records_per_case)
         ]
+
+        scale_factors = None
+        estimated_period_sec = None
+        if plan_targets is not None:
+            start = (local_index - 1) * runs_per_case
+            scale_factors, estimated_period_sec = _calibrated_scale_factors(
+                calibration,
+                {"num_floor": floors, "story_height_in": story_ft * 12},
+                record_pairs,
+                case_records,
+                plan_targets[start:start + runs_per_case],
+            )
 
         cases.append(
             {
@@ -257,7 +354,8 @@ def build_plan(
                 "bay_width_ft": width_ft,
                 "bay_x_in": width_ft * 12,
                 "bay_y_in": width_ft * 12,
-                "runs": build_runs(case_records, intensity_levels),
+                "runs": build_runs(case_records, intensity_levels, scale_factors),
+                "estimated_period_sec": estimated_period_sec,
             }
         )
     return cases
@@ -299,6 +397,8 @@ def load_plan(
     seismic_sites=SEISMIC_SITES,
     intensity_levels=DEFAULT_INTENSITY_LEVELS,
     records_per_case=DEFAULT_RECORDS_PER_CASE,
+    calibration=None,
+    record_pairs=None,
 ):
     path = root / "parameter_plan.json"
     # Every field is compared on every version. Earlier revisions left
@@ -317,6 +417,13 @@ def load_plan(
         "intensity_levels": [float(value) for value in intensity_levels],
         "records_per_case": records_per_case,
         "eligible_result_ids": list(records),
+        # A plan built against a calibration describes a different experiment
+        # from one built on the uniform ladder, so the fingerprint is part of
+        # the conflict check.
+        "intensity_source": "calibration" if calibration else "uniform_ladder",
+        "calibration_fingerprint": (
+            calibration["coefficients"] if calibration else None
+        ),
     }
     if path.exists():
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -340,6 +447,8 @@ def load_plan(
         seismic_sites=seismic_sites,
         intensity_levels=intensity_levels,
         records_per_case=records_per_case,
+        calibration=calibration,
+        record_pairs=record_pairs,
     )
     payload = dict(expected)
     payload.update(
@@ -639,6 +748,15 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--intensity-calibration",
+        default=None,
+        help=(
+            "Calibration artifact from Calibrate_Intensity.py. When given, "
+            "each run scale factor is chosen to hit a target drift instead "
+            "of using the uniform ladder."
+        ),
+    )
+    parser.add_argument(
         "--records-per-case",
         type=int,
         default=DEFAULT_RECORDS_PER_CASE,
@@ -689,6 +807,22 @@ def main():
             raise ValueError(
                 f"Unknown seismic site {site!r}; expected one of {list(SEISMIC_SITES)}."
             )
+    calibration = None
+    record_pairs = None
+    if args.intensity_calibration:
+        from Calibrate_Intensity import load_calibration
+
+        calibration = load_calibration(args.intensity_calibration)
+        record_pairs = eligible_record_pairs(args.set_name, args.max_npts)
+        fit = calibration.get("fit", {})
+        print(
+            f"Intensity calibration: {args.intensity_calibration} "
+            f"(fitted={fit.get('fitted')}, "
+            f"pilot runs={calibration.get('pilot_observation_count')})"
+        )
+        if not fit.get("fitted"):
+            print(f"  WARNING: {fit.get('reason')}")
+
     cases = load_plan(
         root,
         args.num_cases,
@@ -701,6 +835,8 @@ def main():
         seismic_sites=seismic_sites,
         intensity_levels=intensity_levels,
         records_per_case=args.records_per_case,
+        calibration=calibration,
+        record_pairs=record_pairs,
     )
     total_runs = sum(len(case_runs(case)) for case in cases)
     print(
