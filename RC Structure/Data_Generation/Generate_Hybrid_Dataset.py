@@ -252,21 +252,31 @@ def run_ntha_batch(args, checkpoint=None):
             max_npts,
         )
 
+    # One record pair run at several intensities becomes several runs. The
+    # scale factor is part of the run directory name, so the intensities of a
+    # record coexist under one case without colliding.
+    scale_levels = list(args.scale_factor) if args.scale_factor else [None]
+    expanded = [
+        (key, result_id, npts, scale)
+        for key, result_id, npts in selected
+        for scale in scale_levels
+    ]
+
     summaries = []
     stop_path = Path(args._stop_path)
-    args._selected_count = len(selected)
+    args._selected_count = len(expanded)
     args._stop_reason = None
     if checkpoint:
-        checkpoint(summaries, selected, None, "running")
+        checkpoint(summaries, expanded, None, "running")
 
-    for key, result_id, npts in selected:
+    for key, result_id, npts, scale_factor in expanded:
         if _stop_requested(stop_path):
             args._stop_reason = "stop_file"
             break
         run_name = analysis_run_name(
             _safe_name(key.replace("peer_result_id:", "peer_")),
             x_only=args.x_only,
-            scale_factor=args.scale_factor,
+            scale_factor=scale_factor,
             damping_ratio=args.damping_ratio,
             rayleigh_mode_i=args.rayleigh_mode_i,
             rayleigh_mode_j=args.rayleigh_mode_j,
@@ -281,6 +291,7 @@ def run_ntha_batch(args, checkpoint=None):
                 {
                     "key": key,
                     "result_id": result_id,
+                    "scale_factor": scale_factor,
                     "run_name": run_name,
                     "npts": npts,
                     "skipped": True,
@@ -319,8 +330,8 @@ def run_ntha_batch(args, checkpoint=None):
             command.extend(["--split", args.split])
         if args.x_only:
             command.append("--x-only")
-        if args.scale_factor is not None:
-            command.extend(["--scale-factor", str(args.scale_factor)])
+        if scale_factor is not None:
+            command.extend(["--scale-factor", str(scale_factor)])
         if args.catalog_summary:
             command.append("--catalog-summary")
         command.extend(geometry_cli_args_for_command(args))
@@ -338,6 +349,7 @@ def run_ntha_batch(args, checkpoint=None):
             {
                 "key": key,
                 "result_id": result_id,
+                "scale_factor": scale_factor,
                 "run_name": run_name,
                 "npts": npts,
                 "output_dir": str(out_dir),
@@ -388,7 +400,16 @@ def parse_args():
         ),
     )
     parser.add_argument("--x-only", action="store_true")
-    parser.add_argument("--scale-factor", type=float, default=None)
+    parser.add_argument(
+        "--scale-factor",
+        type=float,
+        action="append",
+        default=None,
+        help=(
+            "Ground-motion scale factor. Repeat to run one record pair at "
+            "several intensities; each becomes its own run directory."
+        ),
+    )
     parser.add_argument("--damping-ratio", type=float, default=0.05)
     parser.add_argument("--rayleigh-mode-i", type=int, default=0)
     parser.add_argument("--rayleigh-mode-j", type=int, default=2)
@@ -488,7 +509,7 @@ def main():
             else:
                 failed_ids.append(result_id)
 
-        selected_ids = [result_id for _key, result_id, _npts in selected]
+        selected_ids = [entry[1] for entry in selected]
         resumable_ids = set(completed_ids)
         remaining_ids = [result_id for result_id in selected_ids if result_id not in resumable_ids]
         state = {

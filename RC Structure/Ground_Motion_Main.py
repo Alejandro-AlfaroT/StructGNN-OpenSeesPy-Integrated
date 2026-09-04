@@ -27,6 +27,8 @@ from Data_Generation.Graph_Exporter import (
     collect_graph_edge_rows,
     collect_node_rows,
 )
+from Run_Naming import analysis_run_name, safe_name, variant_value
+from Design.Design_Driver import DESIGN_ARTIFACT_NAME, load_or_create_design
 from Loads.Gravity_Loads import apply_gravity_loads
 from Loads.Ground_Motion import (
     ground_motion_catalog_summary,
@@ -87,44 +89,10 @@ def _write_csv(path, fieldnames, rows):
     return path
 
 
-def _safe_name(value):
-    return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in value)
-
-
-def _variant_value(value):
-    return (
-        f"{float(value):g}"
-        .replace("-", "m")
-        .replace("+", "")
-        .replace(".", "p")
-    )
-
-
-def analysis_run_name(
-    base_name,
-    *,
-    x_only=False,
-    scale_factor=None,
-    damping_ratio=0.05,
-    rayleigh_mode_i=0,
-    rayleigh_mode_j=2,
-    dt_factor=1.0,
-):
-    name = _safe_name(base_name)
-    suffixes = []
-    if x_only and not name.endswith("__x_only"):
-        suffixes.append("x_only")
-    if scale_factor is not None and abs(float(scale_factor) - 1.0) > 1.0e-12:
-        suffixes.append(f"sf_{_variant_value(scale_factor)}")
-    if abs(float(damping_ratio) - 0.05) > 1.0e-12:
-        suffixes.append(f"zeta_{_variant_value(damping_ratio)}")
-    if int(rayleigh_mode_i) != 0 or int(rayleigh_mode_j) != 2:
-        suffixes.append(f"rayleigh_{int(rayleigh_mode_i)}_{int(rayleigh_mode_j)}")
-    if abs(float(dt_factor) - 1.0) > 1.0e-12:
-        suffixes.append(f"dtf_{_variant_value(dt_factor)}")
-    if suffixes:
-        name += "__" + "__".join(suffixes)
-    return name
+# Run-directory naming lives in Run_Naming so the dataset scheduler, which
+# must not import OpenSees, can predict the same names this module creates.
+_safe_name = safe_name
+_variant_value = variant_value
 
 
 def validate_ntha_output_compatibility(output_dir, overwrite_existing=False):
@@ -451,6 +419,25 @@ def parse_args():
     )
     parser.add_argument("--catalog-summary", action="store_true")
     parser.add_argument(
+        "--design-file",
+        default=None,
+        help=(
+            "ACI design artifact for this structure. Defaults to "
+            f"<output-dir>/../{DESIGN_ARTIFACT_NAME}, so every record and "
+            "intensity run of one case shares a single design. Created on "
+            "first use and reused afterwards."
+        ),
+    )
+    parser.add_argument(
+        "--skip-design",
+        action="store_true",
+        help=(
+            "Analyze with the Structure_Parameters sections instead of running "
+            "the design loop. Reproduces pre-design behaviour; not for dataset "
+            "generation, where it would give every structure identical members."
+        ),
+    )
+    parser.add_argument(
         "--overwrite-existing",
         action="store_true",
         help="Allow replacing an existing run even when its model configuration differs.",
@@ -476,6 +463,38 @@ def main():
     default_output_dir = Path(__file__).resolve().parent / "outputs" / "ntha"
     if geometry_name and base_output_dir == default_output_dir:
         base_output_dir = base_output_dir / geometry_name
+    design_record = None
+    if args.skip_design:
+        print()
+        print(
+            '[design] SKIPPED -- analyzing with the Structure_Parameters '
+            'defaults. Every structure will share identical members.'
+        )
+    else:
+        design_path = (
+            Path(args.design_file)
+            if args.design_file
+            else base_output_dir.parent / DESIGN_ARTIFACT_NAME
+        )
+        design_record, created = load_or_create_design(design_path, verbose=True)
+        sections = design_record['sections']
+        dcr = design_record['dcr']
+        print()
+        print(f"[design] {'created' if created else 'reused'} {design_path}")
+        print(
+            f"  columns {sections['b_col_in']:g}x{sections['h_col_in']:g} in, "
+            f"fc {sections['fc_col_ksi']:g} ksi"
+        )
+        print(
+            f"  beams   {sections['b_beam_in']:g}x{sections['h_beam_in']:g} in, "
+            f"fc {sections['fc_beam_ksi']:g} ksi"
+        )
+        print(
+            f"  DCR beam {dcr['beam']:.3f} "
+            f"(band {dcr['band_lo']:.2f}-{dcr['band_hi']:.2f}), "
+            f"column {dcr['column']:.3f}; governed by {dcr['governed_by']}"
+        )
+
     run_summaries = []
 
     for key, record_x, record_y in selected:
@@ -501,6 +520,7 @@ def main():
         )
         summary = run_one(record_x, record_y, args, output_dir)
         summary["pair_key"] = key
+        summary["design"] = design_record
         run_summaries.append(summary)
 
     _write_json(base_output_dir / "ntha_batch_summary.json", run_summaries)

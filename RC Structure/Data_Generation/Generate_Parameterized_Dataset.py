@@ -25,15 +25,45 @@ RC_DIR = Path(
 ).resolve()
 sys.path.insert(0, str(RC_DIR))
 
+from Run_Naming import analysis_run_name  # noqa: E402
+
 
 SEED = 20260731
+
+# Two- and three-story frames are excluded. They need roughly four times the
+# spectral demand of an eight-story frame to reach the same drift, which made
+# a single intensity rule unreliable across the set, and they are the shortest
+# periods where the equal-displacement assumption behind that rule is weakest.
+# The upper bound moves to nine stories to keep the geometry pool large enough
+# and because taller frames are the more inelastic ones.
 RANGES = {
     "num_bay_x": tuple(range(2, 7)),
     "num_bay_y": tuple(range(2, 7)),
-    "num_floor": tuple(range(2, 9)),
+    "num_floor": tuple(range(4, 10)),
     "story_height_ft": tuple(range(10, 15)),
     "bay_width_ft": tuple(range(10, 16)),
 }
+
+# Design hazard, assigned per case. Geometry alone barely moves design demand,
+# so without this axis the design loop returns near-identical members for
+# different buildings. Labels must match Structure_Parameters.SEISMIC_SITE_OPTIONS.
+SEISMIC_SITES = ("sdc_c", "sdc_d_low", "sdc_d_high", "sdc_e", "sdc_e_near")
+
+# Ground-motion scale factors applied to each record pair. Running one
+# structure at several intensities is what separates structural response from
+# record identity; with one intensity per structure the two are confounded and
+# the surrogate cannot learn an intensity-to-response mapping.
+#
+# These are placeholders. The calibration step replaces them with per-case
+# factors targeting a drift distribution; until then a uniform ladder keeps
+# the schema and the run naming exercised.
+DEFAULT_INTENSITY_LEVELS = (1.0, 2.0, 3.0)
+DEFAULT_RECORDS_PER_CASE = 2
+
+# Bumped when plan semantics change. Version 3 adds the hazard axis, the
+# intensity ladder, and multiple records per case, so a version 1 or 2 plan
+# describes a different experiment and must not be silently reused.
+PLAN_VERSION = 3
 STOP_NAME = "STOP_GENERATION.json"
 RECORD_MANIFEST = RC_DIR / "Ground_Motions" / "metadata" / "record_manifest.csv"
 RECORD_SETS = RC_DIR / "Ground_Motions" / "metadata" / "record_sets.csv"
@@ -127,12 +157,38 @@ def eligible_record_ids(set_name, max_npts):
     return sorted(eligible)
 
 
+def build_runs(case_records, intensity_levels):
+    """Expand a case's record and intensity assignments into concrete runs.
+
+    Run names are produced by the same helper the analysis uses, so the
+    scheduler can tell a finished run from a pending one without importing
+    OpenSees or guessing at the naming convention.
+    """
+    runs = []
+    for result_id in case_records:
+        for scale in intensity_levels:
+            runs.append(
+                {
+                    "run_index": len(runs) + 1,
+                    "result_id": int(result_id),
+                    "scale_factor": float(scale),
+                    "run_name": analysis_run_name(
+                        f"peer_{int(result_id)}", scale_factor=float(scale)
+                    ),
+                }
+            )
+    return runs
+
+
 def build_plan(
     num_cases,
     record_ids,
     seed=SEED,
     geometry_offset=0,
     case_id_offset=0,
+    seismic_sites=SEISMIC_SITES,
+    intensity_levels=DEFAULT_INTENSITY_LEVELS,
+    records_per_case=DEFAULT_RECORDS_PER_CASE,
 ):
     geometries = list(product(*RANGES.values()))
     if geometry_offset < 0 or case_id_offset < 0:
@@ -145,24 +201,54 @@ def build_plan(
         )
     if not record_ids:
         raise ValueError("No eligible seismic record pairs were found.")
-    random.Random(seed).shuffle(geometries)
+    if not seismic_sites:
+        raise ValueError("At least one seismic site is required.")
+    if not intensity_levels:
+        raise ValueError("At least one intensity level is required.")
     records = sorted(set(map(int, record_ids)))
+    if records_per_case < 1:
+        raise ValueError(f"records-per-case must be positive; received {records_per_case}.")
+    if records_per_case > len(records):
+        # A catalog smaller than the request is a degenerate catalog, not a
+        # user error. Clamp rather than halt, but say so: silently assigning
+        # fewer records than asked for would be invisible in the plan.
+        print(
+            f"WARNING: records-per-case {records_per_case} exceeds the "
+            f"{len(records)} eligible record pair(s); clamping to {len(records)}."
+        )
+        records_per_case = len(records)
+    random.Random(seed).shuffle(geometries)
     random.Random(seed + 1).shuffle(records)
+    sites = list(seismic_sites)
+    random.Random(seed + 2).shuffle(sites)
+
     cases = []
     selected_geometries = geometries[geometry_offset:geometry_offset + num_cases]
     for local_index, values in enumerate(selected_geometries, 1):
         bx, by, floors, story_ft, width_ft = values
         case_index = case_id_offset + local_index
         case_id = f"case_{case_index:04d}"
+
+        # Round-robin over both axes so hazard and records stay balanced
+        # across any contiguous slice of the plan, including the per-device
+        # ranges the scheduler hands out.
+        site = sites[(case_index - 1) % len(sites)]
+        start = ((case_index - 1) * records_per_case) % len(records)
+        case_records = [
+            records[(start + offset) % len(records)]
+            for offset in range(records_per_case)
+        ]
+
         cases.append(
             {
                 "case_index": case_index,
                 "case_id": case_id,
                 "geometry_name": (
                     f"{case_id}_bx{bx}_by{by}_s{floors}_"
-                    f"sh{story_ft}ft_bw{width_ft}ft"
+                    f"sh{story_ft}ft_bw{width_ft}ft_{site}"
                 ),
-                "result_id": records[(local_index - 1) % len(records)],
+                "seismic_site": site,
+                "result_ids": case_records,
                 "num_bay_x": bx,
                 "num_bay_y": by,
                 "num_floor": floors,
@@ -171,9 +257,34 @@ def build_plan(
                 "bay_width_ft": width_ft,
                 "bay_x_in": width_ft * 12,
                 "bay_y_in": width_ft * 12,
+                "runs": build_runs(case_records, intensity_levels),
             }
         )
     return cases
+
+
+def plan_csv_rows(cases):
+    """Flatten cases for the CSV mirror of the plan.
+
+    The runs list cannot be a CSV cell, so it is summarized here. The JSON
+    plan remains the authoritative record of every individual run.
+    """
+    rows = []
+    for case in cases:
+        row = {key: value for key, value in case.items() if key not in {"runs", "result_ids"}}
+        runs = case_runs(case)
+        row.update(
+            {
+                "result_ids": " ".join(str(value) for value in case.get("result_ids", [])),
+                "intensity_levels": " ".join(
+                    f"{value:g}" for value in sorted({run["scale_factor"] for run in runs})
+                ),
+                "run_names": " ".join(run["run_name"] for run in runs),
+                "num_runs": len(runs),
+            }
+        )
+        rows.append(row)
+    return rows
 
 
 def load_plan(
@@ -185,25 +296,28 @@ def load_plan(
     set_name="peer_mle_all",
     geometry_offset=0,
     case_id_offset=0,
+    seismic_sites=SEISMIC_SITES,
+    intensity_levels=DEFAULT_INTENSITY_LEVELS,
+    records_per_case=DEFAULT_RECORDS_PER_CASE,
 ):
     path = root / "parameter_plan.json"
-    plan_version = 2 if geometry_offset or case_id_offset else 1
+    # Every field is compared on every version. Earlier revisions left
+    # set_name out of the version 1 comparison, so changing the record set
+    # silently reused a plan built for a different catalog.
     expected = {
-        "version": plan_version,
+        "version": PLAN_VERSION,
         "seed": seed,
         "num_cases": num_cases,
         "max_npts": max_npts,
         "ranges": {key: list(value) for key, value in RANGES.items()},
+        "set_name": set_name,
+        "geometry_offset": geometry_offset,
+        "case_id_offset": case_id_offset,
+        "seismic_sites": list(seismic_sites),
+        "intensity_levels": [float(value) for value in intensity_levels],
+        "records_per_case": records_per_case,
+        "eligible_result_ids": list(records),
     }
-    if plan_version >= 2:
-        expected.update(
-            {
-                "set_name": set_name,
-                "geometry_offset": geometry_offset,
-                "case_id_offset": case_id_offset,
-                "eligible_result_ids": list(records),
-            }
-        )
     if path.exists():
         payload = json.loads(path.read_text(encoding="utf-8"))
         mismatches = {
@@ -223,6 +337,9 @@ def load_plan(
         seed,
         geometry_offset=geometry_offset,
         case_id_offset=case_id_offset,
+        seismic_sites=seismic_sites,
+        intensity_levels=intensity_levels,
+        records_per_case=records_per_case,
     )
     payload = dict(expected)
     payload.update(
@@ -235,21 +352,34 @@ def load_plan(
         }
     )
     write_json(path, payload)
-    write_csv(root / "parameter_plan.csv", cases)
+    write_csv(root / "parameter_plan.csv", plan_csv_rows(cases))
     return cases
 
 
 def paths_for(root, case):
+    """Case-level paths. The design artifact is shared by every run below it."""
     base = root / "cases" / case["case_id"]
-    run = f"peer_{case['result_id']}"
     return {
         "base": base,
         "ntha": base / "ntha",
         "dataset": base / "dataset",
-        "status": base / "ntha" / run / "status.json",
-        "sample": base / "dataset" / run / "hybrid_sample.npz",
+        "design": base / "design.json",
         "child_stop": base / "dataset" / STOP_NAME,
         "log": base / "controller.log",
+    }
+
+
+def case_runs(case):
+    """Runs belonging to a case: one per (record pair, intensity) combination."""
+    return case.get("runs") or []
+
+
+def run_paths_for(root, case, run):
+    base = root / "cases" / case["case_id"]
+    name = run["run_name"]
+    return {
+        "status": base / "ntha" / name / "status.json",
+        "sample": base / "dataset" / name / "hybrid_sample.npz",
     }
 
 
@@ -265,9 +395,19 @@ def successful_status(path):
         return False
 
 
-def complete(root, case):
-    paths = paths_for(root, case)
+def complete_run(root, case, run):
+    paths = run_paths_for(root, case, run)
     return successful_status(paths["status"]) and paths["sample"].exists()
+
+
+def completed_run_count(root, case):
+    return sum(1 for run in case_runs(case) if complete_run(root, case, run))
+
+
+def complete(root, case):
+    """A case is finished only when every one of its runs is finished."""
+    runs = case_runs(case)
+    return bool(runs) and all(complete_run(root, case, run) for run in runs)
 
 
 def scan_completed(root, cases):
@@ -291,12 +431,11 @@ def select_pending_cases(cases, completed_ids, case_start=1, case_end=None, run_
 
 
 def command_for(args, case, paths):
-    return [
+    command = [
         args.python_exe,
         "-B",
         str(RC_DIR / "Data_Generation" / "Generate_Hybrid_Dataset.py"),
         "--run-ntha",
-        "--result-id", str(case["result_id"]),
         "--set-name", args.set_name,
         "--max-npts", str(args.max_npts),
         "--python-exe", args.python_exe,
@@ -309,7 +448,14 @@ def command_for(args, case, paths):
         "--bay-x", str(case["bay_x_in"]),
         "--bay-y", str(case["bay_y_in"]),
         "--story-h", str(case["story_height_in"]),
+        "--seismic-site", str(case["seismic_site"]),
     ]
+    # The child expands records against intensities, matching build_runs.
+    for result_id in case["result_ids"]:
+        command.extend(["--result-id", str(result_id)])
+    for scale in sorted({run["scale_factor"] for run in case_runs(case)}):
+        command.extend(["--scale-factor", str(scale)])
+    return command
 
 
 def request_child_stop(path):
@@ -323,7 +469,11 @@ def run_case(args, case, stop_event, active, lock):
     paths["ntha"].mkdir(parents=True, exist_ok=True)
     paths["dataset"].mkdir(parents=True, exist_ok=True)
     if complete(root, case):
-        return {"case_id": case["case_id"], "status": "completed", "skipped": True}
+        return {
+            "case_id": case["case_id"], "status": "completed", "skipped": True,
+            "completed_runs": len(case_runs(case)),
+            "planned_runs": len(case_runs(case)),
+        }
     if stop_event.is_set():
         return {"case_id": case["case_id"], "status": "pending", "skipped": True}
     command = command_for(args, case, paths)
@@ -349,12 +499,15 @@ def run_case(args, case, stop_event, active, lock):
         returncode = process.wait()
         with lock:
             active.pop(case["case_id"], None)
-    status = "completed" if complete(root, case) else (
+    finished_runs = completed_run_count(root, case)
+    status = "completed" if finished_runs == len(case_runs(case)) else (
         "pending" if stop_event.is_set() else "failed"
     )
     return {
         "case_id": case["case_id"], "status": status,
         "skipped": False, "returncode": returncode,
+        "completed_runs": finished_runs,
+        "planned_runs": len(case_runs(case)),
         "elapsed_sec": time.perf_counter() - started, "updated_at": now(),
     }
 
@@ -427,8 +580,13 @@ def progress(
                         if case["case_id"] in completed_ids
                         else result.get("status", "pending")
                     ),
-                    "sample_npz": os.path.relpath(paths["sample"], root),
-                    "ntha_status": os.path.relpath(paths["status"], root),
+                    "planned_runs": len(case_runs(case)),
+                    "completed_runs": result.get(
+                        "completed_runs",
+                        len(case_runs(case)) if case["case_id"] in completed_ids else None,
+                    ),
+                    "case_dir": os.path.relpath(paths["base"], root),
+                    "design_json": os.path.relpath(paths["design"], root),
                     "controller_log": os.path.relpath(paths["log"], root),
                     "returncode": result.get("returncode"),
                     "elapsed_sec": result.get("elapsed_sec"),
@@ -459,6 +617,33 @@ def parse_args():
     )
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--set-name", default="peer_mle_all")
+    parser.add_argument(
+        "--seismic-site",
+        action="append",
+        dest="seismic_sites",
+        help=(
+            "Design hazard label to include in the plan; repeat to set the "
+            "pool. Defaults to all of: " + ", ".join(SEISMIC_SITES) + "."
+        ),
+    )
+    parser.add_argument(
+        "--intensity-level",
+        action="append",
+        type=float,
+        dest="intensity_levels",
+        help=(
+            "Ground-motion scale factor applied to every record pair; repeat "
+            "for a ladder. Defaults to "
+            + " ".join(f"{value:g}" for value in DEFAULT_INTENSITY_LEVELS)
+            + ". Total runs per case = records-per-case x intensity levels."
+        ),
+    )
+    parser.add_argument(
+        "--records-per-case",
+        type=int,
+        default=DEFAULT_RECORDS_PER_CASE,
+        help="Distinct record pairs assigned to each structure.",
+    )
     parser.add_argument("--max-npts", type=int, default=15000)
     parser.add_argument(
         "--geometry-offset",
@@ -497,6 +682,13 @@ def main():
         print(f"Stop requested: {stop_path}")
         return
     records = eligible_record_ids(args.set_name, args.max_npts)
+    seismic_sites = tuple(args.seismic_sites or SEISMIC_SITES)
+    intensity_levels = tuple(args.intensity_levels or DEFAULT_INTENSITY_LEVELS)
+    for site in seismic_sites:
+        if site not in SEISMIC_SITES:
+            raise ValueError(
+                f"Unknown seismic site {site!r}; expected one of {list(SEISMIC_SITES)}."
+            )
     cases = load_plan(
         root,
         args.num_cases,
@@ -506,6 +698,15 @@ def main():
         set_name=args.set_name,
         geometry_offset=args.geometry_offset,
         case_id_offset=args.case_id_offset,
+        seismic_sites=seismic_sites,
+        intensity_levels=intensity_levels,
+        records_per_case=args.records_per_case,
+    )
+    total_runs = sum(len(case_runs(case)) for case in cases)
+    print(
+        f"Plan: {len(cases)} cases x "
+        f"{len(intensity_levels)} intensity level(s) = {total_runs} analyses; "
+        f"hazards {list(seismic_sites)}"
     )
     plan_csv = root / "parameter_plan.csv"
     print(f"Plan: {root / 'parameter_plan.json'} ({len(cases)} cases, {len(records)} records)")

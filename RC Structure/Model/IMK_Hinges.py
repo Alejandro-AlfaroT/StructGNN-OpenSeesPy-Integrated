@@ -32,29 +32,39 @@ def _member_length(n_i, n_j):
 
 
 def _member_properties(member_type):
+    """Elastic properties for an IMK member, on effective (cracked) stiffness.
+
+    The stiffness modifier is applied once, here, so it reaches both the
+    elastic element between the springs and the spring calibration itself
+    (Ke = n * 6EI/L), keeping the two consistent.
+    """
+    modifier = sp.section_stiffness_modifier(member_type)
+
     if member_type == "column":
         return {
             "area": sp.rect_area(sp.B_COL, sp.H_COL),
             "e": sp.concrete_ec_ksi(sp.FC_COL_KSI),
             "g": sp.concrete_shear_modulus_ksi(sp.concrete_ec_ksi(sp.FC_COL_KSI)),
-            "j": sp.approx_rect_j(sp.B_COL, sp.H_COL),
-            "iy": sp.rect_iy(sp.B_COL, sp.H_COL),
-            "iz": sp.rect_iz(sp.B_COL, sp.H_COL),
+            "j": modifier * sp.approx_rect_j(sp.B_COL, sp.H_COL),
+            "iy": modifier * sp.rect_iy(sp.B_COL, sp.H_COL),
+            "iz": modifier * sp.rect_iz(sp.B_COL, sp.H_COL),
             "my": sp.column_nominal_moment_y(),
             "mz": sp.column_nominal_moment_z(),
             "theta_y": sp.IMK_COLUMN_THETA_Y,
+            "stiffness_modifier": modifier,
         }
 
     return {
         "area": sp.rect_area(sp.B_BEAM, sp.H_BEAM),
         "e": sp.concrete_ec_ksi(sp.FC_BEAM_KSI),
         "g": sp.concrete_shear_modulus_ksi(sp.concrete_ec_ksi(sp.FC_BEAM_KSI)),
-        "j": sp.approx_rect_j(sp.B_BEAM, sp.H_BEAM),
-        "iy": sp.rect_iy(sp.B_BEAM, sp.H_BEAM),
-        "iz": sp.rect_iz(sp.B_BEAM, sp.H_BEAM),
+        "j": modifier * sp.approx_rect_j(sp.B_BEAM, sp.H_BEAM),
+        "iy": modifier * sp.rect_iy(sp.B_BEAM, sp.H_BEAM),
+        "iz": modifier * sp.rect_iz(sp.B_BEAM, sp.H_BEAM),
         "my": sp.beam_nominal_moment_y(),
         "mz": sp.beam_nominal_moment_z(),
         "theta_y": sp.IMK_BEAM_THETA_Y,
+        "stiffness_modifier": modifier,
     }
 
 
@@ -135,6 +145,29 @@ def imk_hinge_thresholds(member_type, rot_dir, length):
         "stiffness_mode": components["mode"],
         "selected_stiffness": components["selected_stiffness"],
     }
+
+
+def imk_elastic_inertia_factor():
+    """(n+1)/n stiffness correction for the elastic segment between springs.
+
+    With a rotational spring of stiffness Ke = n * (6EI/L) at each end, the
+    elastic element between them must use I * (n+1)/n so the composite
+    spring-element-spring assembly reproduces the real member stiffness
+    (Ibarra & Krawinkler 2005; Zareian & Medina 2010). Without it the member
+    is softer than intended by exactly that factor.
+
+    Only the member-stiffness calibration carries this correction. The
+    yield-rotation mode sets Ke from My/theta_y, which is not referenced to
+    6EI/L, so no correction applies.
+    """
+    mode = getattr(sp, "IMK_HINGE_STIFFNESS_MODE", "yield_rotation")
+    if mode != "member_stiffness_factor":
+        return 1.0
+
+    n = float(sp.IMK_HINGE_STIFFNESS_FACTOR)
+    if n <= 0.0:
+        raise ValueError("IMK_HINGE_STIFFNESS_FACTOR must be positive.")
+    return (n + 1.0) / n
 
 
 def _orientation(member_type):
@@ -238,6 +271,7 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
     _create_end_hinge(ele_tag, 1, n_i, i_hinge_node, member_type, props, length)
     _create_end_hinge(ele_tag, 2, n_j, j_hinge_node, member_type, props, length)
 
+    inertia_factor = imk_elastic_inertia_factor()
     ops.element(
         "elasticBeamColumn",
         ele_tag,
@@ -247,7 +281,7 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         props["e"],
         props["g"],
         props["j"],
-        props["iy"],
-        props["iz"],
+        inertia_factor * props["iy"],
+        inertia_factor * props["iz"],
         transf_tag,
     )
