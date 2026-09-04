@@ -49,6 +49,7 @@ from Loads.Ground_Motion import (
     apply_uniform_excitation,
     summarize_record,
 )
+from Model.IMK_Hinges import hinge_registry
 from Model.diaphragms import floor_master_node
 from Model.nodes import node_tag
 
@@ -277,6 +278,52 @@ def _base_shear_xy(base_column_tags):
         shear_x += forces[0]
         shear_y += forces[1]
     return -shear_x, -shear_y
+
+
+def _element_node_map(ele_tags):
+    """Structural end nodes for each physical element.
+
+    For an IMK member the element spans two zero-length hinge nodes, so
+    ops.eleNodes reports those rather than the joints the member frames into.
+    Assembling joint forces from them silently matches nothing and yields an
+    all-zero result, so the physical end nodes recorded at build time are
+    preferred wherever they exist.
+    """
+    registry = hinge_registry()
+    node_map = {}
+    for tag in ele_tags:
+        entry = registry.get(int(tag))
+        if entry and "node_i" in entry:
+            node_map[tag] = [entry["node_i"], entry["node_j"]]
+        else:
+            node_map[tag] = list(ops.eleNodes(tag))
+    return node_map
+
+
+def _assemble_joint_forces(ele_tags, node_map, node_positions):
+    """Internal force delivered to each joint, summed over framing members.
+
+    Element end forces are summed in the GLOBAL frame. Local forces cannot be
+    added across members that point in different directions, so the local
+    values recorded for element-level targets are not usable here.
+
+    Returns a flat list of 6 * len(node_positions) values, ordered by the
+    node_positions mapping.
+    """
+    totals = [0.0] * (6 * len(node_positions))
+    for tag in ele_tags:
+        forces = ops.eleForce(tag)
+        if not forces or len(forces) < 12:
+            continue
+        for end, node in enumerate(node_map.get(tag, ())):
+            slot = node_positions.get(node)
+            if slot is None:
+                continue
+            offset = 6 * slot
+            base = 6 * end
+            for dof in range(6):
+                totals[offset + dof] += forces[base + dof]
+    return totals
 
 
 def _query_hinge_rotations(hinge_ele_tags):
@@ -586,6 +633,19 @@ def _run_ntha_impl(
     base_shear_x = []
     base_shear_y = []
 
+    # Element end forces over time. The envelope query below already
+    # computes these every step; only the strided copies are kept, since at
+    # full resolution they would dominate dataset storage.
+    element_stride = max(1, int(getattr(sp, "NTHA_ELEMENT_HISTORY_STRIDE", 8)))
+    element_tag_order = list(phys_ele_tags)
+    element_force_history = []
+    element_history_steps = []
+
+    joint_node_order = list(non_base_nodes)
+    joint_node_positions = {tag: index for index, tag in enumerate(joint_node_order)}
+    element_node_map = _element_node_map(element_tag_order)
+    joint_force_history = []
+
     hinge_rotation_envelope = {}
     hinge_rotation_history  = []
     hinge_history_steps     = []
@@ -646,7 +706,23 @@ def _run_ntha_impl(
                 peak_drift_y[k] = dy[k]
 
         # Element force envelopes
-        _update_envelope(element_envelope, _query_element_forces(phys_ele_tags))
+        element_forces = _query_element_forces(phys_ele_tags)
+        _update_envelope(element_envelope, element_forces)
+
+        if step % element_stride == 0:
+            element_history_steps.append(step)
+            element_force_history.append(
+                [
+                    value
+                    for tag in element_tag_order
+                    for value in (element_forces.get(tag) or [0.0] * 12)[:12]
+                ]
+            )
+            joint_force_history.append(
+                _assemble_joint_forces(
+                    element_tag_order, element_node_map, joint_node_positions
+                )
+            )
         if hinge_ele_tags:
             _update_envelope(hinge_envelope, _query_element_forces(hinge_ele_tags))
 
@@ -711,6 +787,12 @@ def _run_ntha_impl(
         "hinge_rotation_history":  hinge_rotation_history,
         "hinge_rotation_steps":    hinge_history_steps,
         "hinge_tag_order":         hinge_tag_order,
+        "element_force_history":   element_force_history,
+        "element_force_steps":     element_history_steps,
+        "element_tag_order":       element_tag_order,
+        "element_history_stride":  element_stride,
+        "joint_force_history":     joint_force_history,
+        "joint_node_order":        joint_node_order,
         "hinge_history_stride":    hinge_stride,
         "node_envelope":      node_envelope,
         "floor_disp_history":  floor_disp_history,

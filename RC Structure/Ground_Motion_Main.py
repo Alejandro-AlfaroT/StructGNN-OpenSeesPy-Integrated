@@ -253,6 +253,25 @@ def _write_response_arrays(output_dir, results):
             results.get("hinge_rotation_steps") or [], dtype=np.int32
         ),
         "hinge_tag_order": np.asarray(results.get("hinge_tag_order") or [], dtype=np.int64),
+        # Element end forces in the member local frame, for element-level
+        # targets. Joint forces are assembled separately in the global frame,
+        # because local forces cannot be summed across differently oriented
+        # members.
+        "element_force": np.asarray(
+            results.get("element_force_history") or [], dtype=np.float32
+        ),
+        "element_force_steps": np.asarray(
+            results.get("element_force_steps") or [], dtype=np.int32
+        ),
+        "element_tag_order": np.asarray(
+            results.get("element_tag_order") or [], dtype=np.int64
+        ),
+        "joint_force": np.asarray(
+            results.get("joint_force_history") or [], dtype=np.float32
+        ),
+        "joint_node_order": np.asarray(
+            results.get("joint_node_order") or [], dtype=np.int64
+        ),
         "floor_master_nodes": np.asarray(
             results.get("floor_master_nodes") or [], dtype=np.int64
         ),

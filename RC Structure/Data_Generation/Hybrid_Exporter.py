@@ -727,6 +727,11 @@ def compile_hybrid_sample(
         story_drift_history=arrays.get("story_drift"),
         base_shear=arrays.get("base_shear"),
         hinge_rotation=arrays.get("hinge_rotation"),
+        element_force_history=arrays.get("element_force"),
+        element_force_steps=arrays.get("element_force_steps"),
+        element_force_tag_order=arrays.get("element_tag_order"),
+        joint_force_history=arrays.get("joint_force"),
+        joint_force_node_order=arrays.get("joint_node_order"),
         hinge_rotation_steps=arrays.get("hinge_rotation_steps"),
         hinge_tag_order=arrays.get("hinge_tag_order"),
         floor_master_nodes=arrays.get("floor_master_nodes"),
@@ -761,6 +766,17 @@ def compile_hybrid_sample(
         "record_feature_keys": RECORD_FEATURE_KEYS,
         "target_peak_columns": TARGET_PEAK_COLUMNS,
         "hinge_feature_columns": HINGE_FEATURE_COLUMNS,
+        "element_force_history_columns": [
+            "axial_i", "shear_y_i", "shear_z_i", "torsion_i", "moment_y_i", "moment_z_i",
+            "axial_j", "shear_y_j", "shear_z_j", "torsion_j", "moment_y_j", "moment_z_j",
+        ],
+        "element_force_history_frame": "member local",
+        "joint_force_history_columns": ["fx", "fy", "fz", "mx", "my", "mz"],
+        "joint_force_history_frame": "global",
+        "joint_force_description": (
+            "Internal force delivered to each joint, summed over the element "
+            "ends framing into it, in the global frame."
+        ),
         "damage_metric_columns": DAMAGE_METRIC_COLUMNS,
         "num_hinges": int(hinge_features.shape[0]) if hinge_features.size else 0,
         "hinge_history_stride": int(

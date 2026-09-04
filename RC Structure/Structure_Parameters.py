@@ -423,6 +423,11 @@ NTHA_DT_FACTOR = 1.0
 # shape of the hysteresis rather than to resolve every cycle exactly.
 NTHA_HINGE_HISTORY_STRIDE = 8
 
+# Element end forces and assembled joint forces share the hinge stride by
+# default. The analysis already queries every element every step for the
+# envelope, so storing them costs storage rather than compute.
+NTHA_ELEMENT_HISTORY_STRIDE = 8
+
 NTHA_PROGRESS_EVERY = 100
 NTHA_PRINT_CATALOG_SUMMARY = True
 

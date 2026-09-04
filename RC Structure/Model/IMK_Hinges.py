@@ -343,6 +343,11 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
     _HINGE_REGISTRY[int(ele_tag)] = {
         "ele_tag": int(ele_tag),
         "member_type": member_type,
+        # The element spans the two hinge nodes, so ops.eleNodes reports those
+        # rather than the structural joints. Anything assembling forces at
+        # joints needs the physical end nodes recorded here.
+        "node_i": int(n_i),
+        "node_j": int(n_j),
         "length_in": length,
         "yield_moment_y_kip_in": props["my"],
         "yield_moment_z_kip_in": props["mz"],
