@@ -7,8 +7,6 @@ load intensity (kip/in²) multiplied by its tributary width:
   - Edge beams   → half the adjacent bay width
   - Interior beams → full bay width (half from each side)
 
-This correctly accounts for the tributary area of each beam position, unlike
-the previous approach of applying equal point loads to every node.
 """
 
 import openseespy.opensees as ops

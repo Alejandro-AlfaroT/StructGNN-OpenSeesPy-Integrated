@@ -1,13 +1,6 @@
 """
 Design/Phase2/SeismicReport.py
-Placeholder reporting structure for Phase 2 nonlinear acceptance results.
 
-When Phase 2 is implemented, this module will produce:
-  - Per-hinge table: element tag, end, direction, θ_demand, θ_acceptance,
-    DCR_rotation, performance level, pass/fail
-  - Per-element force-controlled DCR table (from Phase 1, lateral case)
-  - SCWB joint ratio table (from JointSCWBCheck)
-  - Summary: count of hinges at or beyond each performance level
 
 TODO
 ----
