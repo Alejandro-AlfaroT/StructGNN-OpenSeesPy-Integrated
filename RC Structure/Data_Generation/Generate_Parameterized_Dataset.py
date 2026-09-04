@@ -58,7 +58,22 @@ SEISMIC_SITES = ("sdc_c", "sdc_d_low", "sdc_d_high", "sdc_e", "sdc_e_near")
 # factors targeting a drift distribution; until then a uniform ladder keeps
 # the schema and the run naming exercised.
 DEFAULT_INTENSITY_LEVELS = (1.0, 2.0, 3.0)
-DEFAULT_RECORDS_PER_CASE = 2
+# One record pair per structure.
+#
+# Splits are grouped by record pair (rc_hybrid_surrogate/data.py), so a
+# structure carrying two record pairs can have one land in train and the
+# other in test -- the same geometry, design and hazard on both sides of the
+# split. With one pair per structure, grouping by record incidentally groups
+# by structure too and that cannot happen.
+#
+# The intensity ladder already gives several runs per structure, so structure
+# is not confounded with intensity. Record effects stay identifiable because
+# round-robin assignment puts each record pair with many different
+# structures across the dataset.
+#
+# Raising this above 1 requires the split to be blocked on structure as well
+# as record, which it currently is not.
+DEFAULT_RECORDS_PER_CASE = 1
 
 # Bumped when plan semantics change. Version 3 adds the hazard axis, the
 # intensity ladder, and multiple records per case, so a version 1 or 2 plan
