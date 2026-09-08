@@ -29,6 +29,340 @@ from Loads.Ground_Motion import GroundMotionRecord
 from Model import IMK_Hinges
 
 
+class ColumnCapacityRegressionTests(unittest.TestCase):
+    """Guards for the column flexural capacity used by the design loop.
+
+    The design side used to size columns with a singly-reinforced BEAM
+    formula -- max(top, bottom) bars and zero axial load -- while the model
+    that got analysed took hinge capacity off the nominal P-M surface. That
+    understated column Mn by roughly 2x to 4x, so strong-column/weak-beam
+    demanded columns several times larger than ACI 318-19 18.7.3.2 requires
+    and reported failures for frames that comply.
+    """
+
+    def setUp(self):
+        self._saved = {
+            name: getattr(sp, name)
+            for name in (
+                "B_COL", "H_COL", "FC_COL_KSI", "COVER", "COL_BAR_AREA",
+                "COL_TOP_BARS", "COL_BOT_BARS", "COL_SIDE_BARS",
+            )
+        }
+        sp.B_COL = sp.H_COL = 18.0
+        sp.FC_COL_KSI = 5.0
+        sp.COVER = 1.5
+        sp.COL_BAR_AREA = 0.44
+        sp.COL_TOP_BARS = sp.COL_BOT_BARS = sp.COL_SIDE_BARS = 2
+
+    def tearDown(self):
+        for name, value in self._saved.items():
+            setattr(sp, name, value)
+
+    def test_pm_diagram_counts_side_bars_on_both_faces(self):
+        # Model/Sections.py lays COL_SIDE_BARS down EACH side face, so the
+        # section holds 2 x that count. Counting them once left the P-M
+        # surface short a quarter of the longitudinal steel.
+        from RC_Design_Check import _col_steel_layers
+
+        expected = (
+            sp.COL_TOP_BARS + sp.COL_BOT_BARS + 2 * sp.COL_SIDE_BARS
+        ) * sp.COL_BAR_AREA
+        self.assertAlmostEqual(
+            sum(area for area, _ in _col_steel_layers()), expected, places=6
+        )
+
+    def test_layer_builder_accepts_a_candidate_depth(self):
+        from RC_Design_Check import _col_steel_layers
+
+        layers = _col_steel_layers(h=30.0)
+        self.assertAlmostEqual(max(depth for _, depth in layers), 30.0 - sp.COVER)
+        # The globals must be untouched: the ladder prices candidates without
+        # disturbing the section currently installed in the model.
+        self.assertEqual(sp.H_COL, 18.0)
+
+    def test_pm_capacity_exceeds_the_beam_formula(self):
+        from Design.Design_Driver import _column_nominal_moment
+
+        beam_formula = sp.column_nominal_moment_y()
+        pm_based = _column_nominal_moment()
+        self.assertGreater(pm_based, beam_formula)
+        # Measured ~2x at near-zero axial for this section; the guard is loose
+        # enough to survive detailing changes but would catch a regression to
+        # the beam formula.
+        self.assertGreater(pm_based / beam_formula, 1.5)
+
+    def test_history_ratio_and_flag_share_one_capacity_basis(self):
+        # The recorded ratio and the pass/fail flag must be computed from the
+        # same column capacity. They were not, so a history row could show the
+        # old beam-formula ratio beside the new P-M pass/fail decision.
+        import inspect
+        from Design import Design_Driver
+
+        source = inspect.getsource(Design_Driver.design_structure)
+        head, _, tail = source.partition('"scwb_ratio"')
+        self.assertTrue(tail, "scwb_ratio disappeared from the history entry")
+        expression = tail[:220]
+        self.assertIn("_column_nominal_moment()", expression)
+        self.assertNotIn("column_nominal_moment_y()", expression)
+
+    def test_scwb_search_reports_when_the_ladder_is_exhausted(self):
+        from Design.Design_Driver import _smallest_scwb_column_index
+
+        tiny = [(10.0, 10.0, 3.0)]
+        index, satisfied = _smallest_scwb_column_index(tiny)
+        self.assertEqual(index, 0)
+        self.assertFalse(satisfied)
+
+        generous = [(10.0, 10.0, 3.0), (60.0, 60.0, 8.0)]
+        index, satisfied = _smallest_scwb_column_index(generous)
+        self.assertTrue(satisfied)
+        self.assertEqual(index, 1)
+
+
+class GravityEscalationTests(unittest.TestCase):
+    """A section that cannot carry gravity escalates instead of aborting.
+
+    Columns use a PDelta transform, so a tall slender frame on a small column
+    goes unstable under its own weight -- case_0013 (9 stories, 117 ft, 18x18)
+    failed at 85% of applied gravity. The design loop used to let that
+    RuntimeError kill the case. Because only tall slender frames fail this way,
+    that silently biased the dataset against its tallest buildings: 8.9% of the
+    27,000-combination geometry pool sits at height/width >= 4.
+    """
+
+    def test_escalation_skips_concrete_strength_variants(self):
+        # The ladder interleaves f'c within a size, and f'c is the wrong lever
+        # for a stiffness problem: E*I goes as sqrt(f'c) but h^4.
+        from Design.Design_Driver import _next_larger_column_index
+
+        ladder = [
+            (18.0, 18.0, 4.0), (18.0, 18.0, 5.0), (18.0, 18.0, 6.0),
+            (20.0, 20.0, 4.0), (20.0, 20.0, 5.0),
+            (22.0, 22.0, 4.0),
+        ]
+        self.assertEqual(_next_larger_column_index(ladder, 0), 3)
+        self.assertEqual(_next_larger_column_index(ladder, 1), 3)
+        self.assertEqual(_next_larger_column_index(ladder, 2), 3)
+        self.assertEqual(_next_larger_column_index(ladder, 3), 5)
+
+    def test_no_larger_section_reports_none(self):
+        from Design.Design_Driver import _next_larger_column_index
+
+        ladder = [(18.0, 18.0, 4.0), (18.0, 18.0, 8.0)]
+        self.assertIsNone(_next_larger_column_index(ladder, 0))
+        self.assertIsNone(_next_larger_column_index(ladder, 1))
+
+    def test_escalation_reaches_the_real_ladder_top(self):
+        from Design.Design_Driver import _next_larger_column_index
+        from Design.Section_Design import column_ladder, nearest_rung_index
+
+        ladder = column_ladder()
+        index = nearest_rung_index(ladder, 18.0, 18.0, 5.0)
+        sizes = [ladder[index][0]]
+        while (index := _next_larger_column_index(ladder, index)) is not None:
+            sizes.append(ladder[index][0])
+        self.assertEqual(sizes[0], 18.0)
+        self.assertEqual(sizes[-1], max(s for s, _, _ in ladder))
+        # Strictly increasing, one entry per distinct size above the start.
+        self.assertEqual(sizes, sorted(set(sizes)))
+
+    def test_gravity_escalation_does_not_consume_the_design_budget(self):
+        # case_0013 spent 4 of 6 iterations on gravity escalations and finished
+        # with an overstressed column at DCR 1.10. The two budgets are separate.
+        import inspect
+        from Design import Design_Driver
+
+        source = inspect.getsource(Design_Driver.design_structure)
+        self.assertIn("while iteration < max_section_iter", source)
+        self.assertIn("gravity_escalations", source)
+        # The escalation path must reach `continue` without incrementing the
+        # design counter. Slice only as far as that continue -- the normal path
+        # after it legitimately does increment.
+        _head, _, tail = source.partition("gravity_failures.append")
+        escalation = tail[:tail.index("continue")]
+        self.assertNotIn("iteration += 1", escalation)
+        # And the normal path must increment exactly once.
+        self.assertEqual(source.count("iteration += 1"), 1)
+
+
+class DesignConfigSyncTests(unittest.TestCase):
+    """cfg must track sp whenever the ladder changes a section.
+
+    The ACI checks read section dimensions and f'c from cfg while the ladder
+    writes them to sp. cfg was built once at entry and never refreshed, so
+    after an escalation the checks compared the new larger model against the
+    capacity of the starting section -- demand growing, capacity frozen. Column
+    DCR then rose with section size instead of falling (case_0013: 1.104 at
+    26x26 to 2.005 at 36x36), and no case needing an escalation could converge.
+    """
+
+    def _saved(self):
+        return {k: getattr(sp, k) for k in (
+            "B_COL", "H_COL", "FC_COL_KSI", "B_BEAM", "H_BEAM", "FC_BEAM_KSI")}
+
+    def setUp(self):
+        self._restore = self._saved()
+
+    def tearDown(self):
+        for k, v in self._restore.items():
+            setattr(sp, k, v)
+
+    def test_sync_copies_every_section_field(self):
+        from Design.Config import DesignConfig
+        from Design.Design_Driver import _sync_cfg_to_sp
+
+        sp.B_COL, sp.H_COL, sp.FC_COL_KSI = 18.0, 18.0, 5.0
+        sp.B_BEAM, sp.H_BEAM, sp.FC_BEAM_KSI = 10.0, 18.0, 4.0
+        cfg = DesignConfig.from_structure_parameters()
+
+        # Ladder escalates: sp moves, cfg must follow.
+        sp.B_COL, sp.H_COL, sp.FC_COL_KSI = 36.0, 36.0, 8.0
+        sp.B_BEAM, sp.H_BEAM, sp.FC_BEAM_KSI = 12.0, 22.0, 6.0
+        self.assertEqual(cfg.sections.b_col_in, 18.0)   # stale before sync
+        _sync_cfg_to_sp(cfg)
+
+        self.assertEqual(cfg.sections.b_col_in, 36.0)
+        self.assertEqual(cfg.sections.h_col_in, 36.0)
+        self.assertEqual(cfg.sections.b_beam_in, 12.0)
+        self.assertEqual(cfg.sections.h_beam_in, 22.0)
+        self.assertEqual(cfg.materials.fc_col_ksi, 8.0)
+        self.assertEqual(cfg.materials.fc_beam_ksi, 6.0)
+
+    def test_sync_tolerates_no_config(self):
+        from Design.Design_Driver import _sync_cfg_to_sp
+        _sync_cfg_to_sp(None)
+
+    def test_capacity_rises_with_section_after_sync(self):
+        # The observable consequence: a bigger column must report more P-M
+        # capacity. With a stale cfg the diagram never changed.
+        from Design.ACI_Checks import build_pm_diagram
+        from Design.Config import DesignConfig
+        from Design.Design_Driver import _sync_cfg_to_sp
+
+        sp.B_COL, sp.H_COL, sp.FC_COL_KSI = 18.0, 18.0, 5.0
+        cfg = DesignConfig.from_structure_parameters()
+        small = max(m for _p, m in build_pm_diagram(cfg))
+
+        sp.B_COL, sp.H_COL = 36.0, 36.0
+        stale = max(m for _p, m in build_pm_diagram(cfg))
+        self.assertAlmostEqual(stale, small, places=6)  # the bug
+
+        _sync_cfg_to_sp(cfg)
+        synced = max(m for _p, m in build_pm_diagram(cfg))
+        self.assertGreater(synced, small * 2.0)
+
+    def test_every_rung_application_is_followed_by_a_sync(self):
+        import inspect
+        from Design import Design_Driver
+
+        source = inspect.getsource(Design_Driver.design_structure)
+        self.assertIn("_sync_cfg_to_sp(cfg)", source)
+        # The sync must come after the rungs are applied, before any checking.
+        rung_at = source.index('_apply_rung(beams[beam_index], "beam")')
+        sync_at = source.index("_sync_cfg_to_sp(cfg)")
+        self.assertGreater(sync_at, rung_at)
+
+
+class RecordTargetMatchingTests(unittest.TestCase):
+    """Records are chosen to suit each case's target drift, not round robin.
+
+    Assignment used to happen before the target was known, so a case aiming at
+    4% drift could draw a weak motion needing 6x scaling while a strong record
+    sat unused on an elastic target. Over a 500-case plan matching halves the
+    median scale factor and removes ceiling clipping.
+    """
+
+    def _calibration(self):
+        from Data_Generation.Calibrate_Intensity import SPECTRUM_PERIODS_SEC
+
+        n = len(SPECTRUM_PERIODS_SEC)
+        # Two pairs an order of magnitude apart in spectral demand.
+        return {
+            "coefficients": {"a": -3.58, "b": 0.89, "c": 1.24},
+            "period_ratio": 1.88,
+            "record_spectra_g": {
+                "WEAK_X": [0.02] * n, "WEAK_Y": [0.02] * n,
+                "STRONG_X": [0.60] * n, "STRONG_Y": [0.60] * n,
+            },
+        }
+
+    def _pairs(self):
+        return {1: ("WEAK_X", "WEAK_Y"), 2: ("STRONG_X", "STRONG_Y")}
+
+    def test_a_severe_target_takes_the_stronger_record(self):
+        chosen = Generate_Parameterized_Dataset._matched_case_records(
+            self._calibration(),
+            {"num_floor": 6, "story_height_in": 144.0},
+            self._pairs(),
+            [1, 2],
+            [0.040],          # near-collapse target
+            [1],              # round robin would have given the weak pair
+            case_index=1, seed=0,
+        )
+        self.assertEqual(chosen, [2])
+
+    def test_an_elastic_target_takes_the_weaker_record(self):
+        chosen = Generate_Parameterized_Dataset._matched_case_records(
+            self._calibration(),
+            {"num_floor": 6, "story_height_in": 144.0},
+            self._pairs(),
+            [1, 2],
+            [0.003],          # elastic target
+            [2],
+            case_index=1, seed=0,
+        )
+        self.assertEqual(chosen, [1])
+
+    def test_unpriceable_records_fall_back_to_round_robin(self):
+        # No spectra for this pair, so it cannot be ranked.
+        chosen = Generate_Parameterized_Dataset._matched_case_records(
+            self._calibration(),
+            {"num_floor": 6, "story_height_in": 144.0},
+            {},               # empty pair table
+            [7],
+            [0.020],
+            [7],
+            case_index=3, seed=0,
+        )
+        self.assertEqual(chosen, [7])
+
+    def test_matching_is_deterministic_for_a_seed(self):
+        args = (
+            self._calibration(), {"num_floor": 6, "story_height_in": 144.0},
+            self._pairs(), [1, 2], [0.020], [1],
+        )
+        first = Generate_Parameterized_Dataset._matched_case_records(
+            *args, case_index=5, seed=11
+        )
+        second = Generate_Parameterized_Dataset._matched_case_records(
+            *args, case_index=5, seed=11
+        )
+        self.assertEqual(first, second)
+
+    def test_unclamped_factor_separates_over_ceiling_records(self):
+        # scale_factor_for clamps at SCALE_FACTOR_MAX, which makes every
+        # over-ceiling record tie. Ranking needs them ordered.
+        from Data_Generation.Calibrate_Intensity import scale_factor_for
+
+        co = {"a": -3.58, "b": 0.89, "c": 1.24}
+        weak = Generate_Parameterized_Dataset._unclamped_scale_factor(0.04, 1.5, 0.02, co)
+        weaker = Generate_Parameterized_Dataset._unclamped_scale_factor(0.04, 1.5, 0.002, co)
+        self.assertGreater(weaker, weak)
+        self.assertEqual(
+            scale_factor_for(0.04, 1.5, 0.02, co),
+            scale_factor_for(0.04, 1.5, 0.002, co),
+        )
+
+    def test_record_selection_is_fingerprinted_only_for_calibrated_plans(self):
+        # Adding the key unconditionally would make every existing
+        # uniform-ladder plan mismatch on reload and refuse to resume.
+        import inspect
+
+        source = inspect.getsource(Generate_Parameterized_Dataset.load_plan)
+        self.assertIn("record_selection", source)
+        self.assertIn('if calibration else {}', source)
+
+
 class GenerationRegressionTests(unittest.TestCase):
     def test_scheduler_sha256_is_uppercase_and_reproducible(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -73,7 +407,8 @@ class GenerationRegressionTests(unittest.TestCase):
             "num_bay_y",
             "num_floor",
             "story_height_ft",
-            "bay_width_ft",
+            "bay_x_width_ft",
+            "bay_y_width_ft",
         )
         base_geometries = {
             tuple(case[key] for key in geometry_keys) for case in base

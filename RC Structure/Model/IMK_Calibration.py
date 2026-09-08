@@ -72,12 +72,21 @@ def column_pm_nominal(n_pts=120):
 
     Returns a list of (Pn_kip, Mn_kip_in), compression positive.
     """
-    fc = sp.FC_COL_KSI
+    return column_pm_nominal_for(
+        sp.B_COL, sp.H_COL, sp.FC_COL_KSI, _col_steel_layers(), n_pts=n_pts
+    )
+
+
+def column_pm_nominal_for(b, h, fc, layers, n_pts=120):
+    """Nominal P-M surface for an explicitly given column section.
+
+    Same sweep as column_pm_nominal, but the section is passed in rather than
+    read from the Structure_Parameters globals. The design ladder needs the
+    capacity of sections it is only considering, and mutating the globals to
+    price a candidate would corrupt the model state mid-search.
+    """
     fy = sp.FY_KSI
     es = sp.ES_KSI
-    b = sp.B_COL
-    h = sp.H_COL
-    layers = _col_steel_layers()
 
     ecu = 0.003
     b1 = _beta1(fc)

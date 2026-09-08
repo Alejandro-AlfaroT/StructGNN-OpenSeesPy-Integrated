@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 from itertools import product
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -17,13 +18,19 @@ import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 
+# This file lives in "RC Structure/Data_Generation/", so the project root is
+# its parent directory. Deriving it from __file__ keeps the scheduler portable
+# across machines; RC_STRUCTURE_DIR still overrides for unusual layouts.
 RC_DIR = Path(
-    os.environ.get(
-        "RC_STRUCTURE_DIR",
-        r"C:\Users\andro\Documents\GitHub\StructGNN-OpenSeesPy-Integrated\RC Structure",
-    )
+    os.environ.get("RC_STRUCTURE_DIR", Path(__file__).resolve().parents[1])
 ).resolve()
 sys.path.insert(0, str(RC_DIR))
+
+# This module is used both as a script (python Data_Generation/Generate_...py)
+# and imported as Data_Generation.Generate_Parameterized_Dataset by the tests.
+# Only the script form puts this directory on the path, so sibling imports such
+# as Calibrate_Intensity resolved in production and failed under import.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from Run_Naming import analysis_run_name  # noqa: E402
 
@@ -36,12 +43,17 @@ SEED = 20260731
 # periods where the equal-displacement assumption behind that rule is weakest.
 # The upper bound moves to nine stories to keep the geometry pool large enough
 # and because taller frames are the more inelastic ones.
+# Bay width varies independently in X and Y. Forcing one width on both axes
+# made every frame square in plan, so span-driven demand could never differ
+# between the two directions and the biaxial ground motion had nothing
+# asymmetric to excite.
 RANGES = {
     "num_bay_x": tuple(range(2, 7)),
     "num_bay_y": tuple(range(2, 7)),
     "num_floor": tuple(range(4, 10)),
     "story_height_ft": tuple(range(10, 15)),
-    "bay_width_ft": tuple(range(10, 16)),
+    "bay_x_width_ft": tuple(range(10, 16)),
+    "bay_y_width_ft": tuple(range(10, 16)),
 }
 
 # Design hazard, assigned per case. Geometry alone barely moves design demand,
@@ -49,15 +61,21 @@ RANGES = {
 # different buildings. Labels must match Structure_Parameters.SEISMIC_SITE_OPTIONS.
 SEISMIC_SITES = ("sdc_c", "sdc_d_low", "sdc_d_high", "sdc_e", "sdc_e_near")
 
-# Ground-motion scale factors applied to each record pair. Running one
-# structure at several intensities is what separates structural response from
-# record identity; with one intensity per structure the two are confounded and
-# the surrogate cannot learn an intensity-to-response mapping.
-#
-# These are placeholders. The calibration step replaces them with per-case
-# factors targeting a drift distribution; until then a uniform ladder keeps
-# the schema and the run naming exercised.
+# The ladder of uncalibrated scale factors available to --runs-per-record.
+# Under --intensity-calibration these are placeholders: the scale for each run
+# comes from the calibration and only the count is read.
 DEFAULT_INTENSITY_LEVELS = (1.0, 2.0, 3.0)
+
+# One analysis per record pair by default.
+#
+# Tradeoff to be aware of: several runs per record would vary intensity
+# *within* one structure, which is the cleanest way to separate structural
+# response from intensity. At one run per record that variation has to come
+# from across the dataset instead -- which the calibration provides, since it
+# assigns each case its own target drift. So intensity stays identifiable
+# between structures, but not within one.
+DEFAULT_RUNS_PER_RECORD = 1
+DEFAULT_INTENSITY_LADDER = DEFAULT_INTENSITY_LEVELS[:DEFAULT_RUNS_PER_RECORD]
 # One record pair per structure.
 #
 # Splits are grouped by record pair (rc_hybrid_surrogate/data.py), so a
@@ -233,6 +251,98 @@ def eligible_record_pairs(set_name, max_npts):
     return pairs
 
 
+# How many records each case considers when matching a record to its target
+# drift. Small enough that every record stays in circulation across the plan,
+# large enough that a case aiming high can usually find a strong motion.
+RECORD_MATCH_CANDIDATES = 8
+
+
+def _unclamped_scale_factor(target, period, unscaled_sa, coefficients):
+    """Scale factor before the [MIN, MAX] clamp, for ranking candidates.
+
+    scale_factor_for clamps its result, which makes every over-ceiling record
+    tie at the maximum. Ranking needs to tell "needs 8.1x" from "needs 40x".
+    """
+    if unscaled_sa <= 0.0 or target <= 0.0 or period <= 0.0:
+        return None
+    log_required = (
+        math.log(target) - coefficients["a"] - coefficients["c"] * math.log(period)
+    ) / coefficients["b"]
+    return math.exp(log_required) / unscaled_sa
+
+
+def _matched_case_records(
+    calibration, case_geometry, record_pairs, records, targets,
+    fallback_records, case_index, seed,
+):
+    """Choose records whose spectral demand suits this case's target drifts.
+
+    Records are otherwise assigned by round robin before the target drift is
+    known, so a case aiming at 4% can draw a weak motion needing 6x scaling
+    while a strong record sits unused on an elastic target. Measured over a
+    50-case plan, matching drops the median scale factor from 2.25 to 0.62
+    and removes ceiling clipping entirely (6 of 50 runs to none).
+
+    Selection is banded, not greedy: each case draws a deterministic candidate
+    subset and takes the best member of that. Always taking the globally
+    strongest record would minimise scaling and collapse record diversity,
+    which the leakage-safe splits depend on -- the grouping key is the record
+    pair, and too few distinct groups is what caused the validation plateau.
+
+    Falls back to the round-robin choice for any slot it cannot price.
+    """
+    from Calibrate_Intensity import estimated_period, geometric_mean_sa
+
+    coefficients = calibration["coefficients"]
+    spectra = calibration["record_spectra_g"]
+    period = estimated_period(
+        case_geometry["num_floor"],
+        case_geometry["story_height_in"],
+        calibration["period_ratio"],
+    )
+    slots = max(1, len(fallback_records))
+    per_slot = max(1, len(targets) // slots)
+    chooser = random.Random(seed + 977 * case_index)
+
+    chosen, used = [], set()
+    for slot in range(slots):
+        slot_targets = targets[slot * per_slot:(slot + 1) * per_slot] or targets[:1]
+        available = [r for r in records if r not in used] or list(records)
+        candidates = chooser.sample(
+            available, min(RECORD_MATCH_CANDIDATES, len(available))
+        )
+        # The round-robin pick is always in the running, so matching can only
+        # improve on it, never do worse.
+        default = fallback_records[slot] if slot < len(fallback_records) else None
+        if default is not None and default in available and default not in candidates:
+            candidates.append(default)
+
+        best, best_cost = None, None
+        for result_id in candidates:
+            pair = record_pairs.get(int(result_id))
+            if not pair:
+                continue
+            unscaled = geometric_mean_sa(spectra, pair[0], pair[1], period)
+            cost = 0.0
+            for target in slot_targets:
+                factor = _unclamped_scale_factor(target, period, unscaled, coefficients)
+                if factor is None or factor <= 0.0:
+                    cost = None
+                    break
+                # Symmetric in log space: a record needing 4x is penalised the
+                # same as one needing 1/4x. Both are distortions of the motion.
+                cost += abs(math.log(factor))
+            if cost is None:
+                continue
+            if best_cost is None or cost < best_cost:
+                best, best_cost = result_id, cost
+
+        chosen.append(best if best is not None else default)
+        if chosen[-1] is not None:
+            used.add(chosen[-1])
+    return [r for r in chosen if r is not None] or list(fallback_records)
+
+
 def _calibrated_scale_factors(calibration, case_geometry, record_pairs, case_records, targets):
     """Scale factors predicted to land each run on its target drift."""
     from Calibrate_Intensity import (
@@ -273,7 +383,7 @@ def build_plan(
     geometry_offset=0,
     case_id_offset=0,
     seismic_sites=SEISMIC_SITES,
-    intensity_levels=DEFAULT_INTENSITY_LEVELS,
+    intensity_levels=DEFAULT_INTENSITY_LADDER,
     records_per_case=DEFAULT_RECORDS_PER_CASE,
     calibration=None,
     record_pairs=None,
@@ -325,7 +435,7 @@ def build_plan(
     cases = []
     selected_geometries = geometries[geometry_offset:geometry_offset + num_cases]
     for local_index, values in enumerate(selected_geometries, 1):
-        bx, by, floors, story_ft, width_ft = values
+        bx, by, floors, story_ft, width_x_ft, width_y_ft = values
         case_index = case_id_offset + local_index
         case_id = f"case_{case_index:04d}"
 
@@ -342,13 +452,15 @@ def build_plan(
         scale_factors = None
         estimated_period_sec = None
         if plan_targets is not None:
+            geometry = {"num_floor": floors, "story_height_in": story_ft * 12}
             start = (local_index - 1) * runs_per_case
+            case_targets = plan_targets[start:start + runs_per_case]
+            case_records = _matched_case_records(
+                calibration, geometry, record_pairs, records, case_targets,
+                case_records, case_index, seed,
+            )
             scale_factors, estimated_period_sec = _calibrated_scale_factors(
-                calibration,
-                {"num_floor": floors, "story_height_in": story_ft * 12},
-                record_pairs,
-                case_records,
-                plan_targets[start:start + runs_per_case],
+                calibration, geometry, record_pairs, case_records, case_targets,
             )
 
         cases.append(
@@ -357,7 +469,7 @@ def build_plan(
                 "case_id": case_id,
                 "geometry_name": (
                     f"{case_id}_bx{bx}_by{by}_s{floors}_"
-                    f"sh{story_ft}ft_bw{width_ft}ft_{site}"
+                    f"sh{story_ft}ft_bwx{width_x_ft}ft_bwy{width_y_ft}ft_{site}"
                 ),
                 "seismic_site": site,
                 "result_ids": case_records,
@@ -366,9 +478,10 @@ def build_plan(
                 "num_floor": floors,
                 "story_height_ft": story_ft,
                 "story_height_in": story_ft * 12,
-                "bay_width_ft": width_ft,
-                "bay_x_in": width_ft * 12,
-                "bay_y_in": width_ft * 12,
+                "bay_x_width_ft": width_x_ft,
+                "bay_y_width_ft": width_y_ft,
+                "bay_x_in": width_x_ft * 12,
+                "bay_y_in": width_y_ft * 12,
                 "runs": build_runs(case_records, intensity_levels, scale_factors),
                 "estimated_period_sec": estimated_period_sec,
             }
@@ -410,7 +523,7 @@ def load_plan(
     geometry_offset=0,
     case_id_offset=0,
     seismic_sites=SEISMIC_SITES,
-    intensity_levels=DEFAULT_INTENSITY_LEVELS,
+    intensity_levels=DEFAULT_INTENSITY_LADDER,
     records_per_case=DEFAULT_RECORDS_PER_CASE,
     calibration=None,
     record_pairs=None,
@@ -436,6 +549,12 @@ def load_plan(
         # from one built on the uniform ladder, so the fingerprint is part of
         # the conflict check.
         "intensity_source": "calibration" if calibration else "uniform_ladder",
+        # Only meaningful under a calibration, and deliberately absent
+        # otherwise: adding a key to every plan would make existing
+        # uniform-ladder plans mismatch on reload and refuse to resume.
+        **(
+            {"record_selection": "target_matched"} if calibration else {}
+        ),
         "calibration_fingerprint": (
             calibration["coefficients"] if calibration else None
         ),
@@ -469,7 +588,7 @@ def load_plan(
     payload.update(
         {
             "created_at": now(),
-            "bay_width_policy": "same width in X and Y",
+            "bay_width_policy": "independent widths in X and Y",
             "record_policy": "seeded shuffle then balanced round-robin",
             "eligible_result_ids": records,
             "cases": cases,
@@ -751,15 +870,27 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--runs-per-record",
+        type=int,
+        default=None,
+        help=(
+            "How many analyses to run per record pair. Under "
+            "--intensity-calibration the scale factor for each run comes from "
+            "the calibration, so this count is the only thing that matters; "
+            "without it, the first N of the default ladder ("
+            + " ".join(f"{value:g}" for value in DEFAULT_INTENSITY_LEVELS)
+            + ") are used. Total runs per case = records-per-case x this."
+        ),
+    )
+    parser.add_argument(
         "--intensity-level",
         action="append",
         type=float,
         dest="intensity_levels",
         help=(
-            "Ground-motion scale factor applied to every record pair; repeat "
-            "for a ladder. Defaults to "
-            + " ".join(f"{value:g}" for value in DEFAULT_INTENSITY_LEVELS)
-            + ". Total runs per case = records-per-case x intensity levels."
+            "Explicit ground-motion scale factor; repeat for a ladder. Use "
+            "this only to pin exact uncalibrated scale factors -- prefer "
+            "--runs-per-record otherwise. Mutually exclusive with it."
         ),
     )
     parser.add_argument(
@@ -816,7 +947,29 @@ def main():
         return
     records = eligible_record_ids(args.set_name, args.max_npts)
     seismic_sites = tuple(args.seismic_sites or SEISMIC_SITES)
-    intensity_levels = tuple(args.intensity_levels or DEFAULT_INTENSITY_LEVELS)
+    if args.runs_per_record is not None and args.intensity_levels:
+        raise ValueError(
+            "Use either --runs-per-record or --intensity-level, not both: the "
+            "first sets how many runs per record, the second pins their exact "
+            "scale factors."
+        )
+    if args.runs_per_record is not None:
+        if args.runs_per_record < 1:
+            raise ValueError(
+                f"runs-per-record must be positive; received {args.runs_per_record}."
+            )
+        if args.runs_per_record > len(DEFAULT_INTENSITY_LEVELS):
+            # Only reachable without a calibration, where each run needs a
+            # distinct scale factor and the default ladder has run out.
+            raise ValueError(
+                f"runs-per-record {args.runs_per_record} exceeds the "
+                f"{len(DEFAULT_INTENSITY_LEVELS)} default intensity levels; "
+                "pass --intensity-calibration, or set the ladder explicitly "
+                "with repeated --intensity-level."
+            )
+        intensity_levels = tuple(DEFAULT_INTENSITY_LEVELS[: args.runs_per_record])
+    else:
+        intensity_levels = tuple(args.intensity_levels or DEFAULT_INTENSITY_LADDER)
     for site in seismic_sites:
         if site not in SEISMIC_SITES:
             raise ValueError(

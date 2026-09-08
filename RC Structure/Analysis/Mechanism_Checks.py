@@ -7,7 +7,7 @@ from Data_Generation.Graph_Exporter import collect_element_rows
 from Design.ACI_Checks import build_pm_diagram, check_column_pm
 from Design.Config import DesignConfig
 from Model.diaphragms import floor_master_node
-from Model.IMK_Hinges import hinge_element_tag, imk_hinge_thresholds
+from Model.IMK_Hinges import hinge_backbone, hinge_element_tag, imk_hinge_thresholds
 
 
 ROOF_DRIFT_TARGETS = (0.045, 0.099)
@@ -90,12 +90,24 @@ def _imk_hinge_member_rows(element_rows):
 
         for end_id, end_name, node_key in ((1, "i", "node_i"), (2, "j", "node_j")):
             hinge_tag = hinge_element_tag(element["ele_tag"], end_id)
+            # Prefer the backbone actually installed on this member. With
+            # per-member calibration the rotation capacities vary with axial
+            # load, so imk_hinge_thresholds' global IMK_THETA_* constants no
+            # longer describe the hinge being measured and would report
+            # capping far too early. Fall back to them only for a member the
+            # registry never recorded (an uncalibrated or older build).
+            installed = hinge_backbone(element["ele_tag"])
             for response_index, rot_dir in ((0, "rot_y"), (1, "rot_z")):
                 thresholds = imk_hinge_thresholds(
                     element_type,
                     rot_dir,
                     element["length_in"],
                 )
+                if installed:
+                    thresholds = dict(thresholds)
+                    theta_y = thresholds["theta_y"]
+                    thresholds["theta_cap"] = theta_y + installed["theta_p"]
+                    thresholds["theta_u"] = installed["theta_u"]
                 rows.append(
                     {
                         "physical_ele_tag": element["ele_tag"],

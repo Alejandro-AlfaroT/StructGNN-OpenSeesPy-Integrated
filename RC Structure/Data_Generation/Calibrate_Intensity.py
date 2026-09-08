@@ -90,6 +90,12 @@ TARGET_DRIFT_BANDS = (
 SCALE_FACTOR_MIN = 0.25
 SCALE_FACTOR_MAX = 8.0
 
+# Interstory drift above this is not a structure, it is a diverged solution.
+# Collapse is conventionally taken at 5-10% drift; 20% is generous headroom
+# for a genuine collapse still being integrated. Beyond it the model has no
+# physical meaning and the number must not reach a least-squares fit.
+COLLAPSE_DRIFT_CEILING = 0.20
+
 # Fallback used when a pilot is too small to fit. b = 1 is equal displacement;
 # c = 0 assumes no residual height dependence.
 DEFAULT_COEFFICIENTS = {"a": math.log(0.02), "b": 1.0, "c": 0.0}
@@ -159,6 +165,14 @@ def collect_pilot_observations(dataset_roots):
             # Failed runs are kept only if they got far enough to be a real
             # collapse; a run that died early understates its own drift.
             if status.get("failed") and drift < 0.01:
+                continue
+            # ...and only if the number is still physical. A diverged solve
+            # reports nonsense: pilot30_s3 case_0003 recorded a drift ratio of
+            # 135 (13,508%) with hinge rotations of 1.9e12 rad after collapsing
+            # legitimately at ~5.6%. That single point enters the fit 7.7 log
+            # units off and would drag every coefficient with it, so the
+            # ceiling applies to converged and failed runs alike.
+            if drift > COLLAPSE_DRIFT_CEILING:
                 continue
 
             global_parameters = json.loads(

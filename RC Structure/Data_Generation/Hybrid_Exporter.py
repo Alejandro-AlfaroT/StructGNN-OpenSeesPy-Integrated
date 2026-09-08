@@ -650,6 +650,14 @@ def compile_hybrid_sample(
     gm_x = _load_acceleration_from_summary(record_x, n_steps)
     gm_y = _load_acceleration_from_summary(record_y, n_steps)
     ground_motion = np.stack([gm_x, gm_y], axis=1).astype(np.float32)
+    # An x-only run has no Y record, so its Y acceleration column and Y record
+    # features are zero-filled. Zeros are a valid acceleration value, so the
+    # arrays alone cannot distinguish "not excited in Y" from "absent". This
+    # mask makes the distinction explicit for consumers, the same way
+    # node_envelope_mask does for nodes missing an envelope row.
+    ground_motion_present = np.asarray(
+        [1.0 if record_x else 0.0, 1.0 if record_y else 0.0], dtype=np.float32
+    )
     response_time_history = _rows_to_array(time_rows, TIME_TARGET_COLUMNS)
 
     story_drift_peaks = _rows_to_array(story_rows, STORY_DRIFT_COLUMNS)
@@ -708,6 +716,7 @@ def compile_hybrid_sample(
         element_attr=element_attr,
         time_seconds=time_seconds,
         ground_motion=ground_motion,
+        ground_motion_present=ground_motion_present,
         response_time_history=response_time_history,
         story_ids=story_ids,
         story_drift_peaks=story_drift_peaks,
@@ -756,6 +765,12 @@ def compile_hybrid_sample(
         "edge_attr_columns": EDGE_ATTR_COLUMNS,
         "element_feature_columns": ELEMENT_FEATURE_COLUMNS,
         "ground_motion_columns": ["accel_x_in_per_sec2", "accel_y_in_per_sec2"],
+        "x_only": record_y is None,
+        "ground_motion_present_description": (
+            "1.0 where that ground-motion component was applied; an x-only run "
+            "is 0.0 in Y, whose acceleration column and record features are "
+            "zero-filled rather than measured."
+        ),
         "response_time_history_columns": TIME_TARGET_COLUMNS,
         "story_drift_peak_columns": STORY_DRIFT_COLUMNS,
         "node_envelope_columns": NODE_ENVELOPE_COLUMNS,

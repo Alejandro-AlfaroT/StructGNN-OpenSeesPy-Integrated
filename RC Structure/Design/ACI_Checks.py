@@ -108,7 +108,9 @@ def _col_steel_layers(
         (sp.COL_BOT_BARS * Ab, h - cover),
     ]
     if sp.COL_SIDE_BARS > 0:
-        layers.insert(1, (sp.COL_SIDE_BARS * Ab, h / 2.0))
+        # Per side face; Model/Sections.py places this many bars on each of the
+        # two faces. See the matching note in RC_Design_Check._col_steel_layers.
+        layers.insert(1, (2 * sp.COL_SIDE_BARS * Ab, h / 2.0))
     return layers
 
 

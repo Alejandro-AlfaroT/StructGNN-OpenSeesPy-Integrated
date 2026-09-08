@@ -215,3 +215,245 @@ peer_expansion_30k,RSN6960_DARFIELD_RHSCN86W,all,1.0,1.0,PEER result_id=78; expa
 peer_expansion_30k,RSN6960_DARFIELD_RHSCS04W,all,1.0,1.0,PEER result_id=78; expansion_npts_max=30000; allow_npts_policy_excluded=true
 peer_expansion_30k,RSN6971_DARFIELD_SPFSN17E,all,1.0,1.0,PEER result_id=81; expansion_npts_max=30000; allow_npts_policy_excluded=true
 peer_expansion_30k,RSN6971_DARFIELD_SPFSN73W,all,1.0,1.0,PEER result_id=81; expansion_npts_max=30000; allow_npts_policy_excluded=true
+peer_strong_58,RSN15_KERN_TAF021,all,1.0,1.0,PEER result_id=1; RSN=15
+peer_strong_58,RSN15_KERN_TAF111,all,1.0,1.0,PEER result_id=1; RSN=15
+peer_strong_58,RSN88_SFERN_FSD172,all,1.0,1.0,PEER result_id=2; RSN=88
+peer_strong_58,RSN88_SFERN_FSD262,all,1.0,1.0,PEER result_id=2; RSN=88
+peer_strong_58,RSN93_SFERN_WND143,all,1.0,1.0,PEER result_id=3; RSN=93
+peer_strong_58,RSN93_SFERN_WND233,all,1.0,1.0,PEER result_id=3; RSN=93
+peer_strong_58,RSN167_IMPVALL.H_H-CMP015,all,1.0,1.0,PEER result_id=4; RSN=167
+peer_strong_58,RSN167_IMPVALL.H_H-CMP285,all,1.0,1.0,PEER result_id=4; RSN=167
+peer_strong_58,RSN290_ITALY_A-MER000,all,1.0,1.0,PEER result_id=5; RSN=290
+peer_strong_58,RSN290_ITALY_A-MER270,all,1.0,1.0,PEER result_id=5; RSN=290
+peer_strong_58,RSN776_LOMAP_HSP000,all,1.0,1.0,PEER result_id=6; RSN=776
+peer_strong_58,RSN776_LOMAP_HSP090,all,1.0,1.0,PEER result_id=6; RSN=776
+peer_strong_58,RSN800_LOMAP_SJW160,all,1.0,1.0,PEER result_id=7; RSN=800
+peer_strong_58,RSN800_LOMAP_SJW250,all,1.0,1.0,PEER result_id=7; RSN=800
+peer_strong_58,RSN806_LOMAP_SVL270,all,1.0,1.0,PEER result_id=8; RSN=806
+peer_strong_58,RSN806_LOMAP_SVL360,all,1.0,1.0,PEER result_id=8; RSN=806
+peer_strong_58,RSN838_LANDERS_BRS000,all,1.0,1.0,PEER result_id=9; RSN=838
+peer_strong_58,RSN838_LANDERS_BRS090,all,1.0,1.0,PEER result_id=9; RSN=838
+peer_strong_58,RSN850_LANDERS_DSP000,all,1.0,1.0,PEER result_id=10; RSN=850
+peer_strong_58,RSN850_LANDERS_DSP090,all,1.0,1.0,PEER result_id=10; RSN=850
+peer_strong_58,RSN864_LANDERS_JOS000,all,1.0,1.0,PEER result_id=11; RSN=864
+peer_strong_58,RSN864_LANDERS_JOS090,all,1.0,1.0,PEER result_id=11; RSN=864
+peer_strong_58,RSN881_LANDERS_MVH045,all,1.0,1.0,PEER result_id=13; RSN=881
+peer_strong_58,RSN881_LANDERS_MVH135,all,1.0,1.0,PEER result_id=13; RSN=881
+peer_strong_58,RSN884_LANDERS_PSA000,all,1.0,1.0,PEER result_id=15; RSN=884
+peer_strong_58,RSN884_LANDERS_PSA090,all,1.0,1.0,PEER result_id=15; RSN=884
+peer_strong_58,RSN1000_NORTHR_PIC090,all,1.0,1.0,PEER result_id=16; RSN=1000
+peer_strong_58,RSN1000_NORTHR_PIC180,all,1.0,1.0,PEER result_id=16; RSN=1000
+peer_strong_58,RSN1002_NORTHR_VRM000,all,1.0,1.0,PEER result_id=17; RSN=1002
+peer_strong_58,RSN1002_NORTHR_VRM090,all,1.0,1.0,PEER result_id=17; RSN=1002
+peer_strong_58,RSN1008_NORTHR_W15090,all,1.0,1.0,PEER result_id=18; RSN=1008
+peer_strong_58,RSN1008_NORTHR_W15180,all,1.0,1.0,PEER result_id=18; RSN=1008
+peer_strong_58,RSN1026_NORTHR_LOA092,all,1.0,1.0,PEER result_id=19; RSN=1026
+peer_strong_58,RSN1026_NORTHR_LOA182,all,1.0,1.0,PEER result_id=19; RSN=1026
+peer_strong_58,RSN1035_NORTHR_MAN000,all,1.0,1.0,PEER result_id=20; RSN=1035
+peer_strong_58,RSN1035_NORTHR_MAN090,all,1.0,1.0,PEER result_id=20; RSN=1035
+peer_strong_58,RSN1057_NORTHR_SAR000,all,1.0,1.0,PEER result_id=21; RSN=1057
+peer_strong_58,RSN1057_NORTHR_SAR270,all,1.0,1.0,PEER result_id=21; RSN=1057
+peer_strong_58,RSN1100_KOBE_ABN000,all,1.0,1.0,PEER result_id=22; RSN=1100
+peer_strong_58,RSN1100_KOBE_ABN090,all,1.0,1.0,PEER result_id=22; RSN=1100
+peer_strong_58,RSN1104_KOBE_FKS000,all,1.0,1.0,PEER result_id=23; RSN=1104
+peer_strong_58,RSN1104_KOBE_FKS090,all,1.0,1.0,PEER result_id=23; RSN=1104
+peer_strong_58,RSN1118_KOBE_TDO000,all,1.0,1.0,PEER result_id=25; RSN=1118
+peer_strong_58,RSN1118_KOBE_TDO090,all,1.0,1.0,PEER result_id=25; RSN=1118
+peer_strong_58,RSN1121_KOBE_YAE000,all,1.0,1.0,PEER result_id=26; RSN=1121
+peer_strong_58,RSN1121_KOBE_YAE090,all,1.0,1.0,PEER result_id=26; RSN=1121
+peer_strong_58,RSN3753_LANDERS_FVR045,all,1.0,1.0,PEER result_id=27; RSN=3753
+peer_strong_58,RSN3753_LANDERS_FVR135,all,1.0,1.0,PEER result_id=27; RSN=3753
+peer_strong_58,RSN3757_LANDERS_NPF090,all,1.0,1.0,PEER result_id=28; RSN=3757
+peer_strong_58,RSN3757_LANDERS_NPF180,all,1.0,1.0,PEER result_id=28; RSN=3757
+peer_strong_58,RSN3758_LANDERS_TPP045,all,1.0,1.0,PEER result_id=29; RSN=3758
+peer_strong_58,RSN3758_LANDERS_TPP135,all,1.0,1.0,PEER result_id=29; RSN=3758
+peer_strong_58,RSN3759_LANDERS_WWT180,all,1.0,1.0,PEER result_id=30; RSN=3759
+peer_strong_58,RSN3759_LANDERS_WWT270,all,1.0,1.0,PEER result_id=30; RSN=3759
+peer_strong_58,RSN4840_CHUETSU_65003NS,all,1.0,1.0,PEER result_id=35; RSN=4840
+peer_strong_58,RSN4840_CHUETSU_65003EW,all,1.0,1.0,PEER result_id=35; RSN=4840
+peer_strong_58,RSN4849_CHUETSU_65012NS,all,1.0,1.0,PEER result_id=36; RSN=4849
+peer_strong_58,RSN4849_CHUETSU_65012EW,all,1.0,1.0,PEER result_id=36; RSN=4849
+peer_strong_58,RSN4853_CHUETSU_65019NS,all,1.0,1.0,PEER result_id=37; RSN=4853
+peer_strong_58,RSN4853_CHUETSU_65019EW,all,1.0,1.0,PEER result_id=37; RSN=4853
+peer_strong_58,RSN4857_CHUETSU_65027NS,all,1.0,1.0,PEER result_id=38; RSN=4857
+peer_strong_58,RSN4857_CHUETSU_65027EW,all,1.0,1.0,PEER result_id=38; RSN=4857
+peer_strong_58,RSN4859_CHUETSU_65029NS,all,1.0,1.0,PEER result_id=39; RSN=4859
+peer_strong_58,RSN4859_CHUETSU_65029EW,all,1.0,1.0,PEER result_id=39; RSN=4859
+peer_strong_58,RSN4860_CHUETSU_65033NS,all,1.0,1.0,PEER result_id=40; RSN=4860
+peer_strong_58,RSN4860_CHUETSU_65033EW,all,1.0,1.0,PEER result_id=40; RSN=4860
+peer_strong_58,RSN4862_CHUETSU_65035NS,all,1.0,1.0,PEER result_id=41; RSN=4862
+peer_strong_58,RSN4862_CHUETSU_65035EW,all,1.0,1.0,PEER result_id=41; RSN=4862
+peer_strong_58,RSN4880_CHUETSU_65085NS,all,1.0,1.0,PEER result_id=42; RSN=4880
+peer_strong_58,RSN4880_CHUETSU_65085EW,all,1.0,1.0,PEER result_id=42; RSN=4880
+peer_strong_58,RSN4882_CHUETSU_65321NS,all,1.0,1.0,PEER result_id=43; RSN=4882
+peer_strong_58,RSN4882_CHUETSU_65321EW,all,1.0,1.0,PEER result_id=43; RSN=4882
+peer_strong_58,RSN4883_CHUETSU_690E1NS,all,1.0,1.0,PEER result_id=44; RSN=4883
+peer_strong_58,RSN4883_CHUETSU_690E1EW,all,1.0,1.0,PEER result_id=44; RSN=4883
+peer_strong_58,RSN4889_CHUETSU_6E1C1NS,all,1.0,1.0,PEER result_id=45; RSN=4889
+peer_strong_58,RSN4889_CHUETSU_6E1C1EW,all,1.0,1.0,PEER result_id=45; RSN=4889
+peer_strong_58,RSN5664_IWATE_MYG005NS,all,1.0,1.0,PEER result_id=58; RSN=5664; allow_npts_policy_excluded=true
+peer_strong_58,RSN5664_IWATE_MYG005EW,all,1.0,1.0,PEER result_id=58; RSN=5664; allow_npts_policy_excluded=true
+peer_strong_58,RSN5774_IWATE_54008NS,all,1.0,1.0,PEER result_id=61; RSN=5774
+peer_strong_58,RSN5774_IWATE_54008EW,all,1.0,1.0,PEER result_id=61; RSN=5774
+peer_strong_58,RSN5777_IWATE_54011NS,all,1.0,1.0,PEER result_id=62; RSN=5777
+peer_strong_58,RSN5777_IWATE_54011EW,all,1.0,1.0,PEER result_id=62; RSN=5777
+peer_strong_58,RSN5783_IWATE_54026NS,all,1.0,1.0,PEER result_id=63; RSN=5783
+peer_strong_58,RSN5783_IWATE_54026EW,all,1.0,1.0,PEER result_id=63; RSN=5783
+peer_strong_58,RSN5784_IWATE_54031NS,all,1.0,1.0,PEER result_id=64; RSN=5784
+peer_strong_58,RSN5784_IWATE_54031EW,all,1.0,1.0,PEER result_id=64; RSN=5784
+peer_strong_58,RSN5785_IWATE_54036NS,all,1.0,1.0,PEER result_id=65; RSN=5785
+peer_strong_58,RSN5785_IWATE_54036EW,all,1.0,1.0,PEER result_id=65; RSN=5785
+peer_strong_58,RSN5786_IWATE_54038NS,all,1.0,1.0,PEER result_id=66; RSN=5786
+peer_strong_58,RSN5786_IWATE_54038EW,all,1.0,1.0,PEER result_id=66; RSN=5786
+peer_strong_58,RSN5801_IWATE_55442NS,all,1.0,1.0,PEER result_id=67; RSN=5801
+peer_strong_58,RSN5801_IWATE_55442EW,all,1.0,1.0,PEER result_id=67; RSN=5801
+peer_strong_58,RSN5803_IWATE_55445NS,all,1.0,1.0,PEER result_id=68; RSN=5803
+peer_strong_58,RSN5803_IWATE_55445EW,all,1.0,1.0,PEER result_id=68; RSN=5803
+peer_strong_58,RSN5812_IWATE_44B61NS,all,1.0,1.0,PEER result_id=69; RSN=5812
+peer_strong_58,RSN5812_IWATE_44B61EW,all,1.0,1.0,PEER result_id=69; RSN=5812
+peer_strong_58,RSN5817_IWATE_48A51NS,all,1.0,1.0,PEER result_id=70; RSN=5817
+peer_strong_58,RSN5817_IWATE_48A51EW,all,1.0,1.0,PEER result_id=70; RSN=5817
+peer_strong_58,RSN6896_DARFIELD_DORCN20W,all,1.0,1.0,PEER result_id=74; RSN=6896
+peer_strong_58,RSN6896_DARFIELD_DORCN70E,all,1.0,1.0,PEER result_id=74; RSN=6896
+peer_strong_58,RSN6923_DARFIELD_KPOCN15E,all,1.0,1.0,PEER result_id=75; RSN=6923
+peer_strong_58,RSN6923_DARFIELD_KPOCS75E,all,1.0,1.0,PEER result_id=75; RSN=6923
+peer_strong_58,RSN6933_DARFIELD_MAYCN14E,all,1.0,1.0,PEER result_id=76; RSN=6933
+peer_strong_58,RSN6933_DARFIELD_MAYCN76W,all,1.0,1.0,PEER result_id=76; RSN=6933
+peer_strong_58,RSN6952_DARFIELD_PPHSS33W,all,1.0,1.0,PEER result_id=77; RSN=6952; allow_npts_policy_excluded=true
+peer_strong_58,RSN6952_DARFIELD_PPHSS57E,all,1.0,1.0,PEER result_id=77; RSN=6952; allow_npts_policy_excluded=true
+peer_strong_58,RSN6960_DARFIELD_RHSCN86W,all,1.0,1.0,PEER result_id=78; RSN=6960; allow_npts_policy_excluded=true
+peer_strong_58,RSN6960_DARFIELD_RHSCS04W,all,1.0,1.0,PEER result_id=78; RSN=6960; allow_npts_policy_excluded=true
+peer_strong_58,RSN6961_DARFIELD_RKACN14E,all,1.0,1.0,PEER result_id=79; RSN=6961
+peer_strong_58,RSN6961_DARFIELD_RKACS76E,all,1.0,1.0,PEER result_id=79; RSN=6961
+peer_strong_58,RSN6965_DARFIELD_SBRCS31E,all,1.0,1.0,PEER result_id=80; RSN=6965
+peer_strong_58,RSN6965_DARFIELD_SBRCS59W,all,1.0,1.0,PEER result_id=80; RSN=6965
+peer_strong_58,RSN6971_DARFIELD_SPFSN17E,all,1.0,1.0,PEER result_id=81; RSN=6971; allow_npts_policy_excluded=true
+peer_strong_58,RSN6971_DARFIELD_SPFSN73W,all,1.0,1.0,PEER result_id=81; RSN=6971; allow_npts_policy_excluded=true
+peer_strong_58,RSN6988_DARFIELD_WSFCN38W,all,1.0,1.0,PEER result_id=82; RSN=6988
+peer_strong_58,RSN6988_DARFIELD_WSFCS52W,all,1.0,1.0,PEER result_id=82; RSN=6988
+peer_strong_63,RSN15_KERN_TAF021,all,1.0,1.0,PEER result_id=1; RSN=15
+peer_strong_63,RSN15_KERN_TAF111,all,1.0,1.0,PEER result_id=1; RSN=15
+peer_strong_63,RSN88_SFERN_FSD172,all,1.0,1.0,PEER result_id=2; RSN=88
+peer_strong_63,RSN88_SFERN_FSD262,all,1.0,1.0,PEER result_id=2; RSN=88
+peer_strong_63,RSN93_SFERN_WND143,all,1.0,1.0,PEER result_id=3; RSN=93
+peer_strong_63,RSN93_SFERN_WND233,all,1.0,1.0,PEER result_id=3; RSN=93
+peer_strong_63,RSN167_IMPVALL.H_H-CMP015,all,1.0,1.0,PEER result_id=4; RSN=167
+peer_strong_63,RSN167_IMPVALL.H_H-CMP285,all,1.0,1.0,PEER result_id=4; RSN=167
+peer_strong_63,RSN290_ITALY_A-MER000,all,1.0,1.0,PEER result_id=5; RSN=290
+peer_strong_63,RSN290_ITALY_A-MER270,all,1.0,1.0,PEER result_id=5; RSN=290
+peer_strong_63,RSN776_LOMAP_HSP000,all,1.0,1.0,PEER result_id=6; RSN=776
+peer_strong_63,RSN776_LOMAP_HSP090,all,1.0,1.0,PEER result_id=6; RSN=776
+peer_strong_63,RSN800_LOMAP_SJW160,all,1.0,1.0,PEER result_id=7; RSN=800
+peer_strong_63,RSN800_LOMAP_SJW250,all,1.0,1.0,PEER result_id=7; RSN=800
+peer_strong_63,RSN806_LOMAP_SVL270,all,1.0,1.0,PEER result_id=8; RSN=806
+peer_strong_63,RSN806_LOMAP_SVL360,all,1.0,1.0,PEER result_id=8; RSN=806
+peer_strong_63,RSN838_LANDERS_BRS000,all,1.0,1.0,PEER result_id=9; RSN=838
+peer_strong_63,RSN838_LANDERS_BRS090,all,1.0,1.0,PEER result_id=9; RSN=838
+peer_strong_63,RSN850_LANDERS_DSP000,all,1.0,1.0,PEER result_id=10; RSN=850
+peer_strong_63,RSN850_LANDERS_DSP090,all,1.0,1.0,PEER result_id=10; RSN=850
+peer_strong_63,RSN864_LANDERS_JOS000,all,1.0,1.0,PEER result_id=11; RSN=864
+peer_strong_63,RSN864_LANDERS_JOS090,all,1.0,1.0,PEER result_id=11; RSN=864
+peer_strong_63,RSN881_LANDERS_MVH045,all,1.0,1.0,PEER result_id=13; RSN=881
+peer_strong_63,RSN881_LANDERS_MVH135,all,1.0,1.0,PEER result_id=13; RSN=881
+peer_strong_63,RSN882_LANDERS_FHS000,all,1.0,1.0,PEER result_id=14; RSN=882; allow_npts_policy_excluded=true
+peer_strong_63,RSN882_LANDERS_FHS090,all,1.0,1.0,PEER result_id=14; RSN=882; allow_npts_policy_excluded=true
+peer_strong_63,RSN884_LANDERS_PSA000,all,1.0,1.0,PEER result_id=15; RSN=884
+peer_strong_63,RSN884_LANDERS_PSA090,all,1.0,1.0,PEER result_id=15; RSN=884
+peer_strong_63,RSN1000_NORTHR_PIC090,all,1.0,1.0,PEER result_id=16; RSN=1000
+peer_strong_63,RSN1000_NORTHR_PIC180,all,1.0,1.0,PEER result_id=16; RSN=1000
+peer_strong_63,RSN1002_NORTHR_VRM000,all,1.0,1.0,PEER result_id=17; RSN=1002
+peer_strong_63,RSN1002_NORTHR_VRM090,all,1.0,1.0,PEER result_id=17; RSN=1002
+peer_strong_63,RSN1008_NORTHR_W15090,all,1.0,1.0,PEER result_id=18; RSN=1008
+peer_strong_63,RSN1008_NORTHR_W15180,all,1.0,1.0,PEER result_id=18; RSN=1008
+peer_strong_63,RSN1026_NORTHR_LOA092,all,1.0,1.0,PEER result_id=19; RSN=1026
+peer_strong_63,RSN1026_NORTHR_LOA182,all,1.0,1.0,PEER result_id=19; RSN=1026
+peer_strong_63,RSN1035_NORTHR_MAN000,all,1.0,1.0,PEER result_id=20; RSN=1035
+peer_strong_63,RSN1035_NORTHR_MAN090,all,1.0,1.0,PEER result_id=20; RSN=1035
+peer_strong_63,RSN1057_NORTHR_SAR000,all,1.0,1.0,PEER result_id=21; RSN=1057
+peer_strong_63,RSN1057_NORTHR_SAR270,all,1.0,1.0,PEER result_id=21; RSN=1057
+peer_strong_63,RSN1100_KOBE_ABN000,all,1.0,1.0,PEER result_id=22; RSN=1100
+peer_strong_63,RSN1100_KOBE_ABN090,all,1.0,1.0,PEER result_id=22; RSN=1100
+peer_strong_63,RSN1104_KOBE_FKS000,all,1.0,1.0,PEER result_id=23; RSN=1104
+peer_strong_63,RSN1104_KOBE_FKS090,all,1.0,1.0,PEER result_id=23; RSN=1104
+peer_strong_63,RSN1110_KOBE_MRG000,all,1.0,1.0,PEER result_id=24; RSN=1110; allow_npts_policy_excluded=true
+peer_strong_63,RSN1110_KOBE_MRG090,all,1.0,1.0,PEER result_id=24; RSN=1110; allow_npts_policy_excluded=true
+peer_strong_63,RSN1118_KOBE_TDO000,all,1.0,1.0,PEER result_id=25; RSN=1118
+peer_strong_63,RSN1118_KOBE_TDO090,all,1.0,1.0,PEER result_id=25; RSN=1118
+peer_strong_63,RSN1121_KOBE_YAE000,all,1.0,1.0,PEER result_id=26; RSN=1121
+peer_strong_63,RSN1121_KOBE_YAE090,all,1.0,1.0,PEER result_id=26; RSN=1121
+peer_strong_63,RSN3753_LANDERS_FVR045,all,1.0,1.0,PEER result_id=27; RSN=3753
+peer_strong_63,RSN3753_LANDERS_FVR135,all,1.0,1.0,PEER result_id=27; RSN=3753
+peer_strong_63,RSN3757_LANDERS_NPF090,all,1.0,1.0,PEER result_id=28; RSN=3757
+peer_strong_63,RSN3757_LANDERS_NPF180,all,1.0,1.0,PEER result_id=28; RSN=3757
+peer_strong_63,RSN3758_LANDERS_TPP045,all,1.0,1.0,PEER result_id=29; RSN=3758
+peer_strong_63,RSN3758_LANDERS_TPP135,all,1.0,1.0,PEER result_id=29; RSN=3758
+peer_strong_63,RSN3759_LANDERS_WWT180,all,1.0,1.0,PEER result_id=30; RSN=3759
+peer_strong_63,RSN3759_LANDERS_WWT270,all,1.0,1.0,PEER result_id=30; RSN=3759
+peer_strong_63,RSN4840_CHUETSU_65003NS,all,1.0,1.0,PEER result_id=35; RSN=4840
+peer_strong_63,RSN4840_CHUETSU_65003EW,all,1.0,1.0,PEER result_id=35; RSN=4840
+peer_strong_63,RSN4849_CHUETSU_65012NS,all,1.0,1.0,PEER result_id=36; RSN=4849
+peer_strong_63,RSN4849_CHUETSU_65012EW,all,1.0,1.0,PEER result_id=36; RSN=4849
+peer_strong_63,RSN4853_CHUETSU_65019NS,all,1.0,1.0,PEER result_id=37; RSN=4853
+peer_strong_63,RSN4853_CHUETSU_65019EW,all,1.0,1.0,PEER result_id=37; RSN=4853
+peer_strong_63,RSN4857_CHUETSU_65027NS,all,1.0,1.0,PEER result_id=38; RSN=4857
+peer_strong_63,RSN4857_CHUETSU_65027EW,all,1.0,1.0,PEER result_id=38; RSN=4857
+peer_strong_63,RSN4859_CHUETSU_65029NS,all,1.0,1.0,PEER result_id=39; RSN=4859
+peer_strong_63,RSN4859_CHUETSU_65029EW,all,1.0,1.0,PEER result_id=39; RSN=4859
+peer_strong_63,RSN4860_CHUETSU_65033NS,all,1.0,1.0,PEER result_id=40; RSN=4860
+peer_strong_63,RSN4860_CHUETSU_65033EW,all,1.0,1.0,PEER result_id=40; RSN=4860
+peer_strong_63,RSN4862_CHUETSU_65035NS,all,1.0,1.0,PEER result_id=41; RSN=4862
+peer_strong_63,RSN4862_CHUETSU_65035EW,all,1.0,1.0,PEER result_id=41; RSN=4862
+peer_strong_63,RSN4880_CHUETSU_65085NS,all,1.0,1.0,PEER result_id=42; RSN=4880
+peer_strong_63,RSN4880_CHUETSU_65085EW,all,1.0,1.0,PEER result_id=42; RSN=4880
+peer_strong_63,RSN4882_CHUETSU_65321NS,all,1.0,1.0,PEER result_id=43; RSN=4882
+peer_strong_63,RSN4882_CHUETSU_65321EW,all,1.0,1.0,PEER result_id=43; RSN=4882
+peer_strong_63,RSN4883_CHUETSU_690E1NS,all,1.0,1.0,PEER result_id=44; RSN=4883
+peer_strong_63,RSN4883_CHUETSU_690E1EW,all,1.0,1.0,PEER result_id=44; RSN=4883
+peer_strong_63,RSN4889_CHUETSU_6E1C1NS,all,1.0,1.0,PEER result_id=45; RSN=4889
+peer_strong_63,RSN4889_CHUETSU_6E1C1EW,all,1.0,1.0,PEER result_id=45; RSN=4889
+peer_strong_63,RSN5265_CHUETSU_NIG019NS,all,1.0,1.0,PEER result_id=48; RSN=5265; allow_npts_policy_excluded=true
+peer_strong_63,RSN5265_CHUETSU_NIG019EW,all,1.0,1.0,PEER result_id=48; RSN=5265; allow_npts_policy_excluded=true
+peer_strong_63,RSN5664_IWATE_MYG005NS,all,1.0,1.0,PEER result_id=58; RSN=5664; allow_npts_policy_excluded=true
+peer_strong_63,RSN5664_IWATE_MYG005EW,all,1.0,1.0,PEER result_id=58; RSN=5664; allow_npts_policy_excluded=true
+peer_strong_63,RSN5774_IWATE_54008NS,all,1.0,1.0,PEER result_id=61; RSN=5774
+peer_strong_63,RSN5774_IWATE_54008EW,all,1.0,1.0,PEER result_id=61; RSN=5774
+peer_strong_63,RSN5777_IWATE_54011NS,all,1.0,1.0,PEER result_id=62; RSN=5777
+peer_strong_63,RSN5777_IWATE_54011EW,all,1.0,1.0,PEER result_id=62; RSN=5777
+peer_strong_63,RSN5783_IWATE_54026NS,all,1.0,1.0,PEER result_id=63; RSN=5783
+peer_strong_63,RSN5783_IWATE_54026EW,all,1.0,1.0,PEER result_id=63; RSN=5783
+peer_strong_63,RSN5784_IWATE_54031NS,all,1.0,1.0,PEER result_id=64; RSN=5784
+peer_strong_63,RSN5784_IWATE_54031EW,all,1.0,1.0,PEER result_id=64; RSN=5784
+peer_strong_63,RSN5785_IWATE_54036NS,all,1.0,1.0,PEER result_id=65; RSN=5785
+peer_strong_63,RSN5785_IWATE_54036EW,all,1.0,1.0,PEER result_id=65; RSN=5785
+peer_strong_63,RSN5786_IWATE_54038NS,all,1.0,1.0,PEER result_id=66; RSN=5786
+peer_strong_63,RSN5786_IWATE_54038EW,all,1.0,1.0,PEER result_id=66; RSN=5786
+peer_strong_63,RSN5801_IWATE_55442NS,all,1.0,1.0,PEER result_id=67; RSN=5801
+peer_strong_63,RSN5801_IWATE_55442EW,all,1.0,1.0,PEER result_id=67; RSN=5801
+peer_strong_63,RSN5803_IWATE_55445NS,all,1.0,1.0,PEER result_id=68; RSN=5803
+peer_strong_63,RSN5803_IWATE_55445EW,all,1.0,1.0,PEER result_id=68; RSN=5803
+peer_strong_63,RSN5812_IWATE_44B61NS,all,1.0,1.0,PEER result_id=69; RSN=5812
+peer_strong_63,RSN5812_IWATE_44B61EW,all,1.0,1.0,PEER result_id=69; RSN=5812
+peer_strong_63,RSN5817_IWATE_48A51NS,all,1.0,1.0,PEER result_id=70; RSN=5817
+peer_strong_63,RSN5817_IWATE_48A51EW,all,1.0,1.0,PEER result_id=70; RSN=5817
+peer_strong_63,RSN6886_DARFIELD_CACSN40E,all,1.0,1.0,PEER result_id=72; RSN=6886; allow_npts_policy_excluded=true
+peer_strong_63,RSN6886_DARFIELD_CACSN50W,all,1.0,1.0,PEER result_id=72; RSN=6886; allow_npts_policy_excluded=true
+peer_strong_63,RSN6893_DARFIELD_DFHSS17E,all,1.0,1.0,PEER result_id=73; RSN=6893; allow_npts_policy_excluded=true
+peer_strong_63,RSN6893_DARFIELD_DFHSS73W,all,1.0,1.0,PEER result_id=73; RSN=6893; allow_npts_policy_excluded=true
+peer_strong_63,RSN6896_DARFIELD_DORCN20W,all,1.0,1.0,PEER result_id=74; RSN=6896
+peer_strong_63,RSN6896_DARFIELD_DORCN70E,all,1.0,1.0,PEER result_id=74; RSN=6896
+peer_strong_63,RSN6923_DARFIELD_KPOCN15E,all,1.0,1.0,PEER result_id=75; RSN=6923
+peer_strong_63,RSN6923_DARFIELD_KPOCS75E,all,1.0,1.0,PEER result_id=75; RSN=6923
+peer_strong_63,RSN6933_DARFIELD_MAYCN14E,all,1.0,1.0,PEER result_id=76; RSN=6933
+peer_strong_63,RSN6933_DARFIELD_MAYCN76W,all,1.0,1.0,PEER result_id=76; RSN=6933
+peer_strong_63,RSN6952_DARFIELD_PPHSS33W,all,1.0,1.0,PEER result_id=77; RSN=6952; allow_npts_policy_excluded=true
+peer_strong_63,RSN6952_DARFIELD_PPHSS57E,all,1.0,1.0,PEER result_id=77; RSN=6952; allow_npts_policy_excluded=true
+peer_strong_63,RSN6960_DARFIELD_RHSCN86W,all,1.0,1.0,PEER result_id=78; RSN=6960; allow_npts_policy_excluded=true
+peer_strong_63,RSN6960_DARFIELD_RHSCS04W,all,1.0,1.0,PEER result_id=78; RSN=6960; allow_npts_policy_excluded=true
+peer_strong_63,RSN6961_DARFIELD_RKACN14E,all,1.0,1.0,PEER result_id=79; RSN=6961
+peer_strong_63,RSN6961_DARFIELD_RKACS76E,all,1.0,1.0,PEER result_id=79; RSN=6961
+peer_strong_63,RSN6965_DARFIELD_SBRCS31E,all,1.0,1.0,PEER result_id=80; RSN=6965
+peer_strong_63,RSN6965_DARFIELD_SBRCS59W,all,1.0,1.0,PEER result_id=80; RSN=6965
+peer_strong_63,RSN6971_DARFIELD_SPFSN17E,all,1.0,1.0,PEER result_id=81; RSN=6971; allow_npts_policy_excluded=true
+peer_strong_63,RSN6971_DARFIELD_SPFSN73W,all,1.0,1.0,PEER result_id=81; RSN=6971; allow_npts_policy_excluded=true
+peer_strong_63,RSN6988_DARFIELD_WSFCN38W,all,1.0,1.0,PEER result_id=82; RSN=6988
+peer_strong_63,RSN6988_DARFIELD_WSFCS52W,all,1.0,1.0,PEER result_id=82; RSN=6988

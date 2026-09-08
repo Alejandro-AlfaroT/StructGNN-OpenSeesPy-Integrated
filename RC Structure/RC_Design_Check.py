@@ -42,21 +42,29 @@ def _stirrup_area(bar_size, legs):
 # and the effective depth is d = h - cover.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _col_steel_layers():
+def _col_steel_layers(h=None):
     """
     Column steel layers for P-M diagram sweep.
     Returns list of (area_in2, dist_from_compression_face_in).
     Compression face assumed at z = +h/2 (top face of cross-section).
+
+    h defaults to the current section depth. The design ladder passes it
+    explicitly to price a candidate section without mutating the globals.
     """
     cover = sp.COVER
-    h     = sp.H_COL
+    h     = sp.H_COL if h is None else h
     Ab    = sp.COL_BAR_AREA
     layers = [
         (sp.COL_TOP_BARS * Ab, cover),       # compression-side bars
         (sp.COL_BOT_BARS * Ab, h - cover),   # tension-side bars
     ]
     if sp.COL_SIDE_BARS > 0:
-        layers.insert(1, (sp.COL_SIDE_BARS * Ab, h / 2.0))
+        # COL_SIDE_BARS is the count PER SIDE FACE: Model/Sections.py lays a
+        # straight layer of that many bars down each of the two side faces, so
+        # the section holds twice this count. Counting them once left the P-M
+        # surface missing a quarter of the longitudinal steel, which understated
+        # every column capacity derived from it -- hinge yield moments included.
+        layers.insert(1, (2 * sp.COL_SIDE_BARS * Ab, h / 2.0))
     return layers
 
 
