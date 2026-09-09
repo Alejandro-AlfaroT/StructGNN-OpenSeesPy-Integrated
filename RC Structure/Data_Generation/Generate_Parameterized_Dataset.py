@@ -638,9 +638,41 @@ def successful_status(path):
         return False
 
 
+def collapse_labelled(sample_path):
+    """True when a compiled sample is labelled as a collapse.
+
+    Reads the exporter's verdict rather than re-deriving one, so the
+    scheduler and Hybrid_Exporter cannot disagree about what a collapse is.
+    """
+    metadata_path = Path(sample_path).with_name("hybrid_metadata.json")
+    if not metadata_path.exists():
+        return False
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    return bool(metadata.get("collapse"))
+
+
 def complete_run(root, case, run):
+    """Whether one run is finished and need not be attempted again.
+
+    A run that stops early because the structure collapsed is finished, not
+    failed. Hybrid_Exporter already keeps and labels such a run, and
+    Calibrate_Intensity censors it rather than discarding it, but the
+    scheduler only ever looked at the step count -- so a collapse stayed in
+    the remaining list and was retried on every invocation. The analysis is
+    deterministic, so each retry reproduced the same collapse and the batch
+    could never report itself complete. At the dataset's 10 percent
+    near-collapse target that is several hundred runs looping indefinitely.
+
+    A compiled sample is required either way: a run that produced no sample
+    has nothing to contribute regardless of why it stopped.
+    """
     paths = run_paths_for(root, case, run)
-    return successful_status(paths["status"]) and paths["sample"].exists()
+    if not paths["sample"].exists():
+        return False
+    return successful_status(paths["status"]) or collapse_labelled(paths["sample"])
 
 
 def completed_run_count(root, case):

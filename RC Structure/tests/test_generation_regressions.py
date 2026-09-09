@@ -830,5 +830,63 @@ class GenerationRegressionTests(unittest.TestCase):
             IMK_Hinges._orientation("brace")
 
 
+
+class CollapseCompletionTests(unittest.TestCase):
+    """A collapsed run is finished, not failed.
+
+    Hybrid_Exporter keeps and labels a run that stopped early because the
+    structure collapsed, and Calibrate_Intensity censors rather than discards
+    it. The scheduler judged the same run only by step count, so it stayed in
+    the remaining list and was retried on every invocation -- forever, since
+    the analysis is deterministic.
+    """
+
+    def _make_run(self, root, *, failed, collapse, with_sample=True):
+        case = {
+            "case_id": "case_0001",
+            "runs": [{"run_index": 1, "result_id": 7, "scale_factor": 3.0,
+                      "run_name": "peer_7__sf_3"}],
+        }
+        run = case["runs"][0]
+        paths = Generate_Parameterized_Dataset.run_paths_for(root, case, run)
+        paths["status"].parent.mkdir(parents=True, exist_ok=True)
+        paths["status"].write_text(json.dumps({
+            "npts_requested": 6000,
+            "completed_steps": 4588 if failed else 6000,
+            "failed": failed,
+        }), encoding="utf-8")
+        if with_sample:
+            paths["sample"].parent.mkdir(parents=True, exist_ok=True)
+            paths["sample"].write_bytes(b"")
+            paths["sample"].with_name("hybrid_metadata.json").write_text(
+                json.dumps({"collapse": collapse}), encoding="utf-8"
+            )
+        return case, run
+
+    def test_collapsed_run_counts_as_complete(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            case, run = self._make_run(root, failed=True, collapse=True)
+            self.assertTrue(Generate_Parameterized_Dataset.complete_run(root, case, run))
+            self.assertTrue(Generate_Parameterized_Dataset.complete(root, case))
+
+    def test_failed_run_without_collapse_label_is_not_complete(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            case, run = self._make_run(root, failed=True, collapse=False)
+            self.assertFalse(Generate_Parameterized_Dataset.complete_run(root, case, run))
+
+    def test_collapse_without_a_sample_is_not_complete(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            case, run = self._make_run(root, failed=True, collapse=True, with_sample=False)
+            self.assertFalse(Generate_Parameterized_Dataset.complete_run(root, case, run))
+
+    def test_clean_run_still_complete_without_any_collapse_label(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            case, run = self._make_run(root, failed=False, collapse=False)
+            self.assertTrue(Generate_Parameterized_Dataset.complete_run(root, case, run))
+
 if __name__ == "__main__":
     unittest.main()
