@@ -79,16 +79,37 @@ CALIBRATION_SCHEMA = "rc_intensity_calibration_v1"
 # a band of near-elastic cases: a surrogate trained only on damaged structures
 # is unreliable at service levels, which is where most of a fragility curve's
 # probability mass sits.
+# Deliberately weighted toward heavy nonlinear response. This dataset trains a
+# surrogate to predict the regime that is hard to analyse, so it over-samples
+# damage relative to real seismic hazard, where a building portfolio is
+# overwhelmingly elastic. That is a stated design choice, not an accident, and
+# belongs in any methods description of the dataset.
+#
+# The shares are set from measurement, not intuition. Across 88 pilot runs the
+# is_inelastic gate passes 0% below 1.25% drift, 18% in 1.5-2.0%, and 17 of 17
+# above 2.0% -- the gate is dominated by hinge damage ratio, which tracks drift
+# closely but crosses its 0.25 threshold near 2% drift, not the 1% the bands
+# were previously built around. The old shares put 30% of the mass in the
+# 1-2% band, which contributes almost nothing (9% pass), and expected only
+# ~38% overall. Moving that mass into the severe band -- fully reachable
+# within the 3.0 scale cap -- raises the expectation to ~66%, or ~60% after
+# the near-collapse band's cap-limited losses.
 TARGET_DRIFT_BANDS = (
-    ("elastic", 0.0025, 0.005, 0.15),
-    ("onset", 0.005, 0.010, 0.20),
-    ("developed", 0.010, 0.020, 0.30),
-    ("severe", 0.020, 0.040, 0.25),
-    ("near_collapse", 0.040, 0.080, 0.10),
+    ("elastic", 0.0025, 0.005, 0.10),
+    ("onset", 0.005, 0.010, 0.10),
+    ("developed", 0.010, 0.020, 0.15),
+    ("severe", 0.020, 0.040, 0.50),
+    ("near_collapse", 0.040, 0.080, 0.15),
 )
 
 SCALE_FACTOR_MIN = 0.25
-SCALE_FACTOR_MAX = 8.0
+# Scaling a record far beyond its own intensity distorts spectral shape
+# relative to the magnitude and distance it actually came from, so the
+# response stops being representative of the hazard it claims to model.
+# Capped at 3 deliberately. Measured consequence with record-target matching:
+# every target band up to 4% drift stays fully reachable, and only the
+# near-collapse band (4-8%) loses ground -- 40% of it, about 4% of all runs.
+SCALE_FACTOR_MAX = 3.0
 
 # Interstory drift above this is not a structure, it is a diverged solution.
 # Collapse is conventionally taken at 5-10% drift; 20% is generous headroom

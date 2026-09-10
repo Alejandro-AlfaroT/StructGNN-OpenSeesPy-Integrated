@@ -352,6 +352,20 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         "yield_moment_y_kip_in": props["my"],
         "yield_moment_z_kip_in": props["mz"],
         "theta_y_target": props["theta_y"],
+        # The spring's OWN elastic limit. theta_y_target is a member-level
+        # nominal (a fixed 0.004 for columns, 0.005 for beams), but the spring
+        # is deliberately IMK_HINGE_STIFFNESS_FACTOR times the member
+        # stiffness, so it yields at My/Ke -- 26x to 65x smaller across the
+        # pilot. Recorded hinge rotation is spring rotation, so plastic
+        # rotation must be measured from this, not from the member nominal.
+        "theta_y_spring_y": (
+            props["my"] / imk_hinge_stiffness(member_type, "rot_y", length)
+            if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
+        ),
+        "theta_y_spring_z": (
+            props["mz"] / imk_hinge_stiffness(member_type, "rot_z", length)
+            if imk_hinge_stiffness(member_type, "rot_z", length) > 0 else 0.0
+        ),
         "stiffness_modifier": props["stiffness_modifier"],
         **backbone,
     }

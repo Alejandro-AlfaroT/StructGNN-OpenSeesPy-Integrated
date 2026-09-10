@@ -198,9 +198,20 @@ def _hinge_backbone_rows(results):
         ele_tag, end_id = divmod(offset, 10)
         backbone = registry.get(ele_tag, {})
         theta_p = backbone.get("theta_p") or 0.0
+        # Recorded rotation is the SPRING's rotation, so the elastic part to
+        # remove is the spring's own yield rotation, not the member-level
+        # nominal theta_y_target. Subtracting the nominal (a fixed 0.004 for
+        # columns) took away 26x to 65x more than the spring actually stores
+        # elastically, understating plastic rotation and damage_ratio -- by
+        # 18% on the worst hinge of case_0008. theta_y_target is still
+        # reported, because it is what the backbone was calibrated against.
         theta_y = backbone.get("theta_y_target") or 0.0
         rotation = max(peaks["abs_max"])
-        plastic = max(0.0, rotation - theta_y)
+        spring_theta_y = max(
+            backbone.get("theta_y_spring_y") or 0.0,
+            backbone.get("theta_y_spring_z") or 0.0,
+        ) or theta_y
+        plastic = max(0.0, rotation - spring_theta_y)
         rows.append(
             {
                 "hinge_ele_tag": int(hinge_tag),
@@ -211,6 +222,7 @@ def _hinge_backbone_rows(results):
                 "axial_ratio": backbone.get("axial_ratio", 0.0),
                 "yield_moment_kip_in": backbone.get("yield_moment_y_kip_in", 0.0),
                 "theta_y": theta_y,
+                "theta_y_spring": spring_theta_y,
                 "theta_p": theta_p,
                 "theta_pc": backbone.get("theta_pc", 0.0),
                 "theta_u": backbone.get("theta_u", 0.0),
@@ -224,7 +236,7 @@ def _hinge_backbone_rows(results):
                 # plastic rotation. 0 is elastic, 1 is the onset of strength
                 # loss. Unlike the moment ratio this does not saturate.
                 "damage_ratio": (plastic / theta_p) if theta_p > 0 else 0.0,
-                "yielded": 1 if rotation > theta_y else 0,
+                "yielded": 1 if rotation > spring_theta_y else 0,
                 "past_capping": 1 if theta_p > 0 and plastic >= theta_p else 0,
             }
         )

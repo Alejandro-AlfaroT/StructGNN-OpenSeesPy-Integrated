@@ -237,6 +237,21 @@ INELASTIC_DAMAGE_RATIO_THRESHOLD = 0.25
 INELASTIC_YIELDED_FRACTION_THRESHOLD = 0.10
 COLLAPSE_DRIFT_RATIO = 0.10
 
+# Beyond this the solution has diverged, not deformed: a structure is gone well
+# before 20% interstory drift. A diverged solve writes finite but meaningless
+# numbers -- pilot30_s3 case_0003 recorded a drift ratio of 135 (13,508%) with
+# a hinge damage ratio of 4.9e13 -- and those land in damage_metrics and
+# target_peak, which embeddings.py and the training loaders read with raw
+# np.load. Guarding only in schema_v3 was not enough: the surrogate's actual
+# data path never goes through it. Metrics are therefore computed over the
+# pre-divergence prefix, which also preserves the real collapse -- case_0022
+# genuinely reached 9.9% drift before the solver lost it at 173%.
+PHYSICAL_DRIFT_CEILING = 0.20
+
+# plastic_rotation / theta_p. Past roughly this the section has disintegrated;
+# larger values are divergence artifacts, not damage.
+PHYSICAL_DAMAGE_RATIO_CEILING = 20.0
+
 TARGET_PEAK_COLUMNS = [
     "max_abs_roof_disp_x_in",
     "max_abs_roof_disp_y_in",
@@ -471,28 +486,53 @@ def _damage_metrics(arrays, hinge_rows, global_parameters, status):
 
     peak_drift = 0.0
     residual_drift = 0.0
+    physical_steps = None
+    truncated_steps = 0
     if story_drift is not None and story_drift.size:
         drift_x = story_drift[:, :num_floor]
         drift_y = story_drift[:, num_floor:2 * num_floor]
         resultant = np.sqrt(drift_x**2 + drift_y**2)
-        peak_drift = float(resultant.max())
-        # Average the final few percent of steps so a single noisy last step
-        # does not decide the residual.
-        tail = max(1, int(0.02 * resultant.shape[0]))
-        residual_drift = float(resultant[-tail:].max(axis=1).mean())
+
+        # Keep only the prefix the solver was still describing a structure in.
+        per_step = resultant.max(axis=1)
+        physical = np.flatnonzero(per_step <= PHYSICAL_DRIFT_CEILING)
+        if physical.size and physical[-1] + 1 < resultant.shape[0]:
+            physical_steps = int(physical[-1] + 1)
+            truncated_steps = int(resultant.shape[0] - physical_steps)
+            resultant = resultant[:physical_steps]
+        elif not physical.size:
+            # Diverged before ever being physical; nothing usable here.
+            physical_steps = 0
+            truncated_steps = int(resultant.shape[0])
+            resultant = resultant[:0]
+
+        if resultant.size:
+            peak_drift = float(resultant.max())
+            # Average the final few percent of steps so a single noisy last step
+            # does not decide the residual.
+            tail = max(1, int(0.02 * resultant.shape[0]))
+            residual_drift = float(resultant[-tail:].max(axis=1).mean())
 
     roof_drift = 0.0
     floor_disp = arrays.get("floor_disp")
     if floor_disp is not None and floor_disp.size and total_height > 0:
         roof = np.hypot(floor_disp[:, -2], floor_disp[:, -1])
-        roof_drift = float(roof.max() / total_height)
+        if physical_steps is not None:
+            roof = roof[:physical_steps]
+        roof_drift = float(roof.max() / total_height) if roof.size else 0.0
 
     peak_shear = 0.0
     base_shear = arrays.get("base_shear")
     if base_shear is not None and base_shear.size:
         peak_shear = float(np.abs(base_shear).max())
 
-    damage = [float(row.get("damage_ratio") or 0.0) for row in hinge_rows]
+    # Hinge damage comes from the envelope, computed over the whole analysis,
+    # so truncating the arrays above does not clean it. Drop the values that
+    # are divergence artifacts rather than letting one 4.9e13 set the peak.
+    damage = [
+        float(row.get("damage_ratio") or 0.0) for row in hinge_rows
+        if abs(float(row.get("damage_ratio") or 0.0)) <= PHYSICAL_DAMAGE_RATIO_CEILING
+    ]
     yielded = [int(float(row.get("yielded") or 0)) for row in hinge_rows]
     capping = [int(float(row.get("past_capping") or 0)) for row in hinge_rows]
     peak_damage = max(damage) if damage else 0.0
@@ -518,6 +558,11 @@ def _damage_metrics(arrays, hinge_rows, global_parameters, status):
         "peak_hinge_damage_ratio": peak_damage,
         "fraction_hinges_yielded": yielded_fraction,
         "fraction_hinges_past_capping": capping_fraction,
+        # Not in DAMAGE_METRIC_COLUMNS -- the array is built from that fixed
+        # list, so these ride along for the metadata rather than widening it.
+        "physical_steps": float(physical_steps if physical_steps is not None else -1),
+        "truncated_steps": float(truncated_steps),
+        "damage_values_discarded": float(len(hinge_rows) - len(damage)),
         "peak_base_shear_kip": peak_shear,
         "is_inelastic": 1.0 if inelastic else 0.0,
         "collapse_flag": 1.0 if collapse else 0.0,
@@ -793,6 +838,14 @@ def compile_hybrid_sample(
             "ends framing into it, in the global frame."
         ),
         "damage_metric_columns": DAMAGE_METRIC_COLUMNS,
+        # Divergence bookkeeping. truncated_steps > 0 means the solution left
+        # the physical range and the metrics above describe only the prefix
+        # before that; damage_values_discarded counts hinge damage ratios
+        # rejected as divergence artifacts.
+        "physical_steps": damage.get("physical_steps", -1.0),
+        "truncated_steps": damage.get("truncated_steps", 0.0),
+        "damage_values_discarded": damage.get("damage_values_discarded", 0.0),
+        "physical_drift_ceiling": PHYSICAL_DRIFT_CEILING,
         "num_hinges": int(hinge_features.shape[0]) if hinge_features.size else 0,
         "hinge_history_stride": int(
             arrays["hinge_rotation_steps"][1] - arrays["hinge_rotation_steps"][0]

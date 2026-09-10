@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+from datetime import datetime
+import re
 import io
 import math
 import shutil
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -38,6 +41,8 @@ from Loads.Ground_Motion import (  # noqa: E402
     write_acceleration_file,
 )
 
+
+SET_COLUMNS = ["set_name", "record_id", "split", "weight", "scale_factor", "notes"]
 
 MANIFEST_COLUMNS = [
     "record_id",
@@ -213,6 +218,58 @@ def _relative(path):
     return path.relative_to(GROUND_MOTION_DIR).as_posix()
 
 
+PEER_RESULT_RE = re.compile(r"PEER result_id=(\d+)")
+RSN_RE = re.compile(r"RSN=(\d+)")
+
+
+def _read_existing(path, fieldnames):
+    """Existing CSV rows, or an empty list when the file is absent."""
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        return [dict(row) for row in csv.DictReader(handle)]
+
+
+def _existing_state(manifest_path, sets_path):
+    """What is already in the catalog: RSNs held, and the highest result_id.
+
+    result_id comes from the PEER search CSV, which numbers from 1 in every
+    download. Merging a second zip without offsetting would collide with the
+    ids already in use -- and result_id is the key the generation plans and
+    every existing dataset root pair records by, so a collision silently
+    repoints old plans at new records.
+    """
+    manifest = _read_existing(manifest_path, MANIFEST_COLUMNS)
+    sets = _read_existing(sets_path, SET_COLUMNS)
+
+    rsns, max_result_id = set(), 0
+    for row in manifest:
+        notes = row.get("notes") or ""
+        match = PEER_RESULT_RE.search(notes)
+        if match:
+            max_result_id = max(max_result_id, int(match.group(1)))
+        station = (row.get("station_id") or "").strip()
+        if station.upper().startswith("RSN"):
+            digits = station[3:].strip()
+            if digits.isdigit():
+                rsns.add(int(digits))
+    for row in sets:
+        match = RSN_RE.search(row.get("notes") or "")
+        if match:
+            rsns.add(int(match.group(1)))
+    return manifest, sets, rsns, max_result_id
+
+
+def _backup(path):
+    """Copy a metadata CSV aside before rewriting it."""
+    if not path.exists():
+        return None
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = path.with_name(f"{path.stem}.premerge_{stamp}{path.suffix}")
+    shutil.copy2(path, target)
+    return target
+
+
 def _manifest_has_records(path):
     if not path.exists():
         return False
@@ -221,7 +278,10 @@ def _manifest_has_records(path):
     return len(rows) > 1
 
 
-def import_peer_zip(zip_path, overwrite=False):
+def import_peer_zip(
+    zip_path, overwrite=False, merge=False, set_name="peer_mle_all",
+    dry_run=False,
+):
     zip_path = Path(zip_path)
     if not zip_path.exists():
         raise FileNotFoundError(zip_path)
@@ -232,14 +292,34 @@ def import_peer_zip(zip_path, overwrite=False):
     manifest_path = metadata_dir / "record_manifest.csv"
     sets_path = metadata_dir / "record_sets.csv"
 
-    if _manifest_has_records(manifest_path) and not overwrite:
+    if _manifest_has_records(manifest_path) and not (overwrite or merge):
         raise RuntimeError(
-            f"{manifest_path} already contains records. Re-run with --overwrite."
+            f"{manifest_path} already contains records. Re-run with --merge to "
+            "add these records to it, or --overwrite to replace it entirely."
         )
+    if overwrite and merge:
+        raise RuntimeError("--merge and --overwrite are mutually exclusive.")
+
+    existing_manifest, existing_sets, held_rsns, max_result_id = (
+        _existing_state(manifest_path, sets_path) if merge else ([], [], set(), 0)
+    )
+    result_id_offset = max_result_id if merge else 0
+    skipped_rsns = []
 
     raw_dir.mkdir(parents=True, exist_ok=True)
     processed_dir.mkdir(parents=True, exist_ok=True)
     metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    # A dry run still has to read each trace to report npts, PGA and duration,
+    # but must not leave anything in the catalog. Stage the extraction in a
+    # temporary directory so "wrote nothing" is actually true -- the first
+    # version reported that while quietly populating raw/ and processed/.
+    staging = tempfile.TemporaryDirectory() if dry_run else None
+    write_raw_dir = Path(staging.name) / "raw" if dry_run else raw_dir
+    write_processed_dir = Path(staging.name) / "processed" if dry_run else processed_dir
+    if dry_run:
+        write_raw_dir.mkdir(parents=True, exist_ok=True)
+        write_processed_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_rows = []
     set_rows = []
@@ -248,12 +328,28 @@ def import_peer_zip(zip_path, overwrite=False):
         selected_rows, search_report = _read_peer_search_rows(zip_file)
         available = set(zip_file.namelist())
 
-        search_report_path = metadata_dir / "_SearchResults.csv"
-        search_report_path.write_text(search_report, encoding="utf-8")
+        if not dry_run:
+            search_report_path = metadata_dir / "_SearchResults.csv"
+            search_report_path.write_text(search_report, encoding="utf-8")
 
         for selected in selected_rows:
-            result_id = _clean(selected[SEARCH_COLUMNS["result_id"]])
+            raw_result_id = _clean(selected[SEARCH_COLUMNS["result_id"]])
             rsn = _clean(selected[SEARCH_COLUMNS["record_sequence_number"]])
+
+            # A record already in the catalog is skipped whole. Re-importing it
+            # would duplicate the manifest row and, worse, give the same RSN two
+            # different result_ids -- so the pair lookup could return either.
+            if merge and rsn.isdigit() and int(rsn) in held_rsns:
+                skipped_rsns.append(int(rsn))
+                continue
+
+            # PEER numbers result_id from 1 in every download. Offsetting past
+            # the highest already in use keeps the ids unique, which matters
+            # because result_id is what plans and dataset roots pair records by.
+            result_id = (
+                str(int(raw_result_id) + result_id_offset)
+                if raw_result_id.isdigit() else raw_result_id
+            )
             scale_factor = _float_or_blank(selected[SEARCH_COLUMNS["scale_factor"]])
             event_name = _clean(selected[SEARCH_COLUMNS["event_name"]])
             event_year = _clean(selected[SEARCH_COLUMNS["event_year"]])
@@ -277,8 +373,16 @@ def import_peer_zip(zip_path, overwrite=False):
                 if filename not in available:
                     raise FileNotFoundError(f"{filename} is listed but not in zip.")
 
-                raw_path = raw_dir / filename
-                processed_path = processed_dir / f"{Path(filename).stem}_in_per_sec2.txt"
+                raw_path = write_raw_dir / filename
+                processed_path = (
+                    write_processed_dir / f"{Path(filename).stem}_in_per_sec2.txt"
+                )
+                # The manifest records where the files belong in the catalog,
+                # which is not where a dry run stages them.
+                catalog_raw_path = raw_dir / filename
+                catalog_processed_path = (
+                    processed_dir / f"{Path(filename).stem}_in_per_sec2.txt"
+                )
 
                 with zip_file.open(filename) as src, raw_path.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
@@ -322,8 +426,8 @@ def import_peer_zip(zip_path, overwrite=False):
                     "arias_intensity": arias_intensity,
                     "significant_duration_5_95_sec": duration_5_95,
                     "scale_factor": record.scale_factor,
-                    "raw_file": _relative(raw_path),
-                    "processed_file": _relative(processed_path),
+                    "raw_file": _relative(catalog_raw_path),
+                    "processed_file": _relative(catalog_processed_path),
                     "scaled_file": "",
                     "download_url": "",
                     "citation": "PEER NGA-West2 ground motion database",
@@ -337,7 +441,7 @@ def import_peer_zip(zip_path, overwrite=False):
                 manifest_rows.append(row)
                 set_rows.append(
                     {
-                        "set_name": "peer_mle_all",
+                        "set_name": set_name,
                         "record_id": record.record_id,
                         "split": "all",
                         "weight": 1.0,
@@ -346,28 +450,50 @@ def import_peer_zip(zip_path, overwrite=False):
                     }
                 )
 
-    with manifest_path.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=MANIFEST_COLUMNS)
-        writer.writeheader()
-        writer.writerows(manifest_rows)
+    final_manifest = (existing_manifest + manifest_rows) if merge else manifest_rows
+    final_sets = (existing_sets + set_rows) if merge else set_rows
 
-    with sets_path.open("w", newline="") as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=["set_name", "record_id", "split", "weight", "scale_factor", "notes"],
-        )
-        writer.writeheader()
-        writer.writerows(set_rows)
-
-    return {
+    summary = {
         "zip_path": str(zip_path),
-        "num_horizontal_components": len(manifest_rows),
-        "num_record_pairs": len(manifest_rows) // 2,
+        "mode": "merge" if merge else ("overwrite" if overwrite else "fresh"),
+        "new_horizontal_components": len(manifest_rows),
+        "new_record_pairs": len(manifest_rows) // 2,
+        "skipped_existing_rsns": sorted(set(skipped_rsns)),
+        "result_id_offset": result_id_offset,
+        "set_name": set_name,
+        "total_manifest_rows": len(final_manifest),
         "manifest_path": str(manifest_path),
         "record_sets_path": str(sets_path),
         "raw_dir": str(raw_dir),
         "processed_dir": str(processed_dir),
     }
+
+    if dry_run:
+        summary["dry_run"] = True
+        summary["wrote_nothing"] = True
+        # _relative() resolved these against the staging directory; report the
+        # paths the records would actually land in.
+        summary["raw_dir"] = str(raw_dir)
+        summary["processed_dir"] = str(processed_dir)
+        staging.cleanup()
+        return summary
+
+    # Back up before touching either file. A merge that goes wrong is far
+    # cheaper to undo than a re-download against a rate-limited quota.
+    summary["manifest_backup"] = str(_backup(manifest_path) or "")
+    summary["record_sets_backup"] = str(_backup(sets_path) or "")
+
+    with manifest_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=MANIFEST_COLUMNS)
+        writer.writeheader()
+        writer.writerows(final_manifest)
+
+    with sets_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=SET_COLUMNS)
+        writer.writeheader()
+        writer.writerows(final_sets)
+
+    return summary
 
 
 def main():
@@ -381,11 +507,36 @@ def main():
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Overwrite existing manifest and record-set CSV files.",
+        help="Replace the manifest and record-set CSVs entirely.",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help=(
+            "Add this zip's records to the existing catalog: skips any RSN "
+            "already held, offsets PEER result_id past the highest in use, and "
+            "leaves existing rows, record sets and usable flags untouched."
+        ),
+    )
+    parser.add_argument(
+        "--set-name",
+        default="peer_mle_all",
+        help="Record set the imported records are added to.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be imported without writing anything.",
     )
     args = parser.parse_args()
 
-    summary = import_peer_zip(args.zip_path, overwrite=args.overwrite)
+    summary = import_peer_zip(
+        args.zip_path,
+        overwrite=args.overwrite,
+        merge=args.merge,
+        set_name=args.set_name,
+        dry_run=args.dry_run,
+    )
 
     print("Imported PEER ground motions")
     for key, value in summary.items():
