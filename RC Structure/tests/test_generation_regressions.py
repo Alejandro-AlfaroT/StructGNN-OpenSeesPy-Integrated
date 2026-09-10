@@ -119,6 +119,94 @@ class ColumnCapacityRegressionTests(unittest.TestCase):
         self.assertEqual(index, 1)
 
 
+class HingeYieldRotationTests(unittest.TestCase):
+    """Plastic rotation is measured from the spring's own elastic limit.
+
+    The recorded hinge rotation is the zeroLength SPRING's rotation, but the
+    registry's theta_y_target is a member-level nominal held fixed at 0.004
+    (columns) / 0.005 (beams). Because the spring is deliberately
+    IMK_HINGE_STIFFNESS_FACTOR times the member stiffness it yields at My/Ke,
+    which across the pilot is 6.2e-5 to 1.55e-4 -- 26x to 65x smaller.
+    Subtracting the nominal understated plastic rotation and damage_ratio,
+    and damage_ratio is the binding criterion in the inelasticity gate.
+    """
+
+    def test_registry_records_the_spring_yield_rotation(self):
+        import inspect
+        source = inspect.getsource(IMK_Hinges.create_imk_member)
+        self.assertIn("theta_y_spring_y", source)
+        self.assertIn("theta_y_spring_z", source)
+
+    def test_spring_limit_is_far_below_the_member_nominal(self):
+        # Guards the premise: if these ever coincide the distinction is moot
+        # and something about the stiffness model has changed.
+        self.assertGreater(getattr(sp, "IMK_HINGE_STIFFNESS_FACTOR", 1.0), 1.0)
+        self.assertGreater(sp.IMK_BEAM_THETA_Y, 0.0)
+        self.assertGreater(sp.IMK_COLUMN_THETA_Y, 0.0)
+
+    def test_backbone_rows_subtract_the_spring_limit(self):
+        import inspect
+        from Ground_Motion_Main import _hinge_backbone_rows
+        source = inspect.getsource(_hinge_backbone_rows)
+        self.assertIn("spring_theta_y", source)
+        self.assertIn("rotation - spring_theta_y", source)
+        # The member nominal must still be reported -- it is what the
+        # Haselton backbone was calibrated against.
+        self.assertIn('"theta_y": theta_y', source)
+
+    def test_yielded_flag_uses_the_spring_limit(self):
+        import inspect
+        from Ground_Motion_Main import _hinge_backbone_rows
+        source = inspect.getsource(_hinge_backbone_rows)
+        self.assertIn("rotation > spring_theta_y", source)
+        self.assertNotIn("rotation > theta_y else", source)
+
+
+class TargetDriftBandTests(unittest.TestCase):
+    """The band shares encode a deliberate bias toward nonlinear response.
+
+    This dataset exists to train a surrogate on the regime that is hard to
+    analyse, so it over-samples damage relative to real seismic hazard. The
+    shares are set from measurement: across 88 pilot runs the is_inelastic
+    gate passed 0% below 1.25% drift and 17 of 17 above 2.0%, because the gate
+    is dominated by hinge damage ratio, which crosses its threshold near 2%.
+    """
+
+    def test_shares_sum_to_one(self):
+        from Data_Generation.Calibrate_Intensity import TARGET_DRIFT_BANDS
+        self.assertAlmostEqual(sum(b[3] for b in TARGET_DRIFT_BANDS), 1.0, places=6)
+
+    def test_bands_are_contiguous_and_ordered(self):
+        from Data_Generation.Calibrate_Intensity import TARGET_DRIFT_BANDS
+        for (_n1, _lo1, hi1, _s1), (_n2, lo2, _hi2, _s2) in zip(
+            TARGET_DRIFT_BANDS, TARGET_DRIFT_BANDS[1:]
+        ):
+            self.assertAlmostEqual(hi1, lo2, places=6)
+
+    def test_majority_of_targets_reach_the_gate_threshold(self):
+        # 2% drift is where the inelasticity gate empirically passes; the
+        # dataset's whole purpose is that most samples clear it.
+        from Data_Generation.Calibrate_Intensity import target_drift_sequence
+        targets = target_drift_sequence(2000, seed=0)
+        share = sum(1 for t in targets if t >= 0.020) / len(targets)
+        self.assertGreater(share, 0.55)
+
+    def test_elastic_coverage_is_retained(self):
+        # Skewing hard is the point, but the surrogate still needs to see the
+        # linear regime or it cannot learn the transition into yielding.
+        from Data_Generation.Calibrate_Intensity import target_drift_sequence
+        targets = target_drift_sequence(2000, seed=0)
+        share = sum(1 for t in targets if t < 0.010) / len(targets)
+        self.assertGreater(share, 0.10)
+
+    def test_no_target_exceeds_what_the_scale_cap_can_chase(self):
+        from Data_Generation.Calibrate_Intensity import (
+            SCALE_FACTOR_MAX, TARGET_DRIFT_BANDS,
+        )
+        self.assertLessEqual(SCALE_FACTOR_MAX, 3.0)
+        self.assertLessEqual(max(b[2] for b in TARGET_DRIFT_BANDS), 0.10)
+
+
 class GravityEscalationTests(unittest.TestCase):
     """A section that cannot carry gravity escalates instead of aborting.
 

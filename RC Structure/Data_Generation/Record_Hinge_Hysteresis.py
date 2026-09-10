@@ -29,6 +29,7 @@ so the rerun matches the original generation run.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 from pathlib import Path
@@ -48,6 +49,7 @@ import openseespy.opensees as ops  # noqa: E402
 import Structure_Parameters as sp  # noqa: E402
 from Analysis.NTHA import run_ntha  # noqa: E402
 from Geometry_Overrides import apply_geometry_overrides  # noqa: E402
+from Design.Design_Driver import DESIGN_ARTIFACT_NAME, load_or_create_design  # noqa: E402
 from Ground_Motion_Main import build_gravity_modal_state  # noqa: E402
 from Loads.Ground_Motion import load_ground_motion_pair_by_result_id  # noqa: E402
 from Model.IMK_Hinges import (  # noqa: E402
@@ -61,7 +63,12 @@ MATERIAL_DIRECTIONS = ((1, "roty"), (2, "rotz"))
 
 
 def read_case_settings(case_dir: Path):
-    """Recover geometry overrides and result_id from a generated case."""
+    """Recover geometry overrides, result_id and scale factor from a case.
+
+    The scale factor matters: rerunning a scale-3 case at 1.0 reproduces the
+    geometry but not the demand, so the hinges stay near-elastic and the plot
+    shows none of the behaviour it exists to verify.
+    """
     summary_path = case_dir / "dataset" / "automation_summary.json"
     if not summary_path.exists():
         raise SystemExit(f"No automation_summary.json under {case_dir}")
@@ -70,7 +77,8 @@ def read_case_settings(case_dir: Path):
     runs = summary.get("ntha_runs") or []
     if not overrides or not runs:
         raise SystemExit(f"{summary_path} is missing geometry_overrides or ntha_runs.")
-    return overrides, int(runs[0]["result_id"]), runs[0]["run_name"]
+    scale_factor = float(runs[0].get("scale_factor") or 1.0)
+    return overrides, int(runs[0]["result_id"]), runs[0]["run_name"], scale_factor
 
 
 def attach_recorders(output_dir: Path, element_tags):
@@ -86,8 +94,46 @@ def attach_recorders(output_dir: Path, element_tags):
             print(f"  recorders: element {ele_tag} end {end_id} -> hinge {hinge_ele}")
 
 
+def backbone_reference_from_case(case_dir: Path, run_name: str, element_tag: int):
+    """Read the backbone actually installed on this element, from the case.
+
+    Recomputing it is wrong for columns. _member_properties defaults to zero
+    axial load, but a column hinge is calibrated at its own axial force off the
+    P-M surface -- for case_0008 that is My = 2833 kip-in at 183 kip versus
+    1665 at zero, a 41% error. Plotted as a reference the loop would appear to
+    yield far above its own backbone, which reads as a broken IMK model rather
+    than a broken plot. The generated hinge_backbone.csv holds the values the
+    hinge was built with, so use those.
+    """
+    path = case_dir / "ntha" / run_name / "hinge_backbone.csv"
+    if not path.exists():
+        return None
+    with path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            if str(row.get("ele_tag")) != str(element_tag):
+                continue
+            if not float(row.get("plastic_rotation") or 0.0):
+                continue          # the end that never yielded
+            my = float(row["yield_moment_kip_in"])
+            theta_y = float(row["theta_y"])
+            return {
+                "My": my,
+                "Ke": my / theta_y if theta_y > 0 else 0.0,
+                "theta_y": theta_y,
+                "theta_cap": theta_y + float(row["theta_p"]),
+                "theta_u": float(row["theta_u"]),
+                "FmaxFy": getattr(sp, "IMK_FMAXFY_POS", 1.10),
+                "FresFy": getattr(sp, "IMK_FRESFY_POS", sp.IMK_RES_POS),
+                "axial_kip": float(row.get("axial_kip") or 0.0),
+            }
+    return None
+
+
 def backbone_reference(member_type: str, length: float):
-    """Backbone values the recorded loop should agree with."""
+    """Backbone values the recorded loop should agree with.
+
+    Zero-axial fallback; prefer backbone_reference_from_case for columns.
+    """
     properties = _member_properties(member_type)
     components = imk_hinge_stiffness_components(member_type, "rot_y", length)
     thresholds = imk_hinge_thresholds(member_type, "rot_y", length)
@@ -196,7 +242,7 @@ def parse_args():
 def main():
     args = parse_args()
     case_dir = Path(args.case_dir).resolve()
-    overrides, result_id, run_name = read_case_settings(case_dir)
+    overrides, result_id, run_name, scale_factor = read_case_settings(case_dir)
 
     output_dir = Path(
         args.output_dir or RC_DIR / "outputs" / f"hinge_hysteresis_{case_dir.name}"
@@ -206,15 +252,43 @@ def main():
     start = time.perf_counter()
     apply_geometry_overrides(overrides, variant_name=f"{case_dir.name}_hysteresis")
 
+    # Ground_Motion_Main.main() loads the case design before building, and
+    # skipping it here silently built the model from Structure_Parameters
+    # defaults instead of this case's sections and reinforcement. The hinge
+    # that produced the recorded loop was then a different hinge entirely:
+    # for case_0008 the rerun gave theta_y = 0.000207 rad against the 0.004
+    # actually installed, and rotations 100x too small. The plot looked like
+    # a near-elastic hinge and said nothing about the real model.
+    design_path = case_dir / DESIGN_ARTIFACT_NAME
+    if not design_path.exists():
+        raise SystemExit(
+            f"No {DESIGN_ARTIFACT_NAME} in {case_dir}; the rerun cannot "
+            "reproduce the generated model without it."
+        )
+    design_record, _created = load_or_create_design(design_path, verbose=False)
+    sections = design_record["sections"]
+    print(
+        "Loaded case design: column %gx%g @%g ksi, beam %gx%g @%g ksi"
+        % (
+            sections["b_col_in"], sections["h_col_in"], sections["fc_col_ksi"],
+            sections["b_beam_in"], sections["h_beam_in"], sections["fc_beam_ksi"],
+        ),
+        flush=True,
+    )
+
     _, reference_modal_results, *_ = build_gravity_modal_state()
     print(f"Gravity+modal done at {time.perf_counter() - start:.0f}s", flush=True)
 
     attach_recorders(output_dir, args.element)
 
     _, record_x, record_y = load_ground_motion_pair_by_result_id(
-        result_id, set_name=args.set_name
+        result_id, set_name=args.set_name, scale_factor=scale_factor
     )
-    print(f"Loaded records: {record_x.record_id} / {record_y.record_id}", flush=True)
+    print(
+        f"Loaded records: {record_x.record_id} / {record_y.record_id} "
+        f"at scale {scale_factor:g}",
+        flush=True,
+    )
 
     results = run_ntha(
         record_x,
@@ -236,7 +310,25 @@ def main():
     )
 
     span = sp.BAY_Y if args.member_type != "column" else sp.STORY_H
-    reference = backbone_reference(args.member_type, span)
+    reference = backbone_reference_from_case(case_dir, run_name, args.element[0])
+    if reference is None:
+        print(
+            "No installed backbone found for element "
+            f"{args.element[0]}; falling back to the zero-axial reference, "
+            "which understates a column's yield moment.",
+            flush=True,
+        )
+        reference = backbone_reference(args.member_type, span)
+    else:
+        print(
+            "Backbone from the case: My %.0f kip-in at %.0f kip axial, "
+            "theta_y %.5f, theta_cap %.5f"
+            % (
+                reference["My"], reference["axial_kip"],
+                reference["theta_y"], reference["theta_cap"],
+            ),
+            flush=True,
+        )
     print(
         "\nBackbone reference: "
         f"My={reference['My']:.1f} kip-in  Ke={reference['Ke']:.3e} kip-in/rad  "
