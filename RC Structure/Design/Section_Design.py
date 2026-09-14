@@ -33,7 +33,8 @@ import math
 # ratio automatically and keep biaxial capacity symmetric.
 COLUMN_SIZES_IN = (14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 30.0, 32.0, 36.0)
 
-# ACI 318-19 18.6.2.1: special moment frame beams, width >= max(0.3h, 10 in).
+# ACI 318-19 18.6.2.1(b) uses min(0.3h, 10 in). The ladder's
+# max(0.3h, 10 in) is a stricter PRACTICAL sizing preference, not that rule.
 BEAM_DEPTHS_IN = (16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 30.0, 32.0, 36.0)
 
 CONCRETE_STRENGTHS_KSI = (4.0, 5.0, 6.0, 8.0)
@@ -41,13 +42,18 @@ CONCRETE_STRENGTHS_KSI = (4.0, 5.0, 6.0, 8.0)
 COLUMN_MIN_DIMENSION_IN = 12.0
 BEAM_MIN_WIDTH_IN = 10.0
 BEAM_MIN_WIDTH_RATIO = 0.30
+# Each depth is offered at its paired width and one wider variant: the
+# capacity-design shear section (22.5.1.2 with the 18.6.5.1 Ve) and short
+# clear spans (18.6.2.1(a) ln >= 4d caps the depth) answer to width, not
+# depth. 18.6.2.1(c) (projection beyond the column) is checked per rung
+# against the columns in SMRF_Detailing.
+BEAM_WIDTH_STEP_IN = 4.0
 
 # Proportioning limits that keep generated frames buildable.
 #
-# The deep limit comes from ACI 318-19 18.6.2.1(a), clear span >= 4d. With
-# cover that is roughly h <= span/5. The shallow limit is a serviceability
-# floor rather than a code requirement.
-BEAM_MIN_SPAN_DEPTH_RATIO = 5.0    # h <= span / 5   (ACI 18.6.2.1 ln >= 4d)
+# Both span/depth limits below are preliminary-sizing preferences. Actual
+# clear-span >= 4d is a separate check using the adjoining columns.
+BEAM_MIN_SPAN_DEPTH_RATIO = 5.0
 BEAM_MAX_SPAN_DEPTH_RATIO = 20.0   # h >= span / 20  (deflection control)
 BEAM_MAX_DEPTH_FRACTION_OF_STORY = 0.40
 
@@ -69,7 +75,12 @@ def column_ladder():
 
 
 def beam_ladder(span_in=None, story_height_in=None):
-    """Ordered (b, h, fc) rungs for beams, filtered by span proportioning."""
+    """(b, h, fc) rungs for beams, filtered by span proportioning.
+
+    Ordered by the flexural capacity proxy b h^2 sqrt(f'c), so a jump lands
+    on the lightest rung that should carry the demand and every step up the
+    ladder adds capacity; depth, width and f'c are mixed in that order.
+    """
     rungs = []
     for depth in BEAM_DEPTHS_IN:
         if span_in is not None:
@@ -80,21 +91,15 @@ def beam_ladder(span_in=None, story_height_in=None):
         if story_height_in is not None:
             if depth > BEAM_MAX_DEPTH_FRACTION_OF_STORY * story_height_in:
                 continue
-        for fc in CONCRETE_STRENGTHS_KSI:
-            rungs.append((beam_width_for_depth(depth), depth, fc))
+        base = beam_width_for_depth(depth)
+        for width in (base, base + BEAM_WIDTH_STEP_IN):
+            for fc in CONCRETE_STRENGTHS_KSI:
+                rungs.append((width, depth, fc))
 
     if not rungs:
-        # Proportioning excluded every listed depth. Rather than silently
-        # returning the unfiltered ladder -- which would let the design loop
-        # pick a section the geometry cannot accept -- fall back to the single
-        # closest legal depth and let the caller see that it was clamped.
-        target = (span_in / 10.0) if span_in else BEAM_DEPTHS_IN[0]
-        depth = min(BEAM_DEPTHS_IN, key=lambda value: abs(value - target))
-        if story_height_in is not None:
-            limit = BEAM_MAX_DEPTH_FRACTION_OF_STORY * story_height_in
-            depth = min(depth, max(BEAM_DEPTHS_IN[0], limit))
-        rungs = [(beam_width_for_depth(depth), depth, fc) for fc in CONCRETE_STRENGTHS_KSI]
-    return rungs
+        raise ValueError("No beam rung meets the declared span/story sizing limits; "
+                         "revise the geometry or explicitly extend the ladder.")
+    return sorted(rungs, key=lambda rung: (flexural_capacity_proxy(rung), rung[1], rung[0], rung[2]))
 
 
 def nearest_rung_index(ladder, b_in, h_in, fc_ksi):
@@ -147,19 +152,36 @@ def rung_summary(rung, member_type):
     }
 
 
-def validate_rung(rung, member_type, span_in=None, story_height_in=None):
+def validate_rung(rung, member_type, span_in=None, story_height_in=None,
+                  column_depth_in=None, effective_depth_in=None):
     """Raise if a rung violates the ACI dimensional limits it claims to honor."""
     b, h, fc = rung
+    if not all(math.isfinite(v) and v > 0 for v in (b, h, fc)):
+        raise ValueError("Section dimensions and concrete strength must be finite and positive.")
+    if member_type not in ("column", "beam"):
+        raise ValueError("member_type must be column or beam.")
     if member_type == "column":
         if min(b, h) < COLUMN_MIN_DIMENSION_IN:
             raise ValueError(f"Column least dimension {min(b, h)} in < 12 in (ACI 18.7.2.1).")
         if min(b, h) / max(b, h) < 0.4:
             raise ValueError("Column dimension ratio < 0.4 (ACI 18.7.2.1).")
     else:
-        if b < max(BEAM_MIN_WIDTH_RATIO * h, BEAM_MIN_WIDTH_IN):
+        if b < min(BEAM_MIN_WIDTH_RATIO * h, BEAM_MIN_WIDTH_IN):
             raise ValueError(f"Beam width {b} in violates ACI 18.6.2.1 for depth {h} in.")
         if story_height_in is not None and h > BEAM_MAX_DEPTH_FRACTION_OF_STORY * story_height_in:
             raise ValueError(f"Beam depth {h} in exceeds {BEAM_MAX_DEPTH_FRACTION_OF_STORY} of story height.")
+        if span_in is not None and (not math.isfinite(span_in) or span_in <= 0):
+            raise ValueError("Beam span must be finite and positive.")
+        if column_depth_in is not None:
+            if span_in is None or effective_depth_in is None:
+                raise ValueError("Clear-span checking requires span and effective depth.")
+            if not math.isfinite(column_depth_in) or column_depth_in <= 0:
+                raise ValueError("Supporting column depth must be finite and positive.")
+            if not math.isfinite(effective_depth_in) or not 0 < effective_depth_in < h:
+                raise ValueError("Effective depth must lie within the beam section.")
+            clear_span = span_in - column_depth_in  # equal columns at both ends
+            if clear_span < 4.0 * effective_depth_in:
+                raise ValueError("Beam clear span < 4d (ACI 318-19 18.6.2.1(a)).")
     if fc <= 0.0:
         raise ValueError("Concrete strength must be positive.")
     return True

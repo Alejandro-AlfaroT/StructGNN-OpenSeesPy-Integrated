@@ -31,6 +31,7 @@ from Data_Generation.Graph_Exporter import (
 from Model.IMK_Hinges import hinge_registry
 from Run_Naming import analysis_run_name, safe_name, variant_value
 from Design.Design_Driver import DESIGN_ARTIFACT_NAME, load_or_create_design
+from Design.SMRF_Qualification import require_accepted_design, ensure_generation_release_ready
 from Loads.Gravity_Loads import apply_gravity_loads
 from Loads.Ground_Motion import (
     ground_motion_catalog_summary,
@@ -70,6 +71,8 @@ OUTPUT_IDENTITY_KEYS = (
     "imk_material_type",
     "imk_hinge_stiffness_mode",
     "imk_hinge_stiffness_factor",
+    "floor_loads",
+    "reinforcement_geometry",
 )
 
 
@@ -221,6 +224,13 @@ def _hinge_backbone_rows(results):
                 "axial_kip": backbone.get("axial_kip", 0.0),
                 "axial_ratio": backbone.get("axial_ratio", 0.0),
                 "yield_moment_kip_in": backbone.get("yield_moment_y_kip_in", 0.0),
+                # Beams are asymmetric once slab mats join the negative
+                # section; columns report the same value twice.
+                "yield_moment_hogging_kip_in": backbone.get("yield_moment_y_hogging_kip_in",
+                                                            backbone.get("yield_moment_y_kip_in", 0.0)),
+                "yield_moment_sagging_kip_in": backbone.get("yield_moment_y_sagging_kip_in",
+                                                            backbone.get("yield_moment_y_kip_in", 0.0)),
+                "beam_family": backbone.get("beam_family") or "",
                 "theta_y": theta_y,
                 "theta_y_spring": spring_theta_y,
                 "theta_p": theta_p,
@@ -542,6 +552,8 @@ def parse_args():
         default=str(Path(__file__).resolve().parent / "outputs" / "ntha"),
     )
     parser.add_argument("--catalog-summary", action="store_true")
+    parser.add_argument("--design-only", action="store_true",
+                        help="Create/review a design candidate only; never run ground-motion analysis.")
     parser.add_argument(
         "--design-file",
         default=None,
@@ -573,14 +585,18 @@ def parse_args():
 def main():
     args = parse_args()
     geometry_name = apply_geometry_from_args(args)
+    if args.design_only and args.skip_design:
+        raise ValueError("--design-only cannot be combined with --skip-design.")
 
     if args.catalog_summary:
         print(json.dumps(ground_motion_catalog_summary(), indent=2))
         if not args.record_id_x and args.result_id is None:
             return
 
-    selected = select_records(args)
-    if not selected:
+    if not args.skip_design and not args.design_only:
+        ensure_generation_release_ready()
+    selected = [] if args.design_only else select_records(args)
+    if not selected and not args.design_only:
         raise RuntimeError("No ground-motion records selected.")
 
     base_output_dir = Path(args.output_dir)
@@ -618,6 +634,14 @@ def main():
             f"(band {dcr['band_lo']:.2f}-{dcr['band_hi']:.2f}), "
             f"column {dcr['column']:.3f}; governed by {dcr['governed_by']}"
         )
+        # DCR success and numerical convergence do not establish SMRF design.
+        # Keep the candidate artifact for diagnosis, but never export this as
+        # an accepted SMRF dataset case with missing/failed design checks.
+        if args.design_only:
+            report = design_record["qualification"]
+            print(f"[design-only] {report['counts']}; SMRF accepted={report['accepted']}. No NTHA launched.")
+            return
+        require_accepted_design(design_record)
 
     run_summaries = []
 

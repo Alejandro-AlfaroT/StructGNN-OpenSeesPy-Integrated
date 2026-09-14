@@ -114,6 +114,15 @@ def current_geometry_summary():
 def apply_geometry_overrides(overrides, variant_name=None, emit=True):
     _validate_overrides(overrides)
 
+    if any(getattr(sp, name) != value for name, value in overrides.items()):
+        # The selected thickness and its slab-to-frame transfer were checked
+        # against the previous geometry; never carry them silently into a
+        # different candidate building.
+        sp.SLAB_THICKNESS_IN = None
+        sp.FLOOR_TRANSFER = None
+        sp.SLAB_REINFORCEMENT = None
+        sp.SLAB_ACTIONS = None
+
     for sp_name, value in overrides.items():
         setattr(sp, sp_name, value)
 

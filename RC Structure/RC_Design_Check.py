@@ -38,8 +38,9 @@ def _stirrup_area(bar_size, legs):
 # In make_rc_rect_section, bars are placed at:
 #   top layer:    z =  h/2 - cover  (from section centroid)
 #   bottom layer: z = -h/2 + cover
-# So COVER is the distance from the outer face to the bar centroid,
-# and the effective depth is d = h - cover.
+# The member-specific centroid offset includes clear cover, hoop diameter,
+# and half the longitudinal-bar diameter in slab-aware designs; legacy COVER
+# remains the old centroid offset. Effective depth is d = h - that offset.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _col_steel_layers(h=None):
@@ -51,7 +52,7 @@ def _col_steel_layers(h=None):
     h defaults to the current section depth. The design ladder passes it
     explicitly to price a candidate section without mutating the globals.
     """
-    cover = sp.COVER
+    cover = sp.longitudinal_cover_in("column")
     h     = sp.H_COL if h is None else h
     Ab    = sp.COL_BAR_AREA
     layers = [
@@ -64,16 +65,24 @@ def _col_steel_layers(h=None):
         # the section holds twice this count. Counting them once left the P-M
         # surface missing a quarter of the longitudinal steel, which understated
         # every column capacity derived from it -- hinge yield moments included.
-        layers.insert(1, (2 * sp.COL_SIDE_BARS * Ab, h / 2.0))
+        if sp.SLAB_THICKNESS_IN is None:
+            layers.insert(1, (2 * sp.COL_SIDE_BARS * Ab, h / 2.0))
+        else:
+            # Match actual straight-layer fiber coordinates, not a lump at
+            # middepth. There is one bar on each side at every interior level.
+            side_layers = [(2 * Ab, cover + (h - 2 * cover) * k
+                            / (sp.COL_SIDE_BARS + 1))
+                           for k in range(1, sp.COL_SIDE_BARS + 1)]
+            layers[1:1] = side_layers
     return layers
 
 
 def _col_d():
-    return sp.H_COL - sp.COVER
+    return sp.H_COL - sp.longitudinal_cover_in("column")
 
 
 def _beam_d():
-    return sp.H_BEAM - sp.COVER
+    return sp.H_BEAM - sp.longitudinal_cover_in("beam")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -311,18 +320,45 @@ def _element_local_force(ele_tag):
     return list(forces)
 
 
-def _extract_forces(ele_tag):
+def _extract_forces(ele_tag, local_force=None):
     """
     Read local end forces and return critical demands.
     P is compression-positive for the localForce response used here.
+
+    ``local_force`` is an already-captured 12-component localForce vector
+    (Design_Driver._capture_element_actions); when given, the live domain
+    is not consulted, so the checks can be rerun on solved actions.
     """
-    f    = _element_local_force(ele_tag)
+    f    = _element_local_force(ele_tag) if local_force is None else list(local_force)
+    if len(f) != 12:
+        raise ValueError(f"Expected 12 local force components for element {ele_tag}, got {len(f)}.")
     P    = f[0]
     Vy   = max(abs(f[1]),  abs(f[7]))
     Vz   = max(abs(f[2]),  abs(f[8]))
     My   = max(abs(f[4]),  abs(f[10]))
     Mz   = max(abs(f[5]),  abs(f[11]))
     return P, Vy, Vz, My, Mz, f[4], f[10], f[5], f[11]
+
+
+def beam_flexure_demands(My_i, My_j):
+    """
+    Map signed local end moments to (Mu_pos, Mu_neg) = (sagging, hogging).
+
+    Both floor-beam transforms use vecxz = (0, 0, 1), so local z is global Z
+    and vertical bending is the local-y moment. OpenSees localForce reports
+    both end moments in the same rotational sense, which makes the physical
+    sign flip between the ends: at end i a negative My is hogging (tension on
+    top); at end j a positive My is hogging. Verified against a fixed-fixed
+    span under uniform load, where both supports are hogging and localForce
+    gives My_i = -wL^2/12, My_j = +wL^2/12.
+
+    Reading the numerical sign directly (the previous behaviour) turned every
+    gravity hogging pair into an equal sagging demand, so bottom steel was
+    always designed to match top steel.
+    """
+    sagging_i, hogging_i = max(0.0, My_i), max(0.0, -My_i)
+    sagging_j, hogging_j = max(0.0, -My_j), max(0.0, My_j)
+    return max(sagging_i, sagging_j), max(hogging_i, hogging_j)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -368,11 +404,15 @@ def run_checks(col_tags, beam_tags, col_diagram=None):
             'stirrup_area_in2': _stirrup_area(sp.COL_STIRRUP_BAR_SIZE, sp.COL_STIRRUP_LEGS),
         }
 
+    from Design.SMRF_Beam_Actions import current_beam_bending
+    beam_tags = list(beam_tags)
+    span_actions = current_beam_bending(beam_tags)
     for tag in beam_tags:
-        P, Vy, Vz, My, Mz, My_i, My_j, Mz_i, Mz_j = _extract_forces(tag)
-        end_moments = (My_i, My_j, Mz_i, Mz_j)
-        Mu_pos = max(0.0, max(end_moments))
-        Mu_neg = max(0.0, max(-moment for moment in end_moments))
+        P, Vy, Vz, My, Mz, My_i, My_j, _Mz_i, _Mz_j = _extract_forces(tag)
+        # Vertical-plane flexure only: Mz is bending about the beam's vertical
+        # axis and is not resisted by the top/bottom bars.
+        envelope = span_actions[tag]["full_span"]
+        Mu_pos, Mu_neg = envelope["mu_positive_kip_in"], envelope["mu_negative_kip_in"]
         dcr_pos, dcr_neg, phi_Mn_pos, phi_Mn_neg, ok_F = check_beam_flexure(
             Mu_pos, Mu_neg
         )
@@ -388,6 +428,7 @@ def run_checks(col_tags, beam_tags, col_diagram=None):
         )
         results[tag] = {
             'type': 'beam', 'Mu_pos': Mu_pos, 'Mu_neg': Mu_neg,
+            'span_bending': span_actions[tag],
             'phi_Mn_pos': phi_Mn_pos, 'phi_Mn_neg': phi_Mn_neg,
             'Mu_y': My, 'Mu_z': Mz, 'Vu': Vu, 'phi_Vn': phi_Vn, 'dcr_pos': dcr_pos,
             'dcr_neg': dcr_neg, 'dcr_V': dcr_V,

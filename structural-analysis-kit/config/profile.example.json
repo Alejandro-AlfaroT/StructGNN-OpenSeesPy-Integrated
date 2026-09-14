@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "device_id": "YOUR_DEVICE",
+  "role": "primary_desktop",
+  "project_root": null,
+  "surrogate_root": null,
+  "python_executable": null,
+  "dataset_base": "outputs",
+  "datasets": [
+    {"id": "baseline_2500", "path": "parameterized_2500", "role": "baseline"},
+    {"id": "expansion_2501_3800", "path": "parameterized_expansion_2501_3800", "role": "ground_motion_expansion"},
+    {"id": "pilot30_s1", "path": "pilot30_s1", "role": "pilot"},
+    {"id": "pilot30_s2", "path": "pilot30_s2", "role": "pilot"},
+    {"id": "pilot30_s3", "path": "pilot30_s3", "role": "pilot"}
+  ],
+  "calibration_artifacts": ["intensity_calibration_pilot30.json"],
+  "metadata_sample_cases_per_dataset": 3,
+  "output_root": "outputs",
+  "random_seed": 20260910,
+  "notes": "Set local absolute project/interpreter paths. Confirm dataset paths here; add calibrated/adaptive roots only after inspecting their plans."
+}

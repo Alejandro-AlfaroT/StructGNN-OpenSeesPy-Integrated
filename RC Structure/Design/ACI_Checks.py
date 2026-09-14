@@ -71,11 +71,11 @@ def _phi_PM(eps_t: float) -> float:
 # ---------------------------------------------------------------------------
 
 def _col_d(cfg: DesignConfig) -> float:
-    return cfg.sections.h_col_in - cfg.rebar.cover_in
+    return cfg.sections.h_col_in - cfg.rebar.centroid_cover_in("column")
 
 
 def _beam_d(cfg: DesignConfig) -> float:
-    return cfg.sections.h_beam_in - cfg.rebar.cover_in
+    return cfg.sections.h_beam_in - cfg.rebar.centroid_cover_in("beam")
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ def _col_steel_layers(
     Build the column steel layer list from Structure_Parameters.
     Returns [(area_in2, dist_from_compression_face_in), ...].
     """
-    cover = cfg.rebar.cover_in
+    cover = cfg.rebar.centroid_cover_in("column")
     h     = cfg.sections.h_col_in
     Ab    = sp.COL_BAR_AREA
     layers = [
@@ -110,7 +110,11 @@ def _col_steel_layers(
     if sp.COL_SIDE_BARS > 0:
         # Per side face; Model/Sections.py places this many bars on each of the
         # two faces. See the matching note in RC_Design_Check._col_steel_layers.
-        layers.insert(1, (2 * sp.COL_SIDE_BARS * Ab, h / 2.0))
+        if sp.SLAB_THICKNESS_IN is None:
+            layers.insert(1, (2 * sp.COL_SIDE_BARS * Ab, h / 2.0))
+        else:
+            layers[1:1] = [(2 * Ab, cover + (h - 2 * cover) * k / (sp.COL_SIDE_BARS + 1))
+                           for k in range(1, sp.COL_SIDE_BARS + 1)]
     return layers
 
 
@@ -448,6 +452,7 @@ def run_checks_phase1(
     col_tags: List[int],
     beam_tags: List[int],
     cfg: DesignConfig,
+    member_actions: Optional[Dict[str, dict]] = None,
 ) -> Dict[int, MemberCheckResult]:
     """
     Run all Phase 1 ACI 318-19 checks for the current OpenSees model state.
@@ -457,6 +462,13 @@ def run_checks_phase1(
     col_tags   : column element tags (from get_element_tags())
     beam_tags  : beam element tags (X + Y combined)
     cfg        : DesignConfig controlling materials, rebar, and section dims
+    member_actions : optional solved actions keyed by str(tag), as captured by
+                 Design_Driver._capture_element_actions (``local_force_kip_kipin``
+                 and, for beams, ``span_bending``). When given, the checks read
+                 these instead of the live OpenSees domain, so the reinforcement
+                 iteration can re-check a set of solved combinations without
+                 re-solving the elastic frame, whose stiffness does not depend
+                 on the bars.
 
     Returns
     -------
@@ -471,9 +483,19 @@ def run_checks_phase1(
     pm_diagram = build_pm_diagram(cfg)
     results: Dict[int, MemberCheckResult] = {}
 
+    def _captured(tag):
+        if member_actions is None:
+            return None
+        member = member_actions.get(str(tag), member_actions.get(tag))
+        if member is None:
+            raise KeyError(f"No captured actions for design member {tag}.")
+        return member
+
     # ── Columns ─────────────────────────────────────────────────────────────
     for tag in col_tags:
-        P, Vy, Vz, My, Mz, _, _, _, _ = _extract_forces(tag)
+        captured = _captured(tag)
+        P, Vy, Vz, My, Mz, _, _, _, _ = _extract_forces(
+            tag, None if captured is None else captured["local_force_kip_kipin"])
         Vu = math.sqrt(Vy**2 + Vz**2)
 
         ls_pm    = check_column_pm(P, Mz, My, pm_diagram, cfg)
@@ -526,11 +548,20 @@ def run_checks_phase1(
         results[tag] = result
 
     # ── Beams ────────────────────────────────────────────────────────────────
+    from Design.SMRF_Beam_Actions import current_beam_bending
+    beam_tags = list(beam_tags)
+    if member_actions is None:
+        span_actions = current_beam_bending(beam_tags)
+    else:
+        span_actions = {tag: _captured(tag)["span_bending"] for tag in beam_tags}
     for tag in beam_tags:
-        P, Vy, Vz, My, Mz, My_i, My_j, Mz_i, Mz_j = _extract_forces(tag)
-        end_moments = (My_i, My_j, Mz_i, Mz_j)
-        Mu_pos = max(0.0, max(end_moments))
-        Mu_neg = max(0.0, max(-m for m in end_moments))
+        captured = _captured(tag)
+        P, Vy, Vz, My, Mz, My_i, My_j, _Mz_i, _Mz_j = _extract_forces(
+            tag, None if captured is None else captured["local_force_kip_kipin"])
+        # Vertical-plane flexure only: Mz is bending about the beam's vertical
+        # axis and is not resisted by the top/bottom bars.
+        envelope = span_actions[tag]["full_span"]
+        Mu_pos, Mu_neg = envelope["mu_positive_kip_in"], envelope["mu_negative_kip_in"]
         Vu     = math.sqrt(Vy**2 + Vz**2)
 
         ls_flex_pos = check_beam_flexure_pos(Mu_pos, cfg)
@@ -558,6 +589,7 @@ def run_checks_phase1(
                 "n_bot":       sp.BEAM_BOT_BARS,
                 "As_top_in2":  sp.BEAM_TOP_BARS * sp.BEAM_BAR_AREA,
                 "As_bot_in2":  sp.BEAM_BOT_BARS * sp.BEAM_BAR_AREA,
+                "span_bending": span_actions[tag],
                 "b_in":        cfg.sections.b_beam_in,
                 "h_in":        cfg.sections.h_beam_in,
                 "stirrup_bar_size": cfg.rebar.beam_stirrup_bar_size,
