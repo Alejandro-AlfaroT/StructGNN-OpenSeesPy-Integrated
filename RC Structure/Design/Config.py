@@ -332,7 +332,6 @@ class IndependentVerification:
     fire_resistance_scope_accepted: bool = False     # slab_fire_resistance
     congestion_and_placement_accepted: bool = False  # detailing.congestion_and_placement
     floor_frame_compatibility_reviewed: bool = False   # floor.compatibility_idealization_reviewed
-    cage_layout_verified: bool = False               # detailing.cage_layout (hoop/crosstie arrangement drawn and checked)
     asserted_by: str = ""
     assertion_date: str = ""
     assertion_basis: str = ""

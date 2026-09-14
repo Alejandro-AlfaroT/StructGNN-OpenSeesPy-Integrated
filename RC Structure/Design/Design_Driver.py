@@ -519,7 +519,7 @@ def _capacity_state(cfg, combination_actions):
         "materials": {"fy_ksi": sp.FY_KSI, "es_ksi": sp.ES_KSI,
                       "normalweight": sp.CONCRETE_UNIT_WEIGHT_KCF == 0.150},
         "beam": {"bar_size": sp.BEAM_BAR_SIZE, "top_bars": sp.BEAM_TOP_BARS, "bot_bars": sp.BEAM_BOT_BARS,
-                 "centroid_offset_in": sp.longitudinal_cover_in("beam"),
+                 "centroid_offset_in": sp.longitudinal_cover_in("beam"), "clear_cover_in": sp.BEAM_CLEAR_COVER_IN,
                  # The smeared line weight the frame element carries over its full
                  # centerline length (drop weight spread over L, see
                  # Structure_Parameters.beam_self_weight_kip_per_in) and the

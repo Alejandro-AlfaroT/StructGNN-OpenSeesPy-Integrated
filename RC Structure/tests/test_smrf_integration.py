@@ -227,7 +227,7 @@ class IntegrationTests(unittest.TestCase):
         probe = {"floor_hand_check_verified": True, "strength_model_verified": True,
                  "detailing_model_consistency_verified": True, "slab_column_local_steel_assessed": True,
                  "fire_resistance_scope_accepted": True, "congestion_and_placement_accepted": True,
-                 "floor_frame_compatibility_reviewed": True, "cage_layout_verified": True,
+                 "floor_frame_compatibility_reviewed": True,
                  "asserted_by": "probe", "assertion_date": "2026-09-13", "assertion_basis": "test"}
         # Assertions ride in the request identity (demand_basis is inside the input signature).
         record.setdefault("request_identity", {}).setdefault("policy", {})["verification"] = probe
@@ -382,7 +382,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(statuses["qualification.capacity_evidence_recomputed"], "pass")
             self.assertEqual(statuses["qualification.hoops_match_design"], "pass")
             self.assertEqual(statuses["floor.coupled_summary_consistent"], "pass")
-            self.assertEqual(statuses["detailing.cage_layout"], "not_evaluated")
+            self.assertEqual(statuses["detailing.cage_layout"], "pass")      # generated arrangement, checked
             self.assertEqual(result["reinforcement"]["beam_stirrup_spacing_in"],
                              capacity["transverse"]["beam"]["spacing_in"])
             self.assertLessEqual(result["reinforcement"]["col_stirrup_spacing_in"], 4.0)

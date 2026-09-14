@@ -275,10 +275,12 @@ type rather than silently adopting these assumptions for unrelated input data.
   (18.7.4.1); the strong-column escalation selects at most
   `rho_col_practical_max` (4%, a stated proportioning preference) before the
   section grows, and offers only cages whose face bars the hoop ladder can
-  tie (six per face).
+  support (corners and alternate bars, 25.7.2.3: at most 2L - 2 bars per
+  face with L legs).
 - Single-layer bar-fit, aggregate-dependent clear-spacing and beam
-  reinforcement-balance candidate filters. The complete hoop/crosstie cage and
-  supported-bar arrangement still need to be designed.
+  reinforcement-balance candidate filters. The hoop/crosstie arrangement is
+  generated from the bar positions (`SMRF_Cage_Layout`, see "Capacity
+  design"); hook geometry and placement drawings are not.
 - One automatically selected slab thickness for the entire building, including
   the roof. Every bay panel is checked against the declared beam-supported
   two-way thickness rules; the critical panel governs. Selection is repeated
@@ -295,8 +297,9 @@ type rather than silently adopting these assumptions for unrelated input data.
   iteration solve, including after longitudinal bar sizes change. Beam limits
   use effective depth and bar diameter; columns use a conservative 4-inch cap
   in place of an unverified `hx`-dependent allowance. The chosen spacing is
-  applied uniformly along members. Zone geometry is recorded, but this is not
-  a designed hoop/crosstie cage or a zoned confinement-material model.
+  applied uniformly along members. Zone geometry is recorded; the
+  hoop/crosstie arrangement is generated (below), but this is not a zoned
+  confinement-material model.
 - Member-specific cover and actual perimeter-bar positions in the new-mode
   section-strength calculations, candidate selection, fiber sections and IMK
   geometric inputs. Intermediate column side bars are no longer all treated
@@ -384,13 +387,16 @@ type rather than silently adopting these assumptions for unrelated input data.
    effects, the sway combinations and the column-shear distribution
    assumption (item 7).
 4. **Transverse reinforcement design.** Implemented, not verified: hoop bar,
-   legs (every face bar tied) and spacing from probable shear, 18.7.5.4
-   confinement area and the 18.6.4.4 beam bounds; column spacing keeps the
-   conservative 4-in cap in place of the hx-dependent `so` until the
-   supported-bar layout is verified (`so` is recorded). The same hoops set
-   rho_sh in the IMK backbones. Open: an explicit hoop/crosstie drawing
-   (``legs`` implies the crosstie count), middle-zone versus end-zone spacing
-   (one spacing is used along the member), and verification (item 7).
+   legs and spacing from probable shear, 18.7.5.4 confinement area and the
+   18.6.4.4 beam bounds, with the leg count bounded and realized by the
+   generated hoop/crosstie arrangement (`SMRF_Cage_Layout`: corners and
+   alternate bars supported, 6-in clear rule, hx from the arrangement,
+   crossties only where a bar can be engaged); column spacing keeps the
+   conservative 4-in cap in place of the hx-dependent `so` (`so` is
+   recorded). The same hoops set rho_sh in the IMK backbones. Open:
+   135-degree hook geometry and crosstie end alternation (stated, not
+   drawn), middle-zone versus end-zone spacing (one spacing is used along
+   the member), and verification (item 7).
 5. **Anchorage and constructability.** Hooked anchorage at exterior joints,
    through-bar depth and splice type/location are computed; congestion,
    mechanical-splice staggering and bar-placement drawings remain open
@@ -506,10 +512,12 @@ person must decide; each is part of the design request identity:
 3. `IndependentVerification` -- after the item-7 hand checks, assert the
    floor hand check, strength-model verification, detailing/model
    consistency, the 8.6.1.2 assessment, fire scope, congestion/placement
-   acceptance, the floor/frame compatibility idealization (informed by the
-   saved coupled comparison) and the cage layout (after drawing and
-   checking the hoop/crosstie arrangement the quantities assume), with
-   `asserted_by` and `assertion_basis`.
+   acceptance and the floor/frame compatibility idealization (informed by
+   the saved coupled comparison), with `asserted_by` and `assertion_basis`.
+   The hoop/crosstie arrangement is generated and checked by code
+   (`detailing.cage_layout` is evaluated, not asserted); what remains for
+   the placement judgement is hook geometry, crosstie alternation and
+   congestion (`detailing.congestion_and_placement`).
 
 What an assertion cannot do: at qualification the capacity design and the
 beam-plus-slab strengths are rebuilt from the record's own sections, bars,
@@ -788,6 +796,11 @@ checks; the driver installs the hoops before the state is captured, so
   is, the shortfall is recorded (`scwb_joint.steel_exhausted`) and the
   section search steps the column size. Checks the adapter cannot evaluate
   (no established slab strength) stay unevaluated here as in qualification.
+- Beam hoops likewise: `beam_cage` supports the top and bottom bars per
+  18.6.4.4 / 25.7.2.3 (corners and alternate bars, 6-in clear rule,
+  supported spacing at most 14 in) and bounds the legs between that minimum
+  and the bars a crosstie can engage on both faces; a 7-bar layer in a
+  16-in beam needs a 4-leg set, a 3-bar layer in a 10-in beam a closed hoop.
 - Beam Mpr: the composite section with steel at 1.25 fy, phi = 1. Ve = Mpr
   equilibrium over the clear span plus the factored gravity face reactions
   from the slab transfer, for (1.2 + 0.2 SDS) D + 1.0 L and (0.9 - 0.2 SDS) D.
@@ -813,9 +826,23 @@ checks; the driver installs the hoops before the state is captured, so
   Pu < Ag fc / 20, else 22.5.5.1 with axial load. Hoops from Vs, the
   18.7.5.4 confinement area (Ag/Ach and 0.09 fc/fyt; the Pu > 0.3 Ag fc form
   when it applies) and 18.7.5.3 spacing (b/4, 6 db, and the conservative
-  4-in cap retained in place of so = 4 + (14 - hx)/3, which is recorded),
-  with every face bar tied so hx is the face bar spacing. The column bar
-  search refuses cages with hx > 14 in (18.7.5.2(f)).
+  4-in cap retained in place of so = 4 + (14 - hx)/3, which is recorded).
+  The leg count is one the cage can hold: `SMRF_Cage_Layout.column_cage`
+  places the bars on each face from cover, hoop and bar diameters, finds
+  the bars 25.7.2.3 (through 18.7.5.2(d)) requires to be supported --
+  corners and alternate bars, no unsupported bar more than 6 in clear from
+  a supported one, hx of supported bars at most 14 in (18.7.5.2(e)), every
+  bar and 8 in under high axial load (18.7.5.2(f)) -- and bounds the legs
+  across each face pair between that minimum and the number of bars a
+  crosstie can engage (18.7.5.2(b)). The hoop ladder is walked over the
+  constructible leg counts only; the selected arrangement (which bars carry
+  crossties, both directions) is saved with the design, hx is its
+  supported-bar spacing, and Av and Ash use the legs it realizes in both
+  directions. The cross-check found the earlier every-face-bar-tied rule
+  crediting six legs to a column with three top bars; a 3-top-bar column
+  now gets a 3-leg set (hoop plus one crosstie) at the spacing that shear
+  and confinement then need, or the section grows. `detailing.cage_layout`
+  and `column.cage_layout` / `beam.cage_layout` evaluate the arrangement.
 - Joint shear (18.8.4): Vj = 1.25 fy (beam top bars + slab bars in the
   effective flange) + 1.25 fy (opposite beam bottom bars) - Vcol, with
   Vcol = sum Mpr / H (2 sum Mpr / H at a terminating roof column), for every

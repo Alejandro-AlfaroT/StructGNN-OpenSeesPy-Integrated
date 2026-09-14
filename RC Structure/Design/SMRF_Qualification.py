@@ -113,7 +113,6 @@ _VERIFICATION_ITEMS = {
     "slab_fire_resistance": "fire_resistance_scope_accepted",
     "detailing.congestion_and_placement": "congestion_and_placement_accepted",
     "floor.compatibility_idealization_reviewed": "floor_frame_compatibility_reviewed",
-    "detailing.cage_layout": "cage_layout_verified",
 }
 
 
@@ -218,14 +217,13 @@ def _apply_capacity_design_evidence(record, checks, evidence):
                 conf["ash_ratio_required"] * conf["bc_in"], hoops["ash_provided_per_in"], "<=", "in2/in",
                 details={"legs": hoops["legs"], "bar_size": hoops["bar_size"], "spacing_in": hoops["spacing_in"],
                          "high_axial": conf["high_axial"],
-                         "scope": "confinement steel quantity Ash/s against 18.7.5.4; the leg count assumes every "
-                                  "face bar is tied -- the arrangement itself is detailing.cage_layout"})
+                         "scope": "confinement steel quantity Ash/s against 18.7.5.4 with the leg count the generated "
+                                  "arrangement realizes in both directions (detailing.cage_layout)"})
             limit = 8.0 if conf["high_axial"] else 14.0
             replaced["column.supported_bar_distance_basic"] = make_check(
                 "column.supported_bar_distance_basic", "ACI 318-19 18.7.5.2(e)/(f)",
                 conf["hx_in"], limit, "<=", "in",
-                details={"scope": "hx taken as the face bar spacing under the assumed every-bar-tied arrangement; "
-                                  "the arrangement itself is detailing.cage_layout"})
+                details={"scope": "hx is the supported-bar spacing of the generated arrangement (detailing.cage_layout)"})
         beam_hoops = beams.get("hoops")
         if beam_hoops:
             replaced["beam.hoop_layout_and_axial_applicability"] = make_check(
@@ -269,12 +267,22 @@ def _apply_capacity_design_evidence(record, checks, evidence):
                             "designed hoops is qualification.hoops_match_design, evaluated here, not asserted."),
             "details": {"reason": "awaiting independent validation",
                         "rho_sh_source": "reinforcement.*_stirrup_* read by Model.IMK_Calibration.transverse_steel_ratio"}}
-        replaced["detailing.cage_layout"] = not_evaluated(
-            "detailing.cage_layout", "ACI 318-19 18.6.4.2--18.6.4.3 / 18.7.5.2 / 25.7.2",
-            "The capacity design selects hoop bar, legs, spacing and confinement quantities on the assumption "
-            "that every face bar is tied by a hoop corner or a crosstie; the hoop/crosstie arrangement, "
-            "135-degree hooks, crosstie alternation and the supported-bar inventory are not drawn. Assert "
-            "IndependentVerification.cage_layout_verified after producing and checking the layout.")
+        cages = {member: (capacity.get(group) or {}).get("cage") or {} for member, group in (("column", "columns"), ("beam", "beams"))}
+        from Design.SMRF_Cage_Layout import cage_passes
+        replaced["detailing.cage_layout"] = make_check(
+            "detailing.cage_layout", "ACI 318-19 18.6.4.4 / 18.7.5.2(b)-(f) / 25.7.2.3",
+            int(all(cage_passes(c) for c in cages.values())), 1, "==",
+            details={member: {"legs": c.get("legs"), "hx_in": c.get("hx_in"), "legs_min": c.get("legs_min"),
+                              "legs_max": c.get("legs_max"),
+                              "arrangement": {face: {"positions_in": a["positions_in"], "supported": a["supported"],
+                                                     "crossties": a["crossties"]}
+                                              for face, a in (c.get("arrangement") or {}).items()},
+                              "failing": [x for x in c.get("checks", []) if not x.get("passes")]}
+                     for member, c in cages.items()} | {
+                "scope": "perimeter hoop plus crossties engaging bars, generated from the bar positions: alternate-bar "
+                         "support, the 6-in clear rule and the supported-bar spacing are checked on the arrangement; "
+                         "the leg count Av and Ash use is the arrangement's in both directions; 135-degree hooks, "
+                         "crosstie end alternation and placement are fabrication requirements (detailing.congestion_and_placement)"})
     else:
         for name, clause, reason in (
             ("qualification.joint_capacity_completion", "ACI 318-19 18.7.3; 18.8",
@@ -283,7 +291,7 @@ def _apply_capacity_design_evidence(record, checks, evidence):
              "No usable capacity design is saved with this record."),
             ("qualification.detailing_model_consistency", "Research model-to-design consistency",
              "No usable capacity design is saved with this record."),
-            ("detailing.cage_layout", "ACI 318-19 18.6.4.2--18.6.4.3 / 18.7.5.2 / 25.7.2",
+            ("detailing.cage_layout", "ACI 318-19 18.6.4.4 / 18.7.5.2(b)-(f) / 25.7.2.3",
              "No usable capacity design is saved with this record."),
         ):
             replaced[name] = not_evaluated(name, clause, reason)

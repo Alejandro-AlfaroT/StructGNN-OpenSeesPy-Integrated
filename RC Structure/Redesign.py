@@ -240,8 +240,13 @@ COLUMN_SUPPORTED_BAR_HX_MAX_IN = 14.0
 
 
 def _max_tied_face_bars():
+    """Largest face bar count the hoop ladder can support (25.7.2.3 alternate bars).
+
+    A face with n bars needs at least floor((n - 2) / 2) crossties, i.e.
+    2 + floor((n - 2) / 2) legs; with L legs available that is n <= 2L - 2.
+    """
     from Design.SMRF_Capacity_Design import STIRRUP_LADDER
-    return max(legs for _bar, legs in STIRRUP_LADDER)
+    return 2 * max(legs for _bar, legs in STIRRUP_LADDER) - 2
 
 
 COLUMN_MAX_TIED_FACE_BARS = _max_tied_face_bars()   # ACI 318-19 18.7.5.2(f)
@@ -288,10 +293,9 @@ def _col_candidates(Ast_lo, Ast_hi, cfg=None):
                         (sp.B_COL - 2 * cover) / (n_top - 1) > COLUMN_SUPPORTED_BAR_HX_MAX_IN
                         or (sp.H_COL - 2 * cover) / (n_side_pf + 1) > COLUMN_SUPPORTED_BAR_HX_MAX_IN):
                     continue
-                # The capacity-design hoops tie every face bar with a leg or a
-                # crosstie (SMRF_Capacity_Design.design_column_shear); a face
-                # with more bars than the hoop ladder has legs cannot be
-                # detailed, so it is not offered.
+                # The capacity-design hoops support every corner and alternate
+                # bar with a leg or a crosstie (SMRF_Cage_Layout); a face with
+                # more bars than the hoop ladder can support is not offered.
                 if max(n_top, n_side_pf + 2) > COLUMN_MAX_TIED_FACE_BARS:
                     continue
                 if Ast_lo <= Ast <= Ast_hi:

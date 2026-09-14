@@ -211,8 +211,17 @@ def design_beam_shear(state, strengths, transfer):
     vs_limit = 8.0 * math.sqrt(fc * 1000.0) * bw * d / 1000.0
     db = _BAR[beam["bar_size"]][0]
     bounds = {"d_over_4": d / 4.0, "six_db": 6.0 * db, "absolute": 6.0}
-    selected = None
+    # Hinge-zone hoops must also support the top and bottom bars (18.6.4.4 /
+    # 25.7.2.3): the leg count is bounded by what the bars need and can engage.
+    from Design.SMRF_Cage_Layout import beam_cage, cage_passes
+    cover = beam.get("clear_cover_in")
+    if cover is None:
+        raise ValueError("Beam clear cover is required for the hoop arrangement.")
+    selected, cage = None, None
     for bar, legs in STIRRUP_LADDER:
+        trial = beam_cage(bw, cover, _BAR[bar][0], db, beam["top_bars"], beam["bot_bars"], legs=legs)
+        if not cage_passes(trial):
+            continue
         av = legs * _BAR[bar][1]
         s_shear = av * fy * d / vs_required if vs_required > 0 else float("inf")
         s_cap = min(s_shear, *bounds.values())
@@ -220,11 +229,18 @@ def design_beam_shear(state, strengths, transfer):
         if spacing is not None:
             selected = {"bar_size": bar, "legs": legs, "spacing_in": spacing, "av_in2": av,
                         "spacing_from_shear_in": s_shear, "phi_vs_kip": PHI_SHEAR * av * fy * d / spacing,
-                        "phi_vn_kip": PHI_SHEAR * (vc + av * fy * d / spacing)}
+                        "phi_vn_kip": PHI_SHEAR * (vc + av * fy * d / spacing), "crossties": legs - 2}
+            cage = trial
             break
+    if cage is None:
+        first = beam_cage(bw, cover, _BAR[STIRRUP_LADDER[0][0]][0], db, beam["top_bars"], beam["bot_bars"])
+        cage = {**first, "legs": None, "constructible": False, "arrangement": None, "hx_in": None,
+                "checks": [{"rule": "18.6.4.4 / 25.7.2.3", "passes": False,
+                            "detail": f"no hoop in the ladder is constructible: bars allow {first['legs_max']} legs, "
+                                      f"support rules need {first['legs_min']}"}]}
     result = {"families": families, "ve_kip": worst_ve, "mechanism_shear_kip": worst_mechanism,
               "vc_zero_hinge_zone": vc_zero, "vc_kip": vc, "vs_required_kip": vs_required,
-              "vs_limit_kip": vs_limit, "section_adequate": vs_required <= vs_limit,
+              "vs_limit_kip": vs_limit, "section_adequate": vs_required <= vs_limit, "cage": cage,
               "spacing_bounds_in": bounds, "hoops": selected,
               "basis": ("Vc = 0 in the hinge zone when the Mpr mechanism shear is at least half of Ve (18.6.5.2); "
                         "hoops at <= min(d/4, 6db, 6 in) and Av fyt d / Vs; uniform along the member")}
@@ -335,25 +351,31 @@ def design_column_shear(state, strengths):
         perimeter_bars = col["top_bars"] + col["bot_bars"] + 2 * col["side_bars"]
         kn = perimeter_bars / max(1, perimeter_bars - 2)
         ratio = max(ratio, 0.2 * kf * kn * p_max_all / (fy * ach))
-    # Every face bar is tied, so hx is the larger face's bar spacing.
-    face_bars = max(col["top_bars"], col["bot_bars"], col["side_bars"] + 2)
-    offset = col["centroid_offset_in"]
-    hx = max((b - 2.0 * offset) / max(1, max(col["top_bars"], col["bot_bars"]) - 1),
-             (h - 2.0 * offset) / max(1, col["side_bars"] + 1))
-    so = max(4.0, min(6.0, 4.0 + (14.0 - hx) / 3.0))
-    if high_axial and hx > 8.0:
-        hx_ok = False
-    else:
-        hx_ok = True
+    # The cage: a perimeter hoop plus crossties, each engaging a bar. Which
+    # bars need support (25.7.2.3 through 18.7.5.2(d), hx per 18.7.5.2(e)/(f))
+    # and which can carry a crosstie (18.7.5.2(b)) bound the leg count in
+    # each direction; the leg count used for Av and Ash below is realized in
+    # both directions by the arrangement, and hx is the arrangement's
+    # supported-bar spacing, not an assumption (SMRF_Cage_Layout).
+    from Design.SMRF_Cage_Layout import column_cage, cage_passes
     db = _BAR[col["bar_size"]][0]
-    # The hx-dependent so (4-6 in) is recorded, but the methodology keeps a
-    # conservative 4-in cap until the supported-bar layout is verified.
-    bounds = {"quarter_min_dimension": min(b, h) / 4.0, "six_db": 6.0 * db, "so": so,
-              "conservative_so_cap": 4.0}
-    selected = None
+    cages = {}
+    for bar, _legs in STIRRUP_LADDER:
+        if bar not in cages:
+            cages[bar] = column_cage(b, h, cc, _BAR[bar][0], db, col["top_bars"], col["side_bars"], high_axial=high_axial)
+    selected, cage = None, None
     for bar, legs in STIRRUP_LADDER:
-        if legs < face_bars:
-            continue                      # every face bar needs a leg or crosstie
+        if legs not in cages[bar]["constructible_legs"]:
+            continue
+        trial = column_cage(b, h, cc, _BAR[bar][0], db, col["top_bars"], col["side_bars"], high_axial=high_axial, legs=legs)
+        if not cage_passes(trial):
+            continue
+        hx = trial["hx_in"]
+        so = max(4.0, min(6.0, 4.0 + (14.0 - hx) / 3.0))
+        # The hx-dependent so (4-6 in) is recorded, but the methodology keeps a
+        # conservative 4-in cap.
+        bounds = {"quarter_min_dimension": min(b, h) / 4.0, "six_db": 6.0 * db, "so": so,
+                  "conservative_so_cap": 4.0}
         av = legs * _BAR[bar][1]
         s_shear = av * fy * d / worst["vs_required_kip"] if worst and worst["vs_required_kip"] > 0 else float("inf")
         s_conf = av / (ratio * bc)
@@ -362,10 +384,25 @@ def design_column_shear(state, strengths):
             selected = {"bar_size": bar, "legs": legs, "spacing_in": spacing, "av_in2": av,
                         "spacing_from_shear_in": s_shear, "spacing_from_confinement_in": s_conf,
                         "ash_provided_per_in": av / spacing, "ash_required_per_in": ratio * bc,
-                        "phi_vn_kip": PHI_SHEAR * ((worst["vc_kip"] if worst else 0.0) + av * fy * d / spacing)}
+                        "phi_vn_kip": PHI_SHEAR * ((worst["vc_kip"] if worst else 0.0) + av * fy * d / spacing),
+                        "crossties_per_direction": legs - 2}
+            cage = trial
             break
+    if cage is None:
+        # Nothing selected: report the arrangement bounds for the first hoop bar.
+        first = cages[STIRRUP_LADDER[0][0]]
+        hx = max(m["hx_in"] for m in first["minimal_support"].values())
+        so = max(4.0, min(6.0, 4.0 + (14.0 - hx) / 3.0))
+        bounds = {"quarter_min_dimension": min(b, h) / 4.0, "six_db": 6.0 * db, "so": so,
+                  "conservative_so_cap": 4.0}
+        cage = {**first, "legs": None, "constructible": False, "arrangement": None, "hx_in": hx,
+                "checks": [{"rule": "18.7.5.2(b)/(d)", "passes": False,
+                            "detail": f"no hoop in the ladder is constructible: bars allow {first['legs_max']}, "
+                                      f"support rules need {first['legs_min']}"}]}
+    hx_ok = (not high_axial) or hx <= 8.0
     return {"stories": stories, "governing": worst, "vs_limit_kip": vs_limit,
             "section_adequate": (worst["vs_required_kip"] if worst else 0.0) <= vs_limit,
+            "cage": cage,
             "confinement": {"ach_in2": ach, "bc_in": bc, "ash_ratio_required": ratio, "high_axial": high_axial,
                             "hx_in": hx, "so_in": so, "hx_within_8in_when_required": hx_ok},
             "spacing_bounds_in": bounds, "hoops": selected, "joint_delivery_kip_in": joint_delivery,
@@ -571,6 +608,19 @@ def build_capacity_design(state):
                              int(columns["hoops"] is not None), 1, "=="))
     checks.append(make_check("column.supported_bar_spacing", "ACI 318-19 18.7.5.2",
                              int(columns["confinement"]["hx_within_8in_when_required"]), 1, "=="))
+    from Design.SMRF_Cage_Layout import cage_passes
+    for member, data in (("column", columns), ("beam", beams)):
+        cage = data.get("cage") or {}
+        failing = [c for c in cage.get("checks", []) if not c.get("passes")]
+        checks.append(make_check(f"{member}.cage_layout",
+                                 "ACI 318-19 18.7.5.2(b)-(f) / 25.7.2.3" if member == "column" else "ACI 318-19 18.6.4.4 / 25.7.2.3",
+                                 int(cage_passes(cage)), 1, "==",
+                                 details={"legs": cage.get("legs"), "constructible_legs": cage.get("constructible_legs"),
+                                          "legs_min": cage.get("legs_min"), "legs_max": cage.get("legs_max"),
+                                          "hx_in": cage.get("hx_in"), "failing": failing,
+                                          "scope": "perimeter hoop plus crossties engaging bars; supported-bar spacing, "
+                                                   "alternate-bar support and the 6-in clear rule from the arrangement; "
+                                                   "hook geometry and placement not drawn"}))
     for entry in joints["evidence"]:
         checks.append(make_check("joint.shear_screen", "ACI 318-19 18.8.4", entry["vj_kip"], entry["phi_vn_kip"],
                                  "<=", "kip", entry["id"]))

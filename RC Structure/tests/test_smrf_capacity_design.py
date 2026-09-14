@@ -31,7 +31,7 @@ def state(**changes):
         "sections": {"b_col_in": 26.0, "h_col_in": 26.0, "fc_col_ksi": 4.0,
                      "b_beam_in": 10.0, "h_beam_in": 16.0, "fc_beam_ksi": 8.0},
         "materials": {"fy_ksi": 60.0, "es_ksi": 29000.0, "normalweight": True},
-        "beam": {"bar_size": 8, "top_bars": 2, "bot_bars": 2, "centroid_offset_in": 2.5,
+        "beam": {"bar_size": 8, "top_bars": 2, "bot_bars": 2, "centroid_offset_in": 2.5, "clear_cover_in": 1.5,
                  "self_weight_kip_per_in": {"x": 0.01, "y": 0.01}},
         "column": {"bar_size": 6, "top_bars": 4, "bot_bars": 4, "side_bars": 4, "centroid_offset_in": 2.375,
                    "clear_cover_in": 1.5, "stirrup_bar_size": 4,
@@ -205,7 +205,7 @@ class SelfWeightLedgerTests(unittest.TestCase):
 
 
 class ColumnAndJointTests(unittest.TestCase):
-    def test_column_shear_is_joint_limited_and_hoops_tie_every_face_bar(self):
+    def test_column_shear_is_joint_limited_and_hoops_are_what_the_cage_can_hold(self):
         st = state()
         result = build_capacity_design(st)
         columns = result["columns"]
@@ -214,8 +214,17 @@ class ColumnAndJointTests(unittest.TestCase):
         self.assertLessEqual(top["ve_kip"], max(top["ve_own_kip"], top["vu_analysis_kip"]))
         self.assertGreaterEqual(top["ve_kip"], top["vu_analysis_kip"])
         self.assertTrue(top["vc_zero"])                       # P_min = 10 kip << Ag fc / 20
-        hoops = columns["hoops"]
-        self.assertGreaterEqual(hoops["legs"], max(4, 4 + 2))    # side face has side_bars + 2 = 6 bars
+        hoops, cage = columns["hoops"], columns["cage"]
+        # 4 top bars: at most 4 legs across that face (hoop + 2 crossties); the
+        # 6-bar side face needs alternate support (2 crossties) -> exactly 4 legs.
+        self.assertEqual(hoops["legs"], 4)
+        self.assertEqual(cage["legs_max"], {"across_b_face": 4, "across_h_face": 6})
+        self.assertEqual(cage["legs_min"], {"across_b_face": 4, "across_h_face": 4})
+        self.assertEqual(cage["constructible_legs"], [4])
+        self.assertTrue(all(c["passes"] for c in cage["checks"]))
+        self.assertEqual(cage["arrangement"]["h_face"]["supported"], [True, False, True, False, True, True])
+        self.assertAlmostEqual(hoops["av_in2"], 4 * 0.20)
+        self.assertIn("column.cage_layout", {c["id"] for c in result["checks"]})
         conf = columns["confinement"]
         self.assertAlmostEqual(conf["ash_ratio_required"], max(0.3 * (26 * 26 / (23 * 23) - 1) * 4 / 60, 0.09 * 4 / 60))
         self.assertGreaterEqual(hoops["ash_provided_per_in"], conf["ash_ratio_required"] * conf["bc_in"])

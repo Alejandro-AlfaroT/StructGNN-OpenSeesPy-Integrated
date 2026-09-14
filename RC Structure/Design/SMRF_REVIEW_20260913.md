@@ -1,5 +1,23 @@
 # SMRF follow-up review — 2026-09-13
 
+## Cage layout generated (2026-09-13, after the follow-up)
+
+The open item the follow-up named is now code, not a flag:
+`Design/SMRF_Cage_Layout.py` generates the hoop/crosstie arrangement from
+the bar positions (25.7.2.3 alternate-bar support and 6-in clear rule,
+18.7.5.2(e)/(f) hx, 18.7.5.2(b) engagement, 18.6.4.4 for beams) and the
+capacity design walks the hoop ladder over constructible leg counts only,
+using the arrangement's legs and hx for Av, Ash and `so`. Doing so exposed
+a defect the every-face-bar-tied assumption had hidden: a column with three
+top bars was credited six legs of #5 in both directions (Av and Ash 2x on
+the weak axis); it now gets a 3-leg set at 3 in, and beams with 6-7 bars
+per layer get 4-leg sets. `detailing.cage_layout` is evaluated;
+`IndependentVerification.cage_layout_verified` is removed (hook geometry,
+end alternation and placement remain under
+`detailing.congestion_and_placement`). The four rerun cases stay accepted
+(`outputs/smrf_sweep_20260913_cage/`); one column grew a size where three
+legs at the 3-in grid could not carry the shear.
+
 ## Cross-check follow-up (Astra, 2026-09-13) -- resolution
 
 1. Confirmed: the pattern comparison enforced the per-column criterion only.
