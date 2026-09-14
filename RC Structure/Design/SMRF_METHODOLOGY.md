@@ -430,7 +430,14 @@ type rather than silently adopting these assumptions for unrelated input data.
    cap, and the check reports max(contour ratio, Pu / phi Pn,max). The
    third cross-check found the cap enforced only at zero moment, so a
    column at 1.05 phi Pn,max passed with 1 kip-in of bending; that case is
-   now a test. Still open: independent verification of the contour
+   now a test. The fourth found the cut surface carrying two points at the
+   cap (the sweep's seeded pure-compression point and the crossing), so the
+   nominal lookup the hinges and the preliminary SCWB sizing use read
+   almost zero just below the cap and the cap moment above it. The cut
+   surface is now the upper envelope M(P) with one point at the cap;
+   `column_moment_at_axial` interpolates on it and returns 0 outside the
+   domain, and a hinge refuses a column whose gravity estimate is outside
+   the surface rather than calibrate to nothing. Still open: independent verification of the contour
    exponent, action transformations and force signs (item 7,
    `strength_model_verified`). The
    `sdc_c` preset was re-valued to SDS 0.40 / SD1 0.19 / S1 0.19 on
@@ -739,18 +746,33 @@ a representative floor.
 
 ## Slab strip actions and reinforcement
 
-Shear path (corrected basis, 2026-09-14): ACI 318-19 8.4.4.1 governs one-way
-shear in the slab, checked at the beam faces by the strip routine; 8.4.4.2.1
-requires two-way shear at slab-column connections and concentrated loads,
-and this frame has none -- every column stands at the intersection of an
-x-beam line and a y-beam line, a geometric fact of the model recorded as
-`columns_at_beam_intersections`. That the beams are stiff enough to be the
-slab's supports is the direct-design criterion alpha_f >= 1.0 on every
-panel edge (ACI 318-14 8.10.8; the 2019 body text no longer carries those
-clauses and R8.2.1 continues to permit the method). Whether that load path
-is accepted for the floor remains the engineer's assessment,
-`two_way_shear_path_assessed`; the earlier citation of "318-19 8.10.8" was
-wrong and is replaced.
+Shear path (basis corrected twice, 2026-09-14). In ACI 318-19 Chapter 8,
+8.4.3 is the slab's one-way shear (8.4.3.1: Vu at the face of the support)
+and 8.4.4 is two-way shear (8.4.4.1.1: evaluated in the vicinity of
+columns, loads and reaction areas at the 22.6.4 critical sections); the
+earlier text had 8.4.4.1 as one-way, which it is not. What the checks
+record: the strip routine checks the slab for one-way shear at the beam
+faces (8.4.3.1); the slab's reactions are line reactions on beams and every
+column stands at the intersection of an x-beam line and a y-beam line
+(`columns_at_beam_intersections`), so the slab's load reaches the columns
+through the beams; how much of the panel shear the beams take is the
+beam-supported-slab rule of ACI 318-14 8.10.8 (not in the 2019 body text;
+R8.2.1 keeps the method available): Table 8.10.8.1 gives 100% of the
+45-degree-tributary shear to a beam with alpha_f1 l2/l1 >= 1.0 (8.10.8.2
+interpolates below that), 8.10.8.3 adds the loads applied to the beam
+directly including its stem, and 8.10.8.4 requires resistance to the total
+shear on the panel. The criterion recorded is the Table 8.10.8.1 one --
+alpha_f1 l2/l1 with l1 the beam's span and l2 the transverse width, on
+every edge of every panel (`alpha_f_l2_l1_min`; alpha_f alone is not it, a
+stiff beam on a long narrow panel can fall below 1.0 while alpha_f does
+not) -- and the beams are designed for the plate's actual reactions (their
+sum is checked against the floor load by the transfer ledger) plus the drop
+weight, which is 8.10.8.3/8.10.8.4 by analysis rather than by tributary.
+Using a direct-design-method clause as the load-path criterion for a slab
+analysed as a plate is an interpretation, and it is the engineer's:
+`two_way_shear_path_assessed`. Beam intersections alone establish nothing;
+they are one of the three conditions (intersections, alpha_f1 l2/l1 >= 1.0,
+the assessment), and the check is `not_evaluated` without all three.
 
 `Design/SMRF_Slab_Actions.build_slab_action_evidence` produces the demand
 evidence the strip routine requires, from the same flexible-beam floor model
@@ -790,9 +812,10 @@ development per 25.4.2.4 against half the shortest clear span (continuous
 uniform mats), continuity/extensions by construction, crack-control spacing
 (24.3.2 at fs = 2/3 fy), deflection control by minimum thickness (8.3.2.1),
 two continuous bottom bars through the column core (8.7.4.2, a placement
-requirement) and corner reinforcement (8.7.3.1). The two-way shear path
-(beams with alpha_f >= 1 on every edge carrying the slab shear per
-8.10.8.1/8.10.8.3, so that slab-column punching does not govern) is a code
+requirement) and corner reinforcement (8.7.3.1). The shear path (the beams
+take the whole panel shear, ACI 318-14 Table 8.10.8.1 at alpha_f1 l2/l1 >=
+1.0 on every edge; the slab is checked for one-way shear at the beam faces,
+318-19 8.4.3.1; no slab-column critical section, 8.4.4.1.1) is a code
 interpretation and is settled only when `two_way_shear_path_assessed` is
 asserted; otherwise it stays `not_evaluated` with the reasoning recorded.
 Fire resistance and the 8.6.1.2 applicability question stay `not_evaluated`.
@@ -915,10 +938,15 @@ A declaration is validated, not trusted (2026-09-14): `DemandPolicy` must
 carry a non-blank author, an ISO calendar date and a non-blank basis, a site
 class and risk category from ASCE 7-22's lists, a non-blank occupancy,
 finite nonnegative loads, an accidental-torsion ratio of at least 5% and
-Boolean flags (`SMRF_Demands.demand_policy_problems`). The design refuses a
-partly filled or invalid declaration outright, and at qualification every
-`demands.*` item stays unevaluated with the rejection listed -- a
-whitespace basis or a mistyped site class is never approved evidence.
+Boolean flags (`SMRF_Demands.demand_policy_problems`). Site class and risk
+category must be exactly the ASCE 7-22 spelling: the fourth cross-check
+found the validator folding " D " to D while the 11.4.8 site-specific flag
+read the value verbatim, so the padded spelling dodged the flag. The
+validator no longer normalises anything and the flag reads the declared
+value as declared. The design refuses a partly filled or invalid
+declaration outright, and at qualification every `demands.*` item stays
+unevaluated with the rejection listed -- a whitespace basis, a mistyped or
+padded site class is never approved evidence.
 
 `Design/SMRF_Demands.evaluate_demand_basis` reads the design record: the
 declared `DemandPolicy`, the load inventory, the saved torsion assessment
@@ -958,13 +986,24 @@ from the mat spacing, psi_c from f'c, psi_o = 1 with the beam continuous
 along the perimeter; at least 8 db and 6 in) against the beam width less the
 far-side cover and hoop (`perimeter_slab_bar_anchorage`). Where the hook
 fits, the entries and hinges keep the composite hogging strength and record
-the hook; where it does not, the exterior-end hogging entries carry
-`slab_basis = terminated_undeveloped` with zero slab contribution (the joint
-rule accepts it), the hinge at that end yields at the rectangular strength
-(`yield_moment_y_hogging_i/j`), and sagging keeps the flange concrete,
-which needs no bar development. The slab design itself checks the same
-hook (`slab_perimeter_bar_anchorage`, both axes) and the bar ladder never
-offers a size whose hook does not fit the perimeter beam. Interior ends are
+the hook; where it does not, neither mat is counted at that end in either
+sign: the hogging entries carry `slab_basis = terminated_undeveloped` with
+zero slab contribution, the sagging entries carry
+`flange_concrete_undeveloped_bars` -- the flange concrete stays in
+compression and needs no development, but the bottom mat is dropped, since
+undeveloped bars are not tension steel either (the fourth cross-check
+found it still counted: 1242.61 vs 1110.56 kip-in on the test fixture) --
+and the joint rule accepts both bases (a nonzero term only with a strength
+basis). The hinge at that end yields at those strengths in both directions
+(`yield_moment_y_hogging_i/j`, `yield_moment_y_sagging_i/j`; the spring's
+own yield rotation is per end, `theta_y_spring_y_i/j`, and the plastic
+rotation post-processing uses the end's value). The slab design itself
+checks the same hook (`slab_perimeter_bar_anchorage`, both axes) and the
+bar ladder checks each candidate spacing with its own hook (psi_r = 1.6
+below 6 db): a spacing whose hook does not fit is not offered, a bar with
+no fitting spacing is not offered -- pricing every bar at the tightest
+spacing offered, as the ladder first did, rejected #5 mats that fit at
+their selected 12 in. Interior ends are
 developed by continuity (25.4.2.4 within half the adjacent clear span,
 `slab_bar_development`). The probable strengths the capacity design uses
 for beam shear and joint shear keep the composite value everywhere, which

@@ -113,6 +113,9 @@ class DemandBasisEvaluationTests(unittest.TestCase):
         for mutate, expect in (
             (lambda p: p.update(declared_by="", declaration_date="", declaration_basis="   "), "declaration_basis is blank"),
             (lambda p: p.update(site_class="QZ"), "site_class"),
+            (lambda p: p.update(site_class=" D "), "site_class"),        # noncanonical: the hazard check reads it verbatim
+            (lambda p: p.update(site_class="d"), "site_class"),
+            (lambda p: p.update(risk_category=" II"), "risk_category"),
             (lambda p: p.update(declaration_date="2026-13-40"), "ISO calendar date"),
             (lambda p: p.update(risk_category="V"), "risk_category"),
             (lambda p: p.update(accidental_torsion_ratio=0.0), "accidental_torsion_ratio"),
@@ -134,6 +137,19 @@ class DemandBasisEvaluationTests(unittest.TestCase):
         self.assertEqual(DemandPolicy().problems(), ["declared_by is blank", "declaration_date is blank", "declaration_basis is blank"])
         self.assertTrue(DemandPolicy(declared_by="a", declaration_date="2026-09-14", declaration_basis="b").declared())
         self.assertFalse(DemandPolicy(declared_by="a", declaration_date="2026-09-14", declaration_basis="b", site_class="Z").declared())
+
+    def test_site_specific_analysis_flag_cannot_be_dodged_by_whitespace(self):
+        """Fourth cross-check: 'D' failed the 11.4.8 flag and ' D ' passed it."""
+        record = _record()
+        record["demand_basis"]["policy"]["site_class"] = "D"
+        canonical = {c["id"]: c for c in evaluate_demand_basis(record)}["demands.site_hazard"]
+        self.assertEqual(canonical["status"], "fail")
+        self.assertTrue(canonical["details"]["site_specific_ground_motion_required"])
+        for spelling in (" D ", "d", "D\n"):
+            record["demand_basis"]["policy"]["site_class"] = spelling
+            padded = {c["id"]: c for c in evaluate_demand_basis(record)}["demands.site_hazard"]
+            self.assertEqual(padded["status"], "not_evaluated", spelling)
+            self.assertIn("not exactly one of", padded["details"]["reason"])
 
     def test_design_refuses_a_partly_filled_or_invalid_declaration(self):
         from Design import Design_Driver as driver

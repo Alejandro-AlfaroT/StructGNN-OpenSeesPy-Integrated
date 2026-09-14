@@ -190,10 +190,13 @@ def demand_policy_problems(policy):
 
     A declaration is a named, dated basis with values in their domains. A
     blank or whitespace author, date or basis, a date that is not an ISO
-    calendar date, a site class or risk category outside ASCE 7-22's, a
-    blank occupancy, a nonfinite or negative load value, an accidental
-    torsion ratio below the 5% of 12.8.4.2, or a non-Boolean flag is a
-    problem, listed explicitly so a typo never reads as approved evidence.
+    calendar date, a site class or risk category that is not exactly one of
+    ASCE 7-22's (no case folding, no surrounding whitespace: the value is
+    used verbatim downstream, so a noncanonical spelling is rejected rather
+    than normalised in one place and not another), a blank occupancy, a
+    nonfinite or negative load value, an accidental torsion ratio below the
+    5% of 12.8.4.2, or a non-Boolean flag is a problem, listed explicitly so
+    a typo never reads as approved evidence.
     """
     problems = []
     if not isinstance(policy, dict):
@@ -210,11 +213,11 @@ def demand_policy_problems(policy):
         except ValueError:
             problems.append("declaration_date is not an ISO calendar date")
     site_class = policy.get("site_class")
-    if not isinstance(site_class, str) or site_class.strip().upper() not in SITE_CLASSES:
-        problems.append(f"site_class {site_class!r} is not one of {SITE_CLASSES}")
+    if not isinstance(site_class, str) or site_class not in SITE_CLASSES:
+        problems.append(f"site_class {site_class!r} is not exactly one of {SITE_CLASSES}")
     risk = policy.get("risk_category")
-    if not isinstance(risk, str) or risk.strip().upper() not in RISK_CATEGORIES:
-        problems.append(f"risk_category {risk!r} is not one of {RISK_CATEGORIES}")
+    if not isinstance(risk, str) or risk not in RISK_CATEGORIES:
+        problems.append(f"risk_category {risk!r} is not exactly one of {RISK_CATEGORIES}")
     occupancy = policy.get("occupancy")
     if not isinstance(occupancy, str) or not occupancy.strip():
         problems.append("occupancy is blank")
@@ -266,7 +269,8 @@ def evaluate_demand_basis(record):
         checks.append(declaration_missing("site_hazard", "ASCE 7-22 Chapters 11 and 21",
                                           "Site class and risk category are declarations"))
     else:
-        site_specific = policy.get("site_class", "").upper() in ("D", "E", "F") and seismic["s1"] >= 0.2
+        # ``declared`` guarantees the canonical spelling; no normalisation here.
+        site_specific = policy["site_class"] in ("D", "E", "F") and seismic["s1"] >= 0.2
         checks.append(make_check("demands.site_hazard", "ASCE 7-22 11.4.8, 11.6, Tables 11.6-1/11.6-2",
                                  int(label_sdc == sdc and not site_specific), 1, "==",
                                  details={"derived_sdc": sdc, "site_label": label, "label_sdc": label_sdc,

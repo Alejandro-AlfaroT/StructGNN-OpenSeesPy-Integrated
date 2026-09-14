@@ -139,6 +139,12 @@ def composite_beam_strengths(beam, slab, layout, geometry, axis, position):
     comp_neg = section_moment(neg_layers, fc, fy, h, bw)
     pos_layers = [(offset, top_area), (h - offset, bot_area)] + [(y, a) for y, a, _ in slab_layers]
     comp_pos = section_moment(pos_layers, fc, fy, h, bw, flange_width=bf, flange_depth=t)
+    # Where the slab bars are not developed (an exterior end whose hook does
+    # not fit the perimeter beam) neither mat is counted in either sign: the
+    # bottom mat would otherwise add tension steel to sagging. The flange
+    # concrete stays in compression under sagging; it needs no development.
+    undeveloped_pos = section_moment([(offset, top_area), (h - offset, bot_area)], fc, fy, h, bw,
+                                     flange_width=bf, flange_depth=t)
     return {
         "axis": axis, "position": position, "slab_sides": sides,
         "effective_flange_width_in": bf, "flange_overhang_in": overhang,
@@ -147,9 +153,13 @@ def composite_beam_strengths(beam, slab, layout, geometry, axis, position):
         "slab_layers_from_top": [{"face": face, "depth_in": y, "area_in2": a} for y, a, face in slab_layers],
         "rectangular": {"positive": rect_pos, "negative": rect_neg},
         "composite": {"positive": comp_pos, "negative": comp_neg},
+        "undeveloped": {"positive": undeveloped_pos, "negative": rect_neg},
         "mn_positive_kip_in": comp_pos["mn_kip_in"], "mn_negative_kip_in": comp_neg["mn_kip_in"],
+        "mn_undeveloped_positive_kip_in": undeveloped_pos["mn_kip_in"],
+        "mn_undeveloped_negative_kip_in": rect_neg["mn_kip_in"],
         "slab_increment_positive_kip_in": comp_pos["mn_kip_in"] - rect_pos["mn_kip_in"],
         "slab_increment_negative_kip_in": comp_neg["mn_kip_in"] - rect_neg["mn_kip_in"],
+        "flange_concrete_increment_positive_kip_in": undeveloped_pos["mn_kip_in"] - rect_pos["mn_kip_in"],
         "basis": ("ACI 318-19 6.3.2.1 effective flange; 18.7.3.2 slab mats within it as discrete layers; "
                   "22.2 strain compatibility, ecu = 0.003, Whitney block, EPP steel, zero axial force; "
                   "continuous uniform slab mats are developed at interior beam ends by continuity (25.4.2.4 "
@@ -289,23 +299,30 @@ def beam_slab_strengths(record):
                                                       "reason": "slab reinforcement not established (slab action "
                                                                 "evidence not asserted as verified)"}
                     continue
-                terminated = exterior[end] and sign == "negative" and not anchorage[axis]["developed"]
+                terminated = exterior[end] and not anchorage[axis]["developed"]
                 if terminated:
-                    # Hogging at an exterior end whose slab bars cannot be hooked
-                    # into the perimeter beam: the slab steel is not developed at
-                    # this critical section and is not counted. Sagging keeps the
-                    # flange concrete, which needs no bar development.
+                    # An exterior end whose slab bars cannot be hooked into the
+                    # perimeter beam: the mats are not developed at this critical
+                    # section and are counted in neither sign. Hogging is the
+                    # rectangular beam; sagging keeps the flange concrete in
+                    # compression (no bar development involved) but not the
+                    # bottom mat, which would otherwise add tension steel.
+                    strength = family["undeveloped"][sign]["mn_kip_in"]
+                    rectangular = family["rectangular"][sign]["mn_kip_in"]
                     entries[f"{tag}/{end}/{sign}"] = {
-                        "slab_basis": "terminated_undeveloped",
-                        "slab_mn_kip_in": 0.0,
+                        "slab_basis": "terminated_undeveloped" if sign == "negative" else "flange_concrete_undeveloped_bars",
+                        "slab_mn_kip_in": 0.0 if sign == "negative" else max(0.0, strength - rectangular),
                         "section_compatibility_verified": True,
                         "family": f"{axis}_{position}",
-                        "mn_composite_kip_in": family["rectangular"][sign]["mn_kip_in"],
-                        "mn_rectangular_kip_in": family["rectangular"][sign]["mn_kip_in"],
+                        "mn_composite_kip_in": strength,
+                        "mn_rectangular_kip_in": rectangular,
                         "effective_flange_width_in": family["effective_flange_width_in"],
                         "slab_steel_in_flange_in2": 0.0,
                         "exterior_end": True, "exterior_anchorage": anchorage[axis],
-                        "basis": "rectangular beam at an exterior end: slab bars terminate undeveloped at the perimeter",
+                        "basis": ("rectangular beam at an exterior end: slab bars terminate undeveloped at the perimeter"
+                                  if sign == "negative" else
+                                  "beam with the flange concrete in compression at an exterior end: slab bars terminate "
+                                  "undeveloped at the perimeter and are not counted in either mat"),
                     }
                     continue
                 entries[f"{tag}/{end}/{sign}"] = {

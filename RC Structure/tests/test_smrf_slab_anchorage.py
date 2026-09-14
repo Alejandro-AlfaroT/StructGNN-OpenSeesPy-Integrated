@@ -1,5 +1,6 @@
 """Slab bars are credited at exterior beam ends only where the perimeter hook develops them."""
 import contextlib
+import io
 import math
 import sys
 import unittest
@@ -87,14 +88,33 @@ class ExteriorEndCreditTests(unittest.TestCase):
         self.assertEqual(ext_neg["slab_mn_kip_in"], 0.0)
         self.assertAlmostEqual(ext_neg["mn_composite_kip_in"], ext_neg["mn_rectangular_kip_in"])
         self.assertLess(ext_neg["mn_composite_kip_in"], int_neg["mn_composite_kip_in"])
-        self.assertEqual(ext_pos["slab_basis"], "developed_effective_width")      # flange concrete needs no bar development
-        # the joint rule accepts the basis and the zero contribution
+        # Sagging at that end keeps the flange concrete but neither mat: the
+        # bottom mat would otherwise add undeveloped tension steel (fourth
+        # cross-check: 1242.61 with the mats vs 1110.56 without).
+        family = families["x_edge"]
+        self.assertEqual(ext_pos["slab_basis"], "flange_concrete_undeveloped_bars")
+        self.assertAlmostEqual(ext_pos["mn_composite_kip_in"], family["mn_undeveloped_positive_kip_in"])
+        self.assertLess(ext_pos["mn_composite_kip_in"], family["mn_positive_kip_in"])
+        self.assertGreater(ext_pos["mn_composite_kip_in"], ext_pos["mn_rectangular_kip_in"])
+        self.assertAlmostEqual(ext_pos["slab_mn_kip_in"], ext_pos["mn_composite_kip_in"] - ext_pos["mn_rectangular_kip_in"])
+        self.assertEqual(ext_pos["slab_steel_in_flange_in2"], 0.0)
+        self.assertAlmostEqual(family["mn_positive_kip_in"], 1242.61, places=1)
+        self.assertAlmostEqual(family["mn_undeveloped_positive_kip_in"], 1110.56, places=1)
+        # Interior ends and the interior-end sagging keep the composite strengths.
+        self.assertEqual(entries["17/j/positive"]["slab_basis"], "developed_effective_width")
+        # The joint rule accepts both bases: zero slab term for hogging, the flange-concrete term for sagging.
         from Design.SMRF_Joints import scwb_check
-        state = {"nominal_strengths": True,
-                 "column_capacities": [{"mn_kip_in": 5000.0, "factored_axial_kip": 10.0, "axial_envelope_checked": True}],
+        column = {"mn_kip_in": 5000.0, "factored_axial_kip": 10.0, "axial_envelope_checked": True}
+        state = {"nominal_strengths": True, "column_capacities": [column],
                  "beam_capacities": [{"mn_kip_in": ext_neg["mn_composite_kip_in"], "slab_basis": "terminated_undeveloped",
                                       "slab_mn_kip_in": 0.0}]}
         self.assertEqual(scwb_check(state)["status"], "pass")
+        state["beam_capacities"] = [{"mn_kip_in": ext_pos["mn_rectangular_kip_in"], "slab_basis": "flange_concrete_undeveloped_bars",
+                                     "slab_mn_kip_in": ext_pos["slab_mn_kip_in"]}]
+        self.assertEqual(scwb_check(state)["status"], "pass")
+        self.assertAlmostEqual(scwb_check(state)["demand"], 1.2 * ext_pos["mn_composite_kip_in"])
+        state["beam_capacities"][0]["slab_basis"] = "terminated_undeveloped"          # a nonzero term needs a strength basis
+        self.assertEqual(scwb_check(state)["status"], "not_evaluated")
 
     def test_hinges_take_the_rectangular_strength_at_an_undeveloped_exterior_end(self):
         values = {"NUM_BAY_X": 3, "NUM_BAY_Y": 3, "BAY_X": 120.0, "BAY_Y": 120.0,
@@ -111,15 +131,40 @@ class ExteriorEndCreditTests(unittest.TestCase):
             ops.node(2, 120.0, 120.0, 0.0)        # first span of an interior x line
             ops.node(3, 120.0, 120.0, 0.0)
             ops.node(4, 240.0, 120.0, 0.0)        # middle span
-            hog, _sag, basis = IMK_Hinges.beam_yield_moments("beam_x", 1, 2)
-            hog_mid, _s, basis_mid = IMK_Hinges.beam_yield_moments("beam_x", 3, 4)
+            hog, sag, basis = IMK_Hinges.beam_yield_moments("beam_x", 1, 2)
+            hog_mid, sag_mid, basis_mid = IMK_Hinges.beam_yield_moments("beam_x", 3, 4)
             ops.wipe()
         self.assertFalse(basis["exterior_anchorage"]["developed"])
         self.assertEqual(basis["exterior_ends"], {"i": True, "j": False})
         self.assertLess(basis["hogging_i_kip_in"], hog)                 # rectangular at the exterior end
         self.assertAlmostEqual(basis["hogging_j_kip_in"], hog)          # composite at the interior end
+        self.assertLess(basis["sagging_i_kip_in"], sag)                 # flange concrete, no mats, at the exterior end
+        self.assertAlmostEqual(basis["sagging_j_kip_in"], sag)
         self.assertAlmostEqual(basis_mid["hogging_i_kip_in"], hog_mid)
         self.assertAlmostEqual(basis_mid["hogging_j_kip_in"], hog_mid)
+        self.assertAlmostEqual(basis_mid["sagging_i_kip_in"], sag_mid)
+        self.assertAlmostEqual(basis_mid["sagging_j_kip_in"], sag_mid)
+        # The per-end strengths reach the springs and the registry.
+        with contextlib.ExitStack() as stack:
+            for name, value in values.items():
+                stack.enter_context(mock.patch.object(sp, name, value, create=True))
+            ops.wipe()
+            ops.model("basic", "-ndm", 3, "-ndf", 6)
+            ops.node(1, 0.0, 120.0, 0.0)
+            ops.node(2, 120.0, 120.0, 0.0)
+            ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+            IMK_Hinges.reset_hinge_registry()
+            with contextlib.redirect_stdout(io.StringIO()):
+                IMK_Hinges.create_imk_member(901, 1, 2, "beam_x", 1)
+            entry = IMK_Hinges.hinge_registry()[901]
+            ke = IMK_Hinges.imk_hinge_stiffness("beam_x", "rot_y", 120.0)
+            ops.wipe()
+        self.assertAlmostEqual(entry["yield_moment_y_hogging_i_kip_in"], basis["hogging_i_kip_in"])
+        self.assertAlmostEqual(entry["yield_moment_y_sagging_i_kip_in"], basis["sagging_i_kip_in"])
+        self.assertAlmostEqual(entry["yield_moment_y_sagging_j_kip_in"], sag)
+        self.assertLess(entry["theta_y_spring_y_i"], entry["theta_y_spring_y_j"])
+        self.assertAlmostEqual(entry["theta_y_spring_y_i"] * ke, min(basis["hogging_i_kip_in"], basis["sagging_i_kip_in"]))
+        self.assertAlmostEqual(entry["theta_y_spring_y_j"] * ke, min(hog, sag))
         # With #4 mats the hook fits and both ends keep the composite strength.
         values["SLAB_REINFORCEMENT"] = {"layout": layout(4)}
         with contextlib.ExitStack() as stack:
@@ -133,6 +178,7 @@ class ExteriorEndCreditTests(unittest.TestCase):
             ops.wipe()
         self.assertTrue(basis4["exterior_anchorage"]["developed"])
         self.assertAlmostEqual(basis4["hogging_i_kip_in"], hog4)
+        self.assertAlmostEqual(basis4["sagging_i_kip_in"], _s4)
 
 
 class LadderTests(unittest.TestCase):
@@ -140,7 +186,8 @@ class LadderTests(unittest.TestCase):
         from test_smrf_slab_reinforcement import inputs, evidence
         from Design.SMRF_Slab_Reinforcement import design_slab_reinforcement
         context = {"clear_span_x_in": 102.0, "clear_span_y_in": 102.0, "beam_width_in": 10.0,
-                   "alpha_f_min": 5.6, "thickness_screen_passed": True, "column_core_width_in": 13.0,
+                   "alpha_f_min": 5.6, "alpha_f_l2_l1_min": 5.6, "thickness_screen_passed": True,
+                   "column_core_width_in": 13.0,
                    "two_way_shear_path_assessed": True, "columns_at_beam_intersections": True,
                    "beam_clear_cover_in": 1.5, "beam_hoop_diameter_in": 0.5, "fc_beam_ksi": 4.0}
         result = design_slab_reinforcement(inputs(), evidence(), policy={"bar_sizes": [6]}, context=context)
@@ -151,6 +198,34 @@ class LadderTests(unittest.TestCase):
         anchorage = [c for c in result["checks"] if c["id"] == "slab_perimeter_bar_anchorage"]
         self.assertEqual(len(anchorage), 2)
         self.assertTrue(all(c["status"] == "pass" for c in anchorage))
+
+    def test_hook_is_checked_at_each_candidate_spacing_not_the_tightest_offered(self):
+        """Fourth cross-check: spacings 3-12 rejected every #5 layout because the hook was priced at 3 in (psi_r = 1.6)."""
+        from test_smrf_slab_reinforcement import inputs, evidence
+        from Design.SMRF_Slab_Reinforcement import design_slab_reinforcement
+        context = {"clear_span_x_in": 102.0, "clear_span_y_in": 102.0, "beam_width_in": 10.0,
+                   "alpha_f_min": 5.6, "alpha_f_l2_l1_min": 5.6, "thickness_screen_passed": True,
+                   "column_core_width_in": 13.0,
+                   "two_way_shear_path_assessed": True, "columns_at_beam_intersections": True,
+                   "beam_clear_cover_in": 1.5, "beam_hoop_diameter_in": 0.5, "fc_beam_ksi": 4.0}
+        spacings = [float(s) for s in range(3, 13)]
+        result = design_slab_reinforcement(inputs(), evidence(), policy={"bar_sizes": [5], "spacing_options_in": spacings},
+                                           context=context)
+        self.assertIsNotNone(result["layout"])
+        self.assertEqual(result["layout"]["bar_size"], 5)
+        self.assertEqual({layer["spacing_in"] for layer in result["layout"]["layers"].values()}, {12.0})
+        self.assertEqual(result["summary"]["counts"]["fail"], 0)
+        trial = result["trial_history"][0]
+        self.assertTrue(trial["passed"])
+        self.assertEqual(trial["spacings_rejected_by_hook_in"], [3.0])      # #5 hooks at 3 in < 6 db: 11.8 > 8.0
+        without_three = design_slab_reinforcement(inputs(), evidence(), policy={"bar_sizes": [5], "spacing_options_in": spacings[1:]},
+                                                  context=context)
+        self.assertEqual(without_three["layout"]["layers"], result["layout"]["layers"])
+        # A bar with no fitting spacing at all is still not offered.
+        six = design_slab_reinforcement(inputs(), evidence(), policy={"bar_sizes": [6], "spacing_options_in": spacings},
+                                        context=context)
+        self.assertIsNone(six["layout"])
+        self.assertIn("at every spacing offered", six["trial_history"][0]["reason"])
 
 
 if __name__ == "__main__":

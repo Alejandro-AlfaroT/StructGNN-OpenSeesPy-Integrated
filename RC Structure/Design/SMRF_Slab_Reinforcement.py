@@ -246,7 +246,7 @@ def _layer_checks(layout, demand, inputs, location):
                        units="kip/ft", location=location)]
 
 
-_CONTEXT_KEYS = {"clear_span_x_in", "clear_span_y_in", "beam_width_in", "alpha_f_min",
+_CONTEXT_KEYS = {"clear_span_x_in", "clear_span_y_in", "beam_width_in", "alpha_f_min", "alpha_f_l2_l1_min",
                  "thickness_screen_passed", "column_core_width_in", "two_way_shear_path_assessed",
                  "columns_at_beam_intersections", "beam_clear_cover_in", "beam_hoop_diameter_in", "fc_beam_ksi"}
 
@@ -262,6 +262,7 @@ def _context(context):
                 "beam_clear_cover_in", "beam_hoop_diameter_in", "fc_beam_ksi"):
         result[key] = _number(context[key], key)
     result["alpha_f_min"] = _number(context["alpha_f_min"], "alpha_f_min", True)
+    result["alpha_f_l2_l1_min"] = _number(context["alpha_f_l2_l1_min"], "alpha_f_l2_l1_min", True)
     for key in ("thickness_screen_passed", "two_way_shear_path_assessed", "columns_at_beam_intersections"):
         if context[key] is not True and context[key] is not False:
             raise ValueError(f"{key} must be a boolean.")
@@ -322,38 +323,60 @@ def _completion_checks(inputs, layout, demands, context):
     for name, layer in sorted(layout["layers"].items()):
         checks.append(make_check("slab_crack_control_spacing", "ACI 318-19 24.3.2 with fs = 2/3 fy",
                                  layer["spacing_in"], s_max, "<=", "in", name))
-    # Shear path. ACI 318-19 8.4.4.1 governs one-way shear in the slab (the
-    # strip check above, at the beam faces); 8.4.4.2.1 requires two-way shear
-    # at slab-column connections and concentrated loads. In this frame every
-    # column stands at the intersection of beams in both directions, so the
-    # slab bears on beams and no slab-column connection exists; that the
-    # beams are stiff enough to be the supports is the direct-design-method
-    # criterion alpha_f >= 1.0 on every edge (ACI 318-14 8.10.8, a method
-    # 318-19 R8.2.1 continues to permit; the 2019 body text no longer carries
-    # those clauses). Whether that load path is accepted for this floor is the
-    # engineer's assessment, asserted as two_way_shear_path_assessed.
-    shear_clause = "ACI 318-19 8.4.4.1 / 8.4.4.2.1 / 22.6.1; ACI 318-14 8.10.8 via 318-19 R8.2.1"
-    path_ok = context["alpha_f_min"] >= 1.0 and context["columns_at_beam_intersections"]
+    # Shear path. ACI 318-19 8.4.3 is the slab's one-way shear (8.4.3.1: Vu at
+    # the face of the support; the strip check above, at the beam faces).
+    # 8.4.4 is two-way shear: 8.4.4.1.1 requires it "in the vicinity of
+    # columns, loads, and reaction areas" at the 22.6.4 critical sections.
+    # This slab's reactions are line reactions on beams, and every column
+    # stands at the intersection of beams in both directions, so the slab's
+    # load reaches the columns through the beams; how much of it the beams
+    # take is the beam-supported-slab rule of ACI 318-14 8.10.8 (the 2019
+    # body text no longer carries it; R8.2.1 keeps the method available):
+    # Table 8.10.8.1 assigns 100% of the panel shear on the 45-degree
+    # tributaries to a beam with alpha_f1 l2/l1 >= 1.0 (8.10.8.2 interpolates
+    # below that), 8.10.8.3 adds the loads applied to the beam directly
+    # including its stem, and 8.10.8.4 requires resistance to the total shear
+    # on the panel. Here the beams carry the plate's actual reactions (their
+    # sum is checked against the floor load by the transfer ledger) plus the
+    # drop weight (SMRF_Capacity_Design._drop_weight) in the beam shear
+    # design, which is 8.10.8.3/8.10.8.4 by analysis rather than by
+    # tributary; the criterion recorded here is the Table 8.10.8.1 one,
+    # alpha_f1 l2/l1 on every edge of every panel, not alpha_f alone. Using a
+    # direct-design-method clause as the load-path criterion for a slab
+    # analysed as a plate is an interpretation, and it is the engineer's:
+    # two_way_shear_path_assessed.
+    shear_clause = ("ACI 318-19 8.4.3.1 / 8.4.4.1.1 / 22.6.4; ACI 318-14 Table 8.10.8.1, 8.10.8.3, 8.10.8.4 "
+                    "via 318-19 R8.2.1")
+    path_ok = (context["alpha_f_min"] >= 1.0 and context["alpha_f_l2_l1_min"] >= 1.0
+               and context["columns_at_beam_intersections"])
     if path_ok and context["two_way_shear_path_assessed"]:
         checks.append(make_check("slab_two_way_shear_applicability", shear_clause,
-                                 1.0, context["alpha_f_min"], "<=", "alpha_f",
+                                 1.0, context["alpha_f_l2_l1_min"], "<=", "alpha_f1 l2/l1",
                                  details={"columns_at_beam_intersections": True,
-                                          "basis": "assessed: every column is at a beam intersection (no slab-column "
-                                                   "connection, 8.4.4.2.1 does not apply); beams with alpha_f >= 1.0 on "
-                                                   "every panel edge are the slab supports (direct-design criterion, "
-                                                   "318-14 8.10.8) and carry its shear on 45-degree tributaries; the slab "
-                                                   "itself is checked for one-way shear at the beam faces (8.4.4.1, the "
-                                                   "strip check above)"}))
+                                          "alpha_f_min": context["alpha_f_min"],
+                                          "alpha_f_l2_l1_min": context["alpha_f_l2_l1_min"],
+                                          "beam_share_of_panel_shear": "100% (Table 8.10.8.1 at alpha_f1 l2/l1 >= 1.0)",
+                                          "basis": "assessed: the slab bears on beams on every edge and every column is at "
+                                                   "a beam intersection, so its reactions are line reactions and no "
+                                                   "slab-column critical section (8.4.4.1.1 / 22.6.4) exists; with "
+                                                   "alpha_f1 l2/l1 >= 1.0 on every edge the beams take the whole panel "
+                                                   "shear (318-14 Table 8.10.8.1) and are designed for the plate's "
+                                                   "reactions plus their stem weight (8.10.8.3, 8.10.8.4 by analysis: "
+                                                   "the transfer ledger closes the floor load); the slab itself is "
+                                                   "checked for one-way shear at the beam faces (8.4.3.1, the strip "
+                                                   "check above)"}))
     elif path_ok:
         checks.append(not_evaluated("slab_two_way_shear_applicability", shear_clause,
-                                    f"alpha_f >= 1.0 on every edge (min {context['alpha_f_min']:.2f}) and every column is at a "
-                                    "beam intersection; whether the beam shear path replaces a slab-column two-way shear "
-                                    "check is an engineering assessment to assert in "
-                                    "Design.Config.SlabActionAssertions.two_way_shear_path_assessed."))
+                                    f"alpha_f >= 1.0 (min {context['alpha_f_min']:.2f}) and alpha_f1 l2/l1 >= 1.0 (min "
+                                    f"{context['alpha_f_l2_l1_min']:.2f}) on every edge, and every column is at a beam "
+                                    "intersection; whether the beam-supported shear path (318-14 8.10.8) replaces a "
+                                    "slab-column two-way shear check for a plate-analysed slab is an engineering "
+                                    "assessment to assert in Design.Config.SlabActionAssertions.two_way_shear_path_assessed."))
     else:
-        checks.append(not_evaluated("slab_two_way_shear_applicability", "ACI 318-19 8.4.4.2 / 22.6",
-                                    "alpha_f < 1.0 on some edge or a column bears on the slab directly: slab-column "
-                                    "two-way shear is not implemented."))
+        checks.append(not_evaluated("slab_two_way_shear_applicability", "ACI 318-19 8.4.4.1.1 / 22.6",
+                                    f"alpha_f1 l2/l1 < 1.0 on some edge (min {context['alpha_f_l2_l1_min']:.2f}; alpha_f min "
+                                    f"{context['alpha_f_min']:.2f}) or a column bears on the slab directly: the beams do not "
+                                    "take the whole panel shear and slab-column two-way shear is not implemented."))
     checks.append(make_check("slab_deflection_control", "ACI 318-19 8.3.2.1 via 8.3.1.2 minimum thickness",
                              int(context["thickness_screen_passed"]), 1, "==",
                              details={"basis": "thickness at or above the Table 8.3.1.2 minimum; deflections need not be calculated"}))
@@ -402,8 +425,8 @@ def design_slab_reinforcement(slab_inputs, demand_evidence, policy=None, context
 
     Optional policy: bar_sizes subset [4,5,6], spacing_options_in, clear_cover_in
     >=0.75, outer_axis x/y. Optional ``context`` (clear_span_x_in,
-    clear_span_y_in, beam_width_in, alpha_f_min, thickness_screen_passed,
-    column_core_width_in, two_way_shear_path_assessed,
+    clear_span_y_in, beam_width_in, alpha_f_min, alpha_f_l2_l1_min,
+    thickness_screen_passed, column_core_width_in, two_way_shear_path_assessed,
     columns_at_beam_intersections) enables the development, crack-control, shear-path,
     deflection, integrity and corner checks; without it they stay open. Crossing orthogonal bars touch within each face mat;
     two face mats retain at least max(1 in, 4/3 aggregate) clear gap. One bar size
@@ -435,19 +458,27 @@ def design_slab_reinforcement(slab_inputs, demand_evidence, policy=None, context
             record["trial_history"].append({"bar_size": bar, "passed": False,
                                             "reason": "Two orthogonal face mats do not fit with required clear gap."})
             continue
+        hook_rejected = {}
         if resolved_context is not None:
             # The mats end at the building perimeter, hooked into the perimeter
-            # beam (ACI 318-19 25.4.3.1): a bar whose hook does not fit that beam
-            # cannot be developed there and is not offered.
+            # beam (ACI 318-19 25.4.3.1). The hook length depends on the hook
+            # spacing (psi_r = 1.6 below 6 db), so each candidate spacing is
+            # checked with its own hook: a spacing whose hook does not fit is
+            # not offered for that bar, and a bar with no fitting spacing at
+            # all is not offered. The check on the selected layout is
+            # slab_perimeter_bar_anchorage.
             from Design.SMRF_Beam_Slab_Strength import hook_development_length_in
-            ldh, _factors = hook_development_length_in(bar, resolved_context["fc_beam_ksi"], inputs["fy_ksi"],
-                                                        min(resolved_policy["spacing_options_in"]))
             embedment = (resolved_context["beam_width_in"] - resolved_context["beam_clear_cover_in"]
                          - resolved_context["beam_hoop_diameter_in"])
-            if ldh > embedment:
+            for spacing in resolved_policy["spacing_options_in"]:
+                ldh, _factors = hook_development_length_in(bar, resolved_context["fc_beam_ksi"], inputs["fy_ksi"], spacing)
+                if ldh > embedment:
+                    hook_rejected[spacing] = ldh
+            if len(hook_rejected) == len(resolved_policy["spacing_options_in"]):
+                ldh = min(hook_rejected.values())
                 record["trial_history"].append({"bar_size": bar, "passed": False,
                                                 "reason": f"Hook development {ldh:.2f} in exceeds the {embedment:.2f} in "
-                                                          "the perimeter beam offers (25.4.3.1)."})
+                                                          "the perimeter beam offers (25.4.3.1) at every spacing offered."})
                 continue
         layers = {}
         for axis in ("x", "y"):
@@ -456,13 +487,16 @@ def design_slab_reinforcement(slab_inputs, demand_evidence, policy=None, context
                 envelope = {"mu_kip_in_per_ft": max(row["mu_kip_in_per_ft"] for row in rows),
                             "vu_kip_per_ft": max(row["vu_kip_per_ft"] for row in rows)}
                 for spacing in resolved_policy["spacing_options_in"]:
+                    if spacing in hook_rejected:
+                        continue
                     layer = _layout(inputs, resolved_policy, bar, axis, spacing)
                     if layer and all(c["status"] == "pass" for c in _layer_checks(layer, envelope, inputs, "trial")):
                         layers[f"{axis}_{face}"] = {**layer, "face": face, "demand_envelope": envelope}
                         break
         success = len(layers) == 4
         record["trial_history"].append({"bar_size": bar, "passed": success,
-                                        "layers_sized": sorted(layers)})
+                                        "layers_sized": sorted(layers),
+                                        "spacings_rejected_by_hook_in": sorted(hook_rejected)})
         if success:
             score = sum(layer["area_in2_per_ft"] for layer in layers.values())
             candidates.append((score, bar, {"bar_size": bar, "outer_axis": resolved_policy["outer_axis"],

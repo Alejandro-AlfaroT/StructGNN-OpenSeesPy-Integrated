@@ -11,9 +11,12 @@ It checks the supplied evidence, not the completeness of the structural model.
   ``factored_axial_kip``, and ``axial_envelope_checked: True``: its Mn is the
   lowest appropriate strength over the factored axial envelope for this sway.
   Each beam supplies rectangular ``mn_kip_in``, explicit ``slab_mn_kip_in``
-  and ``slab_basis``: no_slab, not_in_tension, or developed_effective_width.
-  An additive slab term is a *change in section strength*, not As*fy times
-  an arbitrary lever arm. Both capacities come from section compatibility.
+  and ``slab_basis``: no_slab, not_in_tension, developed_effective_width,
+  terminated_undeveloped (exterior hogging end whose slab bars are not
+  developed: zero slab term) or flange_concrete_undeveloped_bars (exterior
+  sagging end: the flange concrete in compression, no slab bars). An
+  additive slab term is a *change in section strength*, not As*fy times an
+  arbitrary lever arm. Both capacities come from section compatibility.
 * ``beam_capacity_shear``: see ``beam_capacity_shear_checks``.
 * ``through_bar_anchorage``: see ``through_bar_anchorage_checks``.
 * ``joint_shear``: see ``joint_shear_check``. This function does not select
@@ -44,7 +47,9 @@ from Design.SMRF_Common import make_check, not_evaluated
 SCWB_CLAUSE = "ACI 318-19 18.7.3.2"
 BEAM_SHEAR_CLAUSE = "ACI 318-19 18.6.5.1"
 JOINT_SHEAR_CLAUSE = "ACI 318-19 18.8.4; 21.2.4.4"
-SLAB_BASES = {"no_slab", "not_in_tension", "developed_effective_width", "terminated_undeveloped"}
+SLAB_BASES = {"no_slab", "not_in_tension", "developed_effective_width", "terminated_undeveloped",
+              "flange_concrete_undeveloped_bars"}
+SLAB_BASES_WITH_STRENGTH = {"developed_effective_width", "flange_concrete_undeveloped_bars"}
 MPR_BASIS = "fy_at_least_1.25_phi_1.0"
 
 
@@ -96,8 +101,9 @@ def scwb_check(state, *, location="", check_id="scwb"):
             if not isinstance(beam, Mapping) or beam.get("slab_basis") not in SLAB_BASES:
                 raise ValueError("Every beam needs an explicit developed slab contribution or absence basis.")
             slab = _number(beam.get("slab_mn_kip_in"), "slab_mn_kip_in", minimum=0)
-            if beam["slab_basis"] != "developed_effective_width" and slab != 0:
-                raise ValueError("A nonzero slab contribution requires developed_effective_width.")
+            if beam["slab_basis"] not in SLAB_BASES_WITH_STRENGTH and slab != 0:
+                raise ValueError("A nonzero slab contribution requires developed_effective_width or "
+                                 "flange_concrete_undeveloped_bars.")
             beam_sum += _number(beam.get("mn_kip_in"), "beam mn_kip_in", minimum=0) + slab
         if beam_sum <= 0:
             raise ValueError("Positive total beam flexural strength is required.")

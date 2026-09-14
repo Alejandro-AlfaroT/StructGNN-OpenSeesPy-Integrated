@@ -80,7 +80,7 @@ class BiaxialColumnTests(unittest.TestCase):
     def test_pure_compression_uses_the_smaller_axial_cap(self):
         cfg = self._cfg(top=5, side=1)
         diagrams = build_pm_diagrams(cfg)
-        cap = min(diagrams["y"][0][0], diagrams["z"][0][0])
+        cap = min(max(p for p, _m in diagrams["y"]), max(p for p, _m in diagrams["z"]))
         result = check_column_pm(0.5 * cap, 0.0, 0.0, diagrams, cfg)
         self.assertAlmostEqual(result.dcr, 0.5, places=9)
 
@@ -89,7 +89,7 @@ class BiaxialColumnTests(unittest.TestCase):
         cfg = self._cfg(top=4, side=2)
         diagrams = build_pm_diagrams(cfg)
         cap = max(p for p, _m in diagrams["y"])
-        self.assertAlmostEqual(cap, diagrams["y"][0][0], places=9)             # the sweep is cut at phi Pn,max
+        self.assertEqual(sum(1 for p, _m in diagrams["y"] if p == cap), 1)     # the sweep is cut at phi Pn,max: one envelope point there
         self.assertTrue(all(p <= cap + 1e-9 for p, _m in diagrams["y"]))
         over = 1.05 * cap
         self.assertAlmostEqual(check_column_pm(over, 0.0, 0.0, diagrams, cfg).dcr, 1.05, places=9)
@@ -109,6 +109,41 @@ class BiaxialColumnTests(unittest.TestCase):
         nominal = column_pm_nominal()
         ag = sp.B_COL * sp.H_COL; ast = 12 * sp.rebar_area(8)
         self.assertAlmostEqual(max(p for p, _m in nominal), 0.80 * (0.85 * sp.FC_COL_KSI * (ag - ast) + sp.FY_KSI * ast), places=6)
+
+    def test_nominal_lookup_follows_the_upper_envelope_at_the_cap(self):
+        """Fourth cross-check: two moments at the cap made the lookup read 0 just below it and the cap moment above it."""
+        from Model.IMK_Calibration import column_pm_nominal_for, column_moment_at_axial, column_axial_domain, _col_steel_layers
+        sp.COL_TOP_BARS = sp.COL_BOT_BARS = 4; sp.COL_SIDE_BARS = 2
+        diagram = column_pm_nominal_for(sp.B_COL, sp.H_COL, sp.FC_COL_KSI, _col_steel_layers())
+        low, cap = column_axial_domain(diagram)
+        self.assertEqual(sum(1 for p, _m in diagram if p == cap), 1)          # one point at the cap: the envelope
+        at_cap = column_moment_at_axial(cap, diagram)
+        below = column_moment_at_axial(cap - 1.0, diagram)
+        previous = max(m for p, m in diagram if p < cap)
+        self.assertGreater(at_cap, 0.0)
+        self.assertGreaterEqual(below, at_cap)                                # the envelope rises away from the cap
+        self.assertLessEqual(below, previous)
+        self.assertGreater(below, 0.5 * at_cap)                               # never toward zero
+        # Above the cap the section carries no moment at all; the design check fails it on the axial ratio.
+        self.assertEqual(column_moment_at_axial(cap + 1.0, diagram), 0.0)
+        self.assertEqual(column_moment_at_axial(1.2 * cap, diagram), 0.0)
+        self.assertEqual(column_moment_at_axial(low - 1.0, diagram), 0.0)
+        # Interior lookups interpolate the envelope.
+        (p1, m1), (p2, m2) = sorted(diagram)[10:12]
+        self.assertAlmostEqual(column_moment_at_axial(0.5 * (p1 + p2), diagram), 0.5 * (m1 + m2), places=9)
+        # The design-side lookup reads the same envelope just below its cap.
+        cfg = self._cfg(top=4, side=2)
+        design = build_pm_diagram(cfg)
+        design_cap = max(p for p, _m in design)
+        self.assertGreater(_interpolate_pm_capacity(design_cap - 1e-6, design), 0.99 * _interpolate_pm_capacity(design_cap, design))
+        self.assertIsNone(_interpolate_pm_capacity(design_cap + 1.0, design))
+        # A hinge cannot be calibrated for a column whose gravity load is outside the surface.
+        from Model import IMK_Hinges
+        IMK_Hinges._PM_DIAGRAM_CACHE.clear()
+        with self.assertRaisesRegex(ValueError, "outside the nominal P-M surface"):
+            IMK_Hinges._member_properties("column", axial_kip=1.1 * cap)
+        self.assertAlmostEqual(IMK_Hinges._member_properties("column", axial_kip=0.5 * cap)["my"],
+                               column_moment_at_axial(0.5 * cap, diagram), places=6)
 
     def test_single_diagram_is_accepted_for_both_axes(self):
         cfg = self._cfg(top=4, side=2)

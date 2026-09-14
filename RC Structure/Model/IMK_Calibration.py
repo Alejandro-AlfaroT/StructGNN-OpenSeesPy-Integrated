@@ -118,28 +118,41 @@ def column_pm_nominal_for(b, h, fc, layers, n_pts=120):
     return sorted(truncate_at_axial_cap(diagram, 0.80 * p0), key=lambda point: point[0])
 
 
-def column_moment_at_axial(axial_kip, diagram=None):
-    """Nominal moment capacity at a given axial load, by interpolation.
-
-    Axial loads outside the surface are clamped to its ends: below the
-    tension end the section is governed by flexure, and above the balance
-    point the surface already falls to zero moment at pure compression.
-    """
+def column_axial_domain(diagram=None):
+    """(tension end, compression cap) of a nominal surface, kip."""
     diagram = diagram or column_pm_nominal()
     axials = [point[0] for point in diagram]
-    moments = [point[1] for point in diagram]
-    if axial_kip <= axials[0]:
-        return moments[0]
-    if axial_kip >= axials[-1]:
-        return moments[-1]
-    for index in range(1, len(diagram)):
-        if axial_kip <= axials[index]:
-            span = axials[index] - axials[index - 1]
-            if span <= 0.0:
-                return moments[index]
-            weight = (axial_kip - axials[index - 1]) / span
-            return moments[index - 1] + weight * (moments[index] - moments[index - 1])
-    return moments[-1]
+    return min(axials), max(axials)
+
+
+def column_moment_at_axial(axial_kip, diagram=None):
+    """Nominal moment capacity at a given axial load, on the upper envelope.
+
+    The surface is the upper strength envelope M(P) between its tension end
+    and the nominal axial cap 0.80 P0 (column_pm_nominal_for cuts it there).
+    Between sweep points the moment is interpolated on that envelope: where
+    several segments bracket the load the largest moment is taken, so a
+    load just below the cap reads the moment at the cap, not zero. Outside
+    the domain the section has no flexural strength to offer -- above the
+    cap it cannot carry the axial load at all, below the tension end it is
+    past its tensile strength -- and the lookup returns 0.0 explicitly
+    rather than clamping to an end point. Callers that cannot represent a
+    section without strength (the hinges) must refuse such a load.
+    """
+    diagram = diagram or column_pm_nominal()
+    low, high = column_axial_domain(diagram)
+    if axial_kip < low or axial_kip > high:
+        return 0.0
+    points = sorted(diagram, key=lambda point: point[0])
+    best = None
+    for (p1, m1), (p2, m2) in zip(points, points[1:]):
+        if p1 <= axial_kip <= p2:
+            weight = (axial_kip - p1) / (p2 - p1) if p2 > p1 else 1.0
+            moment = m1 + weight * (m2 - m1)
+            best = moment if best is None else max(best, moment)
+    if best is None:                                            # a single-point surface
+        best = max(m for p, m in points if p == axial_kip)
+    return best
 
 
 # ---------------------------------------------------------------------------

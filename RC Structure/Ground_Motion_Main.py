@@ -210,8 +210,11 @@ def _hinge_backbone_rows(results):
         # reported, because it is what the backbone was calibrated against.
         theta_y = backbone.get("theta_y_target") or 0.0
         rotation = max(peaks["abs_max"])
+        # Beam ends can differ in strength (an exterior end without developed
+        # slab bars); the spring's own yield rotation is the one at this end.
+        end_theta_y = backbone.get("theta_y_spring_y_i" if end_id == 1 else "theta_y_spring_y_j")
         spring_theta_y = max(
-            backbone.get("theta_y_spring_y") or 0.0,
+            end_theta_y if end_theta_y is not None else (backbone.get("theta_y_spring_y") or 0.0),
             backbone.get("theta_y_spring_z") or 0.0,
         ) or theta_y
         plastic = max(0.0, rotation - spring_theta_y)

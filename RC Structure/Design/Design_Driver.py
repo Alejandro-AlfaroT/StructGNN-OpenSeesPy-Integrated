@@ -66,7 +66,12 @@ from Redesign import apply_updates, redesign_steel
 
 
 DESIGN_ARTIFACT_NAME = "design.json"
-DESIGN_SCHEMA_VERSION = "rc_smrf_candidate_v7_loop_closure"
+# v8 (2026-09-14): the P-M surfaces are upper envelopes cut at the axial cap,
+# exterior beam ends without a developed perimeter hook carry no slab bars in
+# either sign (new slab basis, per-end sagging), the slab context carries the
+# Table 8.10.8.1 criterion alpha_f1 l2/l1, and site class / risk category are
+# canonical strings. Records made under v7 are not reused.
+DESIGN_SCHEMA_VERSION = "rc_smrf_candidate_v8_envelope_and_anchorage"
 
 _STATE_KEYS = (
     "B_COL", "H_COL", "FC_COL_KSI", "B_BEAM", "H_BEAM", "FC_BEAM_KSI",
@@ -208,10 +213,22 @@ def _slab_strength_inputs_from_state(slab, cfg):
         "geometry": {"num_floor": sp.NUM_FLOOR}})
 
 
+def _beam_shear_share_criterion(edge):
+    """ACI 318-14 Table 8.10.8.1 criterion for one panel edge: alpha_f1 l2/l1.
+
+    l1 is the span of the beam on that edge (the bay along its axis) and l2
+    the transverse width (the slab strip alpha_f was formed with).
+    """
+    l1 = sp.BAY_X if edge["beam_axis"] == "x" else sp.BAY_Y
+    return edge["alpha_f"] * edge["slab_strip_width_in"] / l1
+
+
 def _slab_completion_context(slab, cfg):
     return {"clear_span_x_in": sp.BAY_X - sp.H_COL, "clear_span_y_in": sp.BAY_Y - sp.B_COL,
             "beam_width_in": sp.B_BEAM, "alpha_f_min": min(edge["alpha_f"] for panel in slab["panels"]
                                                            for edge in panel["edges"]),
+            "alpha_f_l2_l1_min": min(_beam_shear_share_criterion(edge) for panel in slab["panels"]
+                                     for edge in panel["edges"]),
             "thickness_screen_passed": slab["thickness_screen_passed"] is True,
             "column_core_width_in": min(sp.B_COL, sp.H_COL) - 2.0 * sp.longitudinal_cover_in("column"),
             "two_way_shear_path_assessed": (cfg.slab_actions.all_asserted()

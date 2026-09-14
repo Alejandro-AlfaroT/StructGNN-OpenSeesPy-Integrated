@@ -5,6 +5,7 @@ import openseespy.opensees as ops
 import Structure_Parameters as sp
 from Model.IMK_Calibration import (
     backbone_for_member,
+    column_axial_domain,
     column_gravity_axial,
     column_grid_position,
     column_moment_at_axial,
@@ -108,17 +109,23 @@ def beam_yield_moments(member_type, n_i, n_j):
     family = composite_beam_strengths(beam, slab, layout, geometry, axis, position)
     anchorage = perimeter_slab_bar_anchorage(layout, axis, sp.B_BEAM, sp.BEAM_CLEAR_COVER_IN,
                                              sp.rebar_diameter(sp.BEAM_STIRRUP_BAR_SIZE), sp.FC_BEAM_KSI, sp.FY_KSI)
-    hogging = family["mn_negative_kip_in"]
-    rectangular = family["rectangular"]["negative"]["mn_kip_in"]
+    hogging, sagging = family["mn_negative_kip_in"], family["mn_positive_kip_in"]
     undeveloped = layout is not None and anchorage is not None and not anchorage["developed"]
-    hogging_ends = {end: (rectangular if (undeveloped and exterior[end]) else hogging) for end in ("i", "j")}
-    return hogging, family["mn_positive_kip_in"], {
+    # An exterior end whose slab bars are not developed at the perimeter
+    # yields without them in either sign: rectangular hogging, and sagging
+    # with the flange concrete but no bottom mat (SMRF_Beam_Slab_Strength).
+    hogging_ends = {end: (family["mn_undeveloped_negative_kip_in"] if (undeveloped and exterior[end]) else hogging)
+                    for end in ("i", "j")}
+    sagging_ends = {end: (family["mn_undeveloped_positive_kip_in"] if (undeveloped and exterior[end]) else sagging)
+                    for end in ("i", "j")}
+    return hogging, sagging, {
         "basis": "beam plus developed slab mats in the ACI 6.3.2 flange" if layout is not None
                  else "rectangular beam, actual top and bottom bars; slab reinforcement not established",
         "family": f"{axis}_{position}",
         "effective_flange_width_in": family["effective_flange_width_in"],
         "slab_steel_in_flange_in2": family["slab_steel_in_flange_in2"],
         "hogging_i_kip_in": hogging_ends["i"], "hogging_j_kip_in": hogging_ends["j"],
+        "sagging_i_kip_in": sagging_ends["i"], "sagging_j_kip_in": sagging_ends["j"],
         "exterior_ends": exterior, "exterior_anchorage": anchorage}
 
 
@@ -136,7 +143,17 @@ def _member_properties(member_type, axial_kip=0.0):
         # the compression and side steel, and ignores axial load entirely.
         # Both moments come off the nominal P-M surface instead.
         if getattr(sp, "IMK_USE_CALIBRATED_BACKBONE", True):
-            capacity = column_moment_at_axial(axial_kip, _cached_pm_diagram())
+            diagram = _cached_pm_diagram()
+            low, high = column_axial_domain(diagram)
+            if not low <= axial_kip <= high:
+                # Outside the nominal surface the section has no flexural
+                # strength: it cannot carry the axial load. A hinge without
+                # strength is not a model of anything, so refuse rather than
+                # build a column that fails under gravity.
+                raise ValueError(f"Column gravity axial estimate {axial_kip:.1f} kip is outside the nominal "
+                                 f"P-M surface [{low:.1f}, {high:.1f}] kip (0.80 P0 cap, ACI 318-19 22.4.2.1); "
+                                 "the section cannot carry it and the hinge cannot be calibrated.")
+            capacity = column_moment_at_axial(axial_kip, diagram)
             my = mz = capacity
         else:
             my, mz = sp.column_nominal_moment_y(), sp.column_nominal_moment_z()
@@ -356,11 +373,11 @@ def _create_end_hinge(
     # Beam hinges are asymmetric. Measured on the zeroLength springs (see
     # tests/test_beam_hinge_asymmetry.py): hogging is POSITIVE spring
     # deformation at end i and NEGATIVE at end j, for beam_x and beam_y alike.
-    # Hogging can differ between the ends: at an exterior end whose slab bars
-    # are not developed at the perimeter the hinge yields at the rectangular
-    # beam strength (beam_yield_moments).
+    # Both strengths can differ between the ends: at an exterior end whose
+    # slab bars are not developed at the perimeter the hinge yields without
+    # them in either sign (beam_yield_moments).
     hogging = props.get("my_hogging_i" if end_id == 1 else "my_hogging_j", props.get("my_hogging", props["my"]))
-    sagging = props.get("my_sagging", props["my"])
+    sagging = props.get("my_sagging_i" if end_id == 1 else "my_sagging_j", props.get("my_sagging", props["my"]))
     if end_id == 1:
         positive, negative = hogging, sagging
     else:
@@ -399,7 +416,9 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         hogging, sagging, strength_basis = beam_yield_moments(member_type, n_i, n_j)
         props.update(my_hogging=hogging, my_sagging=sagging, my=max(hogging, sagging),
                      my_hogging_i=strength_basis.get("hogging_i_kip_in", hogging),
-                     my_hogging_j=strength_basis.get("hogging_j_kip_in", hogging))
+                     my_hogging_j=strength_basis.get("hogging_j_kip_in", hogging),
+                     my_sagging_i=strength_basis.get("sagging_i_kip_in", sagging),
+                     my_sagging_j=strength_basis.get("sagging_j_kip_in", sagging))
     backbone = backbone_for_member(member_type, axial_kip=axial_kip)
     length = _member_length(n_i, n_j)
     i_hinge_node = hinge_node_tag(ele_tag, 1)
@@ -424,6 +443,8 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         "yield_moment_y_hogging_i_kip_in": props.get("my_hogging_i", props.get("my_hogging", props["my"])),
         "yield_moment_y_hogging_j_kip_in": props.get("my_hogging_j", props.get("my_hogging", props["my"])),
         "yield_moment_y_sagging_kip_in": props.get("my_sagging", props["my"]),
+        "yield_moment_y_sagging_i_kip_in": props.get("my_sagging_i", props.get("my_sagging", props["my"])),
+        "yield_moment_y_sagging_j_kip_in": props.get("my_sagging_j", props.get("my_sagging", props["my"])),
         "exterior_slab_anchorage": (strength_basis or {}).get("exterior_anchorage"),
         "yield_moment_z_kip_in": props["mz"],
         "strength_basis": (strength_basis or {}).get("basis"),
@@ -440,6 +461,20 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         # must be measured against.
         "theta_y_spring_y": (
             min(props.get("my_hogging", props["my"]), props.get("my_sagging", props["my"]))
+            / imk_hinge_stiffness(member_type, "rot_y", length)
+            if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
+        ),
+        # Per end, where the ends differ (exterior ends without developed
+        # slab bars): the spring at that end yields in its weaker direction.
+        "theta_y_spring_y_i": (
+            min(props.get("my_hogging_i", props.get("my_hogging", props["my"])),
+                props.get("my_sagging_i", props.get("my_sagging", props["my"])))
+            / imk_hinge_stiffness(member_type, "rot_y", length)
+            if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
+        ),
+        "theta_y_spring_y_j": (
+            min(props.get("my_hogging_j", props.get("my_hogging", props["my"])),
+                props.get("my_sagging_j", props.get("my_sagging", props["my"])))
             / imk_hinge_stiffness(member_type, "rot_y", length)
             if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
         ),

@@ -95,7 +95,8 @@ class SlabReinforcementTests(unittest.TestCase):
 
     def test_floor_context_settles_development_shear_path_and_corner_checks(self):
         context = {"clear_span_x_in": 102.0, "clear_span_y_in": 102.0, "beam_width_in": 10.0,
-                   "alpha_f_min": 5.6, "thickness_screen_passed": True, "column_core_width_in": 13.0,
+                   "alpha_f_min": 5.6, "alpha_f_l2_l1_min": 5.6, "thickness_screen_passed": True,
+                   "column_core_width_in": 13.0,
                    "two_way_shear_path_assessed": True, "columns_at_beam_intersections": True,
                    "beam_clear_cover_in": 1.5, "beam_hoop_diameter_in": 0.5, "fc_beam_ksi": 4.0}
         result = design_slab_reinforcement(inputs(), evidence(), context=context)
@@ -112,14 +113,26 @@ class SlabReinforcementTests(unittest.TestCase):
         # A weak-beam floor leaves the two-way shear path open instead of asserting it.
         weak = design_slab_reinforcement(inputs(), evidence(), context={**context, "alpha_f_min": 0.5})
         self.assertIn("slab_two_way_shear_applicability", weak["summary"]["not_evaluated"])
+        # So does a floor whose beams do not take the whole panel shear: the Table 8.10.8.1
+        # criterion is alpha_f1 l2/l1, not alpha_f alone (a stiff beam on a long, narrow panel).
+        partial = design_slab_reinforcement(inputs(), evidence(), context={**context, "alpha_f_l2_l1_min": 0.8})
+        self.assertIn("slab_two_way_shear_applicability", partial["summary"]["not_evaluated"])
+        self.assertIn("alpha_f1 l2/l1 < 1.0", next(c for c in partial["checks"] if c["id"] == "slab_two_way_shear_applicability")["details"]["reason"])
         # So does a stiff-beam floor whose shear path the engineer has not assessed.
         unassessed = design_slab_reinforcement(inputs(), evidence(), context={**context, "two_way_shear_path_assessed": False})
         # And a column bearing on the slab directly is a slab-column connection: not covered, whatever is asserted.
         direct = design_slab_reinforcement(inputs(), evidence(), context={**context, "columns_at_beam_intersections": False})
         self.assertIn("slab_two_way_shear_applicability", direct["summary"]["not_evaluated"])
         applicability = next(c for c in result["checks"] if c["id"] == "slab_two_way_shear_applicability")
-        self.assertIn("8.4.4.2.1", applicability["clause"])
-        self.assertNotIn("8.10.8.1", applicability["clause"])
+        # 318-19: 8.4.3 is one-way shear, 8.4.4 two-way (8.4.4.1.1 at columns, loads and reaction areas);
+        # the beam-share criterion is 318-14 Table 8.10.8.1, which the 2019 body text does not carry.
+        self.assertIn("8.4.3.1", applicability["clause"])
+        self.assertIn("8.4.4.1.1", applicability["clause"])
+        self.assertNotIn("8.4.4.2.1", applicability["clause"])
+        self.assertIn("ACI 318-14 Table 8.10.8.1", applicability["clause"])
+        self.assertNotIn("318-19 8.10.8", applicability["clause"])
+        self.assertEqual(applicability["units"], "alpha_f1 l2/l1")
+        self.assertEqual(applicability["details"]["beam_share_of_panel_shear"], "100% (Table 8.10.8.1 at alpha_f1 l2/l1 >= 1.0)")
         self.assertIn("slab_two_way_shear_applicability", unassessed["summary"]["not_evaluated"])
         self.assertTrue(unassessed["screen_passed"])
         malformed = design_slab_reinforcement(inputs(), evidence(), context={"clear_span_x_in": 1})

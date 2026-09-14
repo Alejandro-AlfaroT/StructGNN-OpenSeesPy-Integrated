@@ -1,5 +1,58 @@
 # SMRF follow-up review — 2026-09-13
 
+## Fourth cross-check (Astra, 2026-09-14, of 988bd3f2) -- resolution
+
+1. Confirmed: `truncate_at_axial_cap` left two points at the cap (the
+   sweep's seeded pure-compression point and the crossing), so the nominal
+   lookup read 0.2 kip-in just below the cap and the cap moment above it.
+   The cut surface is now the upper envelope with one point at the cap;
+   `column_moment_at_axial` interpolates on it (largest bracketing segment)
+   and returns 0 outside the domain; a hinge refuses a column whose gravity
+   estimate is outside the surface. The design-side lookup was already
+   correct (it took the maximum over bracketing pairs) and is tested the
+   same way. `tests/test_smrf_biaxial_column.py`.
+2. Confirmed: at an undeveloped exterior end the sagging entry still
+   counted both mats (the bottom mat in tension). Both signs now drop the
+   mats: `terminated_undeveloped` hogging (rectangular),
+   `flange_concrete_undeveloped_bars` sagging (flange concrete, no bars),
+   per-end sagging in the hinges and registry, per-end spring yield rotation
+   in the plastic-rotation post-processing. The reviewer's 1242.61 / 1110.56
+   values are asserted in `tests/test_smrf_slab_anchorage.py`.
+3. Confirmed: the ladder priced every bar's hook at the tightest spacing
+   offered (psi_r = 1.6 below 6 db), rejecting #5 mats that fit at their
+   selected spacing. Each candidate spacing is now checked with its own
+   hook; a spacing whose hook does not fit is skipped, a bar with no fitting
+   spacing is refused. The reviewer's 3-12 in case selects #5 @ 12 in with
+   no failed checks and is a test.
+4. Confirmed: the validator folded " D " to D while the 11.4.8 flag read the
+   value verbatim. Site class and risk category must now be exactly the
+   ASCE 7-22 spelling (no normalisation anywhere); " D ", "d" and "D\n" are
+   rejected and the hazard item stays unevaluated with the reason.
+5. Confirmed: 318-19 8.4.3 is one-way shear and 8.4.4 two-way; the text had
+   them wrong, and beam intersections alone establish nothing. The basis is
+   restated: one-way slab shear at the beam faces (8.4.3.1, the strip
+   check); no slab-column critical section (8.4.4.1.1 / 22.6.4) because the
+   slab bears on beams at every edge and every column is at an
+   intersection; the beams' share of the panel shear is 100% by ACI 318-14
+   Table 8.10.8.1 at alpha_f1 l2/l1 >= 1.0 on every edge (now computed and
+   recorded as `alpha_f_l2_l1_min`; alpha_f alone was not the criterion),
+   with 8.10.8.3 (stem weight) and 8.10.8.4 (total panel shear) met by
+   designing the beams for the plate's reactions plus drop weight, the
+   reactions' sum closing the floor load in the transfer ledger. Whether a
+   direct-design clause is the load-path criterion for a plate-analysed slab
+   remains the engineer's assessment (`two_way_shear_path_assessed`); the
+   check is `not_evaluated` unless all three conditions hold. On a uniform
+   grid with identical beams in both directions the two criteria coincide
+   algebraically (alpha_f1 l2/l1 = 12 Ib / (h^3 l1), so the minimum over
+   edges is 12 Ib / (h^3 x the longer bay) either way; 3.32 on the 10x15 ft
+   smoke case for both) -- they separate only when the beams differ, which
+   the unit test covers.
+
+Design schema bumped to `rc_smrf_candidate_v8_envelope_and_anchorage` (v7
+records are not reused). Review case regenerated on this code: unchanged
+sections and mats, 1087 pass / 0 fail / 7 open. `GENERATION_RELEASE_READY`
+is still False.
+
 ## Third cross-check (Astra, 2026-09-14) -- resolution
 
 1. Confirmed: the P-M sweeps ran above phi Pn,max, so a column at 1.05 of its

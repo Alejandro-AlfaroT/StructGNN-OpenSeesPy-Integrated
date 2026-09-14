@@ -208,22 +208,22 @@ def truncate_at_axial_cap(diagram, cap):
     The strain-compatibility sweep continues to pure compression, above the
     0.80 P0 (tied) limit on usable axial strength. Points above ``cap`` are
     dropped and the crossing point (cap, M at the cap) is inserted by linear
-    interpolation between the sweep points that bracket it, so the surface
-    is horizontal at the cap from M = 0 to that moment and nothing above it
-    can be read as capacity.
+    interpolation between the sweep points that bracket it. The result is
+    the upper strength envelope M(P): exactly one point at the cap, carrying
+    the largest moment the section has there, so a lookup just below the cap
+    interpolates toward that moment and never toward M = 0 (the sweeps seed a
+    (cap, 0) point for pure compression; it is folded into the crossing).
+    Nothing above the cap is in the surface: the axial ratio Pu / cap is the
+    check there, not a moment.
     """
     cap = float(cap)
-    kept = [(p, m) for p, m in diagram if p <= cap]
-    crossing = None
+    kept = [(p, m) for p, m in diagram if p < cap]
+    at_cap = [m for p, m in diagram if p == cap]
     for (p1, m1), (p2, m2) in zip(diagram, diagram[1:]):
         if (p1 <= cap < p2) or (p2 <= cap < p1):
             t = (cap - p1) / (p2 - p1) if p2 != p1 else 0.0
-            m = m1 + t * (m2 - m1)
-            crossing = (cap, m) if crossing is None else (cap, max(crossing[1], m))
-    if crossing is not None:
-        kept.append(crossing)
-    if not any(p == cap for p, _m in kept):
-        kept.append((cap, 0.0))
+            at_cap.append(m1 + t * (m2 - m1))
+    kept.append((cap, max(at_cap) if at_cap else 0.0))
     return kept
 
 

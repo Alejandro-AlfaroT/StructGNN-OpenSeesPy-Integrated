@@ -208,7 +208,10 @@ def write_evidence_summary(r, out_dir, elapsed=None):
          + ", ".join(f"{name} {layer['area_in2_per_ft']:.3f}" for name, layer in sorted(layout['layers'].items())) + ".")
     line("- What the flags assert (see `numerical_basis` in `slab_actions`): applicability of an elastic plate FE with uniform gravity; one common floor represents all floors (uniform slab, SDL, live incl. roof); "
          "the 6.4.3.3 pattern rule; Gauss-point (not strip-averaged) maxima; Wood-Armer twisting resolution; membrane-free; overall verification. `two_way_shear_path_assessed`: "
-         f"α_f min {min(e['alpha_f'] for p in slab['panels'] for e in p['edges']):.2f} on every edge → beams carry slab shear (8.10.8), one-way strip check only.")
+         f"α_f min {min(e['alpha_f'] for p in slab['panels'] for e in p['edges']):.2f} and α_f1·ℓ2/ℓ1 min "
+         f"{min(e['alpha_f'] * e['slab_strip_width_in'] / (g['bay_x_in'] if e['beam_axis'] == 'x' else g['bay_y_in']) for p in slab['panels'] for e in p['edges']):.2f} "
+         "on every edge → the beams take the whole panel shear (ACI 318-14 Table 8.10.8.1, via 318-19 R8.2.1) and are designed for the plate reactions plus stem weight; "
+         "the slab is checked for one-way shear at the beam faces (318-19 8.4.3.1); no slab-column critical section (8.4.4.1.1) exists.")
     line()
 
     # ---------------------------------------------------------------- 4. beam gravity moment check
@@ -363,6 +366,15 @@ def write_evidence_summary(r, out_dir, elapsed=None):
          f"Beam hinge yield moments per family {'equal' if family_match else 'DO NOT equal'} the design's composite Mn⁻/Mn⁺: "
          + ", ".join(f"{k} {v[0]:.0f}/{v[1]:.0f}" for k, v in sorted(hinge_fam.items()))
          + " kip-in (spring sign measured: hogging +ve at end i, −ve at end j, `tests/test_beam_hinge_asymmetry.py`).")
+    beams_ = [h for h in registry.values() if h.get("member_type") != "column"]
+    reduced_ends = sum(1 for h in beams_ for end in ("i", "j")
+                       if abs(h[f"yield_moment_y_hogging_{end}_kip_in"] - h["yield_moment_y_hogging_kip_in"]) > 1e-9
+                       or abs(h[f"yield_moment_y_sagging_{end}_kip_in"] - h["yield_moment_y_sagging_kip_in"]) > 1e-9)
+    anchorage_ = {tuple(sorted((k, v) for k, v in (h.get("exterior_slab_anchorage") or {}).items() if k in ("axis", "developed", "ldh_required_in", "embedment_available_in")))
+                  for h in beams_}
+    line(f"- Per-end hinge strengths: {reduced_ends} of {2 * len(beams_)} beam ends yield without the slab bars (an exterior end whose perimeter hook "
+         f"does not fit, `terminated_undeveloped` hogging / `flange_concrete_undeveloped_bars` sagging); perimeter hook check on the model: "
+         + "; ".join(", ".join(f"{k} {v:.2f}" if isinstance(v, float) else f"{k} {v}" for k, v in a) for a in sorted(anchorage_)) + ".")
     line(f"- ρsh from the saved hoops, as `Model.IMK_Calibration.transverse_steel_ratio` reads it: beams {rho_sh_beam:.4f}, columns {rho_sh_col:.4f} (Haselton cap 0.02).")
     line("- Export/cache metadata (`hybrid_metadata.reinforcement_geometry`, `hinge_backbone.csv` hogging/sagging columns) is what item 7 asks you to spot-check on one exported case.")
     line()

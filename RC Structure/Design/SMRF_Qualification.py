@@ -297,13 +297,19 @@ def _apply_capacity_design_evidence(record, checks, evidence):
             replaced[name] = not_evaluated(name, clause, reason)
     strengths = evidence["strengths"] or {}
     layout = (record.get("slab_reinforcement") or {}).get("layout")
+    established = {"developed_effective_width", "terminated_undeveloped", "flange_concrete_undeveloped_bars"}
     developed = bool(strengths) and layout is not None and all(
-        v.get("slab_basis") == "developed_effective_width" for v in strengths.values())
+        v.get("slab_basis") in established for v in strengths.values())
     if developed:
+        undeveloped_ends = sorted({key.rsplit("/", 1)[0] for key, v in strengths.items()
+                                   if v.get("slab_basis") != "developed_effective_width"})
         replaced["qualification.slab_contribution"] = make_check(
             "qualification.slab_contribution", "ACI 318-19 18.7.3.2 / 6.3.2", 1, 1, "==",
-            details={"basis": "slab mats within the effective flange, developed as continuous uniform mats, in SCWB, "
-                              "joint shear and the beam hinges"})
+            details={"basis": "slab mats within the effective flange, developed as continuous uniform mats at interior "
+                              "ends and by the perimeter hook (25.4.3.1) at exterior ends, in SCWB, joint shear and the "
+                              "beam hinges; where the hook does not fit, the exterior end carries no slab bars in either "
+                              "sign (rectangular hogging, flange-concrete sagging)",
+                     "undeveloped_exterior_ends": undeveloped_ends})
     else:
         replaced["qualification.slab_contribution"] = not_evaluated(
             "qualification.slab_contribution", "ACI 318-19 18.7.3.2 / 6.3.2",
