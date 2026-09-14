@@ -113,7 +113,9 @@ def column_pm_nominal_for(b, h, fc, layers, n_pts=120):
 
         diagram.append((axial, abs(moment)))
 
-    return sorted(diagram, key=lambda point: point[0])
+    # Nominal axial strength stops at 0.80 P0 (ACI 318-19 22.4.2.1, tied columns).
+    from Design.ACI_Checks import truncate_at_axial_cap
+    return sorted(truncate_at_axial_cap(diagram, 0.80 * p0), key=lambda point: point[0])
 
 
 def column_moment_at_axial(axial_kip, diagram=None):

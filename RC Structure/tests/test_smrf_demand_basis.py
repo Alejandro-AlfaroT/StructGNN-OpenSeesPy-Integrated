@@ -104,6 +104,45 @@ class DemandBasisEvaluationTests(unittest.TestCase):
         for key in ("accidental_torsion", "live_load_patterning", "drift_analysis_basis"):
             self.assertEqual(statuses[f"demands.{key}"], "pass", key)
 
+    def test_invalid_declarations_are_rejected_explicitly(self):
+        """The cross-check's reproductions: blank/whitespace provenance and an invalid site class."""
+        from Design.SMRF_Demands import demand_policy_problems
+        record = _record(declared=True)
+        base = {c["id"]: c for c in evaluate_demand_basis(record)}
+        self.assertTrue(all(c["status"] != "not_evaluated" for cid, c in base.items() if cid.startswith("demands.site_hazard")))
+        for mutate, expect in (
+            (lambda p: p.update(declared_by="", declaration_date="", declaration_basis="   "), "declaration_basis is blank"),
+            (lambda p: p.update(site_class="QZ"), "site_class"),
+            (lambda p: p.update(declaration_date="2026-13-40"), "ISO calendar date"),
+            (lambda p: p.update(risk_category="V"), "risk_category"),
+            (lambda p: p.update(accidental_torsion_ratio=0.0), "accidental_torsion_ratio"),
+            (lambda p: p.update(roof_live_load_ksf=-1.0), "roof_live_load_ksf"),
+            (lambda p: p.update(wind_governs="no"), "wind_governs"),
+        ):
+            bad = _record(declared=True)
+            mutate(bad["demand_basis"]["policy"])
+            problems = demand_policy_problems(bad["demand_basis"]["policy"])
+            self.assertTrue(any(expect in x for x in problems), (expect, problems))
+            result = {c["id"]: c for c in evaluate_demand_basis(bad)}
+            hazard = result["demands.site_hazard"]
+            self.assertEqual(hazard["status"], "not_evaluated", expect)
+            self.assertIn("Rejected", hazard["details"]["reason"])
+            self.assertTrue(all(c["status"] == "not_evaluated" for cid, c in result.items()
+                                if cid in ("demands.site_hazard", "demands.load_scope", "demands.effective_seismic_weight")))
+        # Design time refuses a partly filled declaration outright.
+        from Design.Config import DemandPolicy
+        self.assertEqual(DemandPolicy().problems(), ["declared_by is blank", "declaration_date is blank", "declaration_basis is blank"])
+        self.assertTrue(DemandPolicy(declared_by="a", declaration_date="2026-09-14", declaration_basis="b").declared())
+        self.assertFalse(DemandPolicy(declared_by="a", declaration_date="2026-09-14", declaration_basis="b", site_class="Z").declared())
+
+    def test_design_refuses_a_partly_filled_or_invalid_declaration(self):
+        from Design import Design_Driver as driver
+        from Design.Config import DesignConfig, DemandPolicy
+        with self.assertRaisesRegex(ValueError, "DemandPolicy is not a valid declaration"):
+            driver.design_structure(cfg=DesignConfig(demands=DemandPolicy(declared_by="someone")), verbose=False)
+        with self.assertRaisesRegex(ValueError, "site_class"):
+            driver.design_structure(cfg=DesignConfig(demands=DemandPolicy(site_class="Q")), verbose=False)
+
     def test_mislabelled_site_and_torsional_irregularity_fail_or_block_elf(self):
         record = _record()
         record["seismic"] = {"sds": 0.50, "sd1": 0.25, "s1": 0.25, "site_label": "sdc_c"}

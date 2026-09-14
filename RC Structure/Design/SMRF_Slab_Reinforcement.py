@@ -247,7 +247,8 @@ def _layer_checks(layout, demand, inputs, location):
 
 
 _CONTEXT_KEYS = {"clear_span_x_in", "clear_span_y_in", "beam_width_in", "alpha_f_min",
-                 "thickness_screen_passed", "column_core_width_in", "two_way_shear_path_assessed"}
+                 "thickness_screen_passed", "column_core_width_in", "two_way_shear_path_assessed",
+                 "columns_at_beam_intersections", "beam_clear_cover_in", "beam_hoop_diameter_in", "fc_beam_ksi"}
 
 
 def _context(context):
@@ -257,10 +258,11 @@ def _context(context):
     if not isinstance(context, dict) or set(context) != _CONTEXT_KEYS:
         raise ValueError(f"Slab context must contain exactly {sorted(_CONTEXT_KEYS)}.")
     result = dict(context)
-    for key in ("clear_span_x_in", "clear_span_y_in", "beam_width_in", "column_core_width_in"):
+    for key in ("clear_span_x_in", "clear_span_y_in", "beam_width_in", "column_core_width_in",
+                "beam_clear_cover_in", "beam_hoop_diameter_in", "fc_beam_ksi"):
         result[key] = _number(context[key], key)
     result["alpha_f_min"] = _number(context["alpha_f_min"], "alpha_f_min", True)
-    for key in ("thickness_screen_passed", "two_way_shear_path_assessed"):
+    for key in ("thickness_screen_passed", "two_way_shear_path_assessed", "columns_at_beam_intersections"):
         if context[key] is not True and context[key] is not False:
             raise ValueError(f"{key} must be a boolean.")
     return result
@@ -299,8 +301,19 @@ def _completion_checks(inputs, layout, demands, context):
     shortest_clear = min(context["clear_span_x_in"], context["clear_span_y_in"])
     checks.append(make_check("slab_bar_development", "ACI 318-19 25.4.2.4 with 8.7.4.1 continuity",
                              ld, shortest_clear / 2.0, "<=", "in",
-                             details={"development_length_in": ld, "basis": "continuous uniform mats; embedment "
-                                      "beyond every critical section is at least half the shortest clear span"}))
+                             details={"development_length_in": ld, "basis": "continuous uniform mats; at interior "
+                                      "supports the embedment beyond the critical section is at least half the "
+                                      "shortest clear span; the perimeter is slab_perimeter_bar_anchorage"}))
+    from Design.SMRF_Beam_Slab_Strength import perimeter_slab_bar_anchorage
+    for axis in ("x", "y"):
+        anchorage = perimeter_slab_bar_anchorage(layout, axis, context["beam_width_in"], context["beam_clear_cover_in"],
+                                                 context["beam_hoop_diameter_in"], context["fc_beam_ksi"], fy)
+        checks.append(make_check("slab_perimeter_bar_anchorage", "ACI 318-19 25.4.3.1 / 8.7.4.1.3 at a discontinuous edge",
+                                 anchorage["ldh_required_in"], anchorage["embedment_available_in"], "<=", "in", axis,
+                                 details={**{k: v for k, v in anchorage.items() if k not in ("axis",)},
+                                          "requirement": "the mats parallel to this axis terminate at the building edge with a "
+                                                         "standard hook into the perimeter beam; the same anchorage is what "
+                                                         "credits the slab bars in the beam strength at exterior ends"}))
     checks.append(make_check("slab_continuity_and_extensions", "ACI 318-19 8.7.4.1.3 / Fig. 8.7.4.1.3",
                              1, 1, "==", details={"basis": "top and bottom mats continuous through all supports at "
                                                   "uniform spacing; no cutoffs, so every minimum extension is exceeded"}))
@@ -309,20 +322,38 @@ def _completion_checks(inputs, layout, demands, context):
     for name, layer in sorted(layout["layers"].items()):
         checks.append(make_check("slab_crack_control_spacing", "ACI 318-19 24.3.2 with fs = 2/3 fy",
                                  layer["spacing_in"], s_max, "<=", "in", name))
-    if context["alpha_f_min"] >= 1.0 and context["two_way_shear_path_assessed"]:
-        checks.append(make_check("slab_two_way_shear_applicability", "ACI 318-19 8.10.8.1 / 8.10.8.3 / 22.6.1",
+    # Shear path. ACI 318-19 8.4.4.1 governs one-way shear in the slab (the
+    # strip check above, at the beam faces); 8.4.4.2.1 requires two-way shear
+    # at slab-column connections and concentrated loads. In this frame every
+    # column stands at the intersection of beams in both directions, so the
+    # slab bears on beams and no slab-column connection exists; that the
+    # beams are stiff enough to be the supports is the direct-design-method
+    # criterion alpha_f >= 1.0 on every edge (ACI 318-14 8.10.8, a method
+    # 318-19 R8.2.1 continues to permit; the 2019 body text no longer carries
+    # those clauses). Whether that load path is accepted for this floor is the
+    # engineer's assessment, asserted as two_way_shear_path_assessed.
+    shear_clause = "ACI 318-19 8.4.4.1 / 8.4.4.2.1 / 22.6.1; ACI 318-14 8.10.8 via 318-19 R8.2.1"
+    path_ok = context["alpha_f_min"] >= 1.0 and context["columns_at_beam_intersections"]
+    if path_ok and context["two_way_shear_path_assessed"]:
+        checks.append(make_check("slab_two_way_shear_applicability", shear_clause,
                                  1.0, context["alpha_f_min"], "<=", "alpha_f",
-                                 details={"basis": "assessed: beams with alpha_f >= 1.0 on every panel edge carry the slab "
-                                          "shear to the columns on 45-degree tributaries; slab shear is the one-way strip "
-                                          "check above; punching at slab-column connections does not govern"}))
-    elif context["alpha_f_min"] >= 1.0:
-        checks.append(not_evaluated("slab_two_way_shear_applicability", "ACI 318-19 8.10.8.1 / 8.10.8.3 / 22.6.1",
-                                    f"alpha_f >= 1.0 on every edge (min {context['alpha_f_min']:.2f}); whether the beam "
-                                    "shear path replaces a slab-column two-way shear check is an engineering assessment "
-                                    "to assert in Design.Config.SlabActionAssertions.two_way_shear_path_assessed."))
+                                 details={"columns_at_beam_intersections": True,
+                                          "basis": "assessed: every column is at a beam intersection (no slab-column "
+                                                   "connection, 8.4.4.2.1 does not apply); beams with alpha_f >= 1.0 on "
+                                                   "every panel edge are the slab supports (direct-design criterion, "
+                                                   "318-14 8.10.8) and carry its shear on 45-degree tributaries; the slab "
+                                                   "itself is checked for one-way shear at the beam faces (8.4.4.1, the "
+                                                   "strip check above)"}))
+    elif path_ok:
+        checks.append(not_evaluated("slab_two_way_shear_applicability", shear_clause,
+                                    f"alpha_f >= 1.0 on every edge (min {context['alpha_f_min']:.2f}) and every column is at a "
+                                    "beam intersection; whether the beam shear path replaces a slab-column two-way shear "
+                                    "check is an engineering assessment to assert in "
+                                    "Design.Config.SlabActionAssertions.two_way_shear_path_assessed."))
     else:
-        checks.append(not_evaluated("slab_two_way_shear_applicability", "ACI 318-19 8.4.4 / 22.6",
-                                    "alpha_f < 1.0 on some edge: slab-column two-way shear is not implemented."))
+        checks.append(not_evaluated("slab_two_way_shear_applicability", "ACI 318-19 8.4.4.2 / 22.6",
+                                    "alpha_f < 1.0 on some edge or a column bears on the slab directly: slab-column "
+                                    "two-way shear is not implemented."))
     checks.append(make_check("slab_deflection_control", "ACI 318-19 8.3.2.1 via 8.3.1.2 minimum thickness",
                              int(context["thickness_screen_passed"]), 1, "==",
                              details={"basis": "thickness at or above the Table 8.3.1.2 minimum; deflections need not be calculated"}))
@@ -372,7 +403,8 @@ def design_slab_reinforcement(slab_inputs, demand_evidence, policy=None, context
     Optional policy: bar_sizes subset [4,5,6], spacing_options_in, clear_cover_in
     >=0.75, outer_axis x/y. Optional ``context`` (clear_span_x_in,
     clear_span_y_in, beam_width_in, alpha_f_min, thickness_screen_passed,
-    column_core_width_in) enables the development, crack-control, shear-path,
+    column_core_width_in, two_way_shear_path_assessed,
+    columns_at_beam_intersections) enables the development, crack-control, shear-path,
     deflection, integrity and corner checks; without it they stay open. Crossing orthogonal bars touch within each face mat;
     two face mats retain at least max(1 in, 4/3 aggregate) clear gap. One bar size
     is shared by all four layers; spacings may differ by axis/face but are
@@ -403,6 +435,20 @@ def design_slab_reinforcement(slab_inputs, demand_evidence, policy=None, context
             record["trial_history"].append({"bar_size": bar, "passed": False,
                                             "reason": "Two orthogonal face mats do not fit with required clear gap."})
             continue
+        if resolved_context is not None:
+            # The mats end at the building perimeter, hooked into the perimeter
+            # beam (ACI 318-19 25.4.3.1): a bar whose hook does not fit that beam
+            # cannot be developed there and is not offered.
+            from Design.SMRF_Beam_Slab_Strength import hook_development_length_in
+            ldh, _factors = hook_development_length_in(bar, resolved_context["fc_beam_ksi"], inputs["fy_ksi"],
+                                                        min(resolved_policy["spacing_options_in"]))
+            embedment = (resolved_context["beam_width_in"] - resolved_context["beam_clear_cover_in"]
+                         - resolved_context["beam_hoop_diameter_in"])
+            if ldh > embedment:
+                record["trial_history"].append({"bar_size": bar, "passed": False,
+                                                "reason": f"Hook development {ldh:.2f} in exceeds the {embedment:.2f} in "
+                                                          "the perimeter beam offers (25.4.3.1)."})
+                continue
         layers = {}
         for axis in ("x", "y"):
             for face in ("top", "bottom"):

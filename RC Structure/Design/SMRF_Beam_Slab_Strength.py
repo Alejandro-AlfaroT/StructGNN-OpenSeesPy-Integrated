@@ -152,8 +152,61 @@ def composite_beam_strengths(beam, slab, layout, geometry, axis, position):
         "slab_increment_negative_kip_in": comp_neg["mn_kip_in"] - rect_neg["mn_kip_in"],
         "basis": ("ACI 318-19 6.3.2.1 effective flange; 18.7.3.2 slab mats within it as discrete layers; "
                   "22.2 strain compatibility, ecu = 0.003, Whitney block, EPP steel, zero axial force; "
-                  "continuous uniform slab mats are developed at every beam end"),
+                  "continuous uniform slab mats are developed at interior beam ends by continuity (25.4.2.4 "
+                  "within half the adjacent clear span); exterior ends are credited per the perimeter hook check"),
     }
+
+
+_BAR_DIAMETER = {3: 0.375, 4: 0.5, 5: 0.625, 6: 0.75, 7: 0.875, 8: 1.0, 9: 1.128, 10: 1.27, 11: 1.41}
+
+
+def hook_development_length_in(bar_size, fc_ksi, fy_ksi, spacing_in):
+    """ACI 318-19 25.4.3.1 standard-hook development for an uncoated, normalweight bar.
+
+    ldh = fy psi_e psi_r psi_o psi_c / (55 lambda sqrt(f'c)) * db^1.5, at least
+    8 db and 6 in. psi_e = 1 (uncoated); psi_r = 1.0 where the hooked bars are
+    spaced at least 6 db, else 1.6 (Table 25.4.3.2, without confining ties);
+    psi_o = 1.0 (the hook terminates inside a beam that continues along the
+    perimeter, so side cover normal to the hook plane is at least 6 db);
+    psi_c = f'c/15000 + 0.6 below 6 ksi, 1.0 above; lambda = 1.
+    """
+    db = _BAR_DIAMETER[bar_size]
+    fc_psi = fc_ksi * 1000.0
+    psi_r = 1.0 if spacing_in >= 6.0 * db else 1.6
+    psi_c = fc_psi / 15000.0 + 0.6 if fc_psi < 6000.0 else 1.0
+    ldh = fy_ksi * 1000.0 * 1.0 * psi_r * 1.0 * psi_c / (55.0 * math.sqrt(fc_psi)) * db ** 1.5
+    return max(ldh, 8.0 * db, 6.0), {"psi_e": 1.0, "psi_r": psi_r, "psi_o": 1.0, "psi_c": psi_c, "db_in": db}
+
+
+def perimeter_slab_bar_anchorage(layout, axis, perimeter_beam_width_in, beam_clear_cover_in, hoop_db_in,
+                                 fc_beam_ksi, fy_ksi):
+    """Can the slab mats parallel to ``axis`` be developed where the slab ends at the perimeter?
+
+    At a beam's exterior end the slab bars in its flange run to the building
+    edge, where the perimeter beam (perpendicular to them) is the only
+    concrete beyond the critical section. They are developed there by a
+    standard hook into that beam: ldh (25.4.3.1) against the embedment from
+    the beam's near face to the outside of the hook, the beam width less the
+    far-side clear cover and hoop. Both mats of the axis are checked (both
+    are in tension under hogging); the worse governs. Returns the record the
+    strength entries carry.
+    """
+    if layout is None:
+        return None
+    layers = {face: layout["layers"][f"{axis}_{face}"] for face in ("top", "bottom")}
+    worst, detail, bar = 0.0, None, None
+    for face, layer in layers.items():
+        bar = layout.get("bar_size") or layer.get("bar_size") or next(
+            size for size, area in _BAR_AREA.items() if abs(area - layer["bar_area_in2"]) < 1e-9)
+        ldh, factors = hook_development_length_in(bar, fc_beam_ksi, fy_ksi, layer["spacing_in"])
+        if ldh > worst:
+            worst, detail = ldh, {"face": face, "spacing_in": layer["spacing_in"], **factors}
+    available = perimeter_beam_width_in - beam_clear_cover_in - hoop_db_in
+    return {"axis": axis, "bar_size": bar, "ldh_required_in": worst, "embedment_available_in": available,
+            "developed": worst <= available, "governing": detail,
+            "hook": "standard 90-degree hook into the perimeter beam, ACI 318-19 25.4.3.1 (not the 18.8.5.1 joint formula)",
+            "basis": ("slab mats parallel to the beam terminate at the building edge; the perimeter beam is the "
+                      "only embedment beyond the exterior critical section")}
 
 
 def beam_family(kind, line_index, num_bay_x, num_bay_y):
@@ -164,19 +217,30 @@ def beam_family(kind, line_index, num_bay_x, num_bay_y):
 
 def beam_members(num_bay_x, num_bay_y, num_floor):
     """(tag, kind, line_index) for every beam in the builders' creation order."""
+    return [(tag, kind, line) for tag, kind, line, _span in beam_members_with_spans(num_bay_x, num_bay_y, num_floor)]
+
+
+def beam_members_with_spans(num_bay_x, num_bay_y, num_floor):
+    """(tag, kind, line_index, span_index) for every beam in the builders' creation order."""
     tag = num_floor * (num_bay_x + 1) * (num_bay_y + 1)
     members = []
     for _k in range(num_floor):
         for j in range(num_bay_y + 1):
-            for _i in range(num_bay_x):
+            for i in range(num_bay_x):
                 tag += 1
-                members.append((tag, "beam_x", j))
+                members.append((tag, "beam_x", j, i))
     for _k in range(num_floor):
         for j in range(num_bay_y):
             for i in range(num_bay_x + 1):
                 tag += 1
-                members.append((tag, "beam_y", i))
+                members.append((tag, "beam_y", i, j))
     return members
+
+
+def exterior_ends(kind, span_index, num_bay_x, num_bay_y):
+    """Which ends of a beam terminate at the building perimeter in the beam's own direction."""
+    last = (num_bay_x if kind == "beam_x" else num_bay_y) - 1
+    return {"i": span_index == 0, "j": span_index == last}
 
 
 def beam_slab_strengths(record):
@@ -199,10 +263,20 @@ def beam_slab_strengths(record):
     for axis in ("x", "y"):
         for position in ("edge", "interior"):
             families[f"{axis}_{position}"] = composite_beam_strengths(beam, slab, layout, geom, axis, position)
+    # Where the slab ends at the perimeter its bars are credited only if the
+    # hook into the perimeter beam develops them (ACI 318-19 25.4.3.1).
+    anchorage = {axis: perimeter_slab_bar_anchorage(layout, axis, sections["b_beam_in"], rebar["beam_clear_cover_in"],
+                                                    rebar["beam_stirrup_diameter_in"], sections["fc_beam_ksi"],
+                                                    record["materials"]["fy_ksi"])
+                 for axis in ("x", "y")}
+    for axis in ("x", "y"):
+        for position in ("edge", "interior"):
+            families[f"{axis}_{position}"]["exterior_anchorage"] = anchorage[axis]
     entries = {}
-    for tag, kind, line in beam_members(geometry["num_bay_x"], geometry["num_bay_y"], geometry["num_floor"]):
+    for tag, kind, line, span in beam_members_with_spans(geometry["num_bay_x"], geometry["num_bay_y"], geometry["num_floor"]):
         axis, position = beam_family(kind, line, geometry["num_bay_x"], geometry["num_bay_y"])
         family = families[f"{axis}_{position}"]
+        exterior = exterior_ends(kind, span, geometry["num_bay_x"], geometry["num_bay_y"])
         for end in ("i", "j"):
             for sign in ("positive", "negative"):
                 if layout is None:
@@ -215,6 +289,25 @@ def beam_slab_strengths(record):
                                                       "reason": "slab reinforcement not established (slab action "
                                                                 "evidence not asserted as verified)"}
                     continue
+                terminated = exterior[end] and sign == "negative" and not anchorage[axis]["developed"]
+                if terminated:
+                    # Hogging at an exterior end whose slab bars cannot be hooked
+                    # into the perimeter beam: the slab steel is not developed at
+                    # this critical section and is not counted. Sagging keeps the
+                    # flange concrete, which needs no bar development.
+                    entries[f"{tag}/{end}/{sign}"] = {
+                        "slab_basis": "terminated_undeveloped",
+                        "slab_mn_kip_in": 0.0,
+                        "section_compatibility_verified": True,
+                        "family": f"{axis}_{position}",
+                        "mn_composite_kip_in": family["rectangular"][sign]["mn_kip_in"],
+                        "mn_rectangular_kip_in": family["rectangular"][sign]["mn_kip_in"],
+                        "effective_flange_width_in": family["effective_flange_width_in"],
+                        "slab_steel_in_flange_in2": 0.0,
+                        "exterior_end": True, "exterior_anchorage": anchorage[axis],
+                        "basis": "rectangular beam at an exterior end: slab bars terminate undeveloped at the perimeter",
+                    }
+                    continue
                 entries[f"{tag}/{end}/{sign}"] = {
                     "slab_basis": "developed_effective_width",
                     "slab_mn_kip_in": max(0.0, family[f"slab_increment_{sign}_kip_in"]),
@@ -224,7 +317,10 @@ def beam_slab_strengths(record):
                     "mn_rectangular_kip_in": family["rectangular"][sign]["mn_kip_in"],
                     "effective_flange_width_in": family["effective_flange_width_in"],
                     "slab_steel_in_flange_in2": family["slab_steel_in_flange_in2"],
-                    "basis": family["basis"],
+                    "exterior_end": exterior[end],
+                    "exterior_anchorage": anchorage[axis] if exterior[end] else None,
+                    "basis": family["basis"] + (" ; exterior end: slab bars hooked into the perimeter beam, "
+                                                "ldh per 25.4.3.1 fits" if exterior[end] else ""),
                 }
     return entries, families
 

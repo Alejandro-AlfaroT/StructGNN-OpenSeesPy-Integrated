@@ -13,6 +13,7 @@ these newer details must not be taken from an older worked example.
 from __future__ import annotations
 
 import math
+from datetime import date
 from collections.abc import Mapping
 
 from Design.SMRF_Common import make_check, not_evaluated, summarize_checks
@@ -180,6 +181,59 @@ def elf_eligibility(sdc, height_ft, regular, period_sec, ts_sec):
     return False, "Table 12.6-1: ELF not permitted for this height/period/irregularity combination"
 
 
+SITE_CLASSES = ("A", "B", "BC", "C", "CD", "D", "DE", "E", "F")
+RISK_CATEGORIES = ("I", "II", "III", "IV")
+
+
+def demand_policy_problems(policy):
+    """Why a DemandPolicy is not an acceptable declaration; empty when it is.
+
+    A declaration is a named, dated basis with values in their domains. A
+    blank or whitespace author, date or basis, a date that is not an ISO
+    calendar date, a site class or risk category outside ASCE 7-22's, a
+    blank occupancy, a nonfinite or negative load value, an accidental
+    torsion ratio below the 5% of 12.8.4.2, or a non-Boolean flag is a
+    problem, listed explicitly so a typo never reads as approved evidence.
+    """
+    problems = []
+    if not isinstance(policy, dict):
+        return ["DemandPolicy is missing"]
+    for key in ("declared_by", "declaration_date", "declaration_basis"):
+        value = policy.get(key)
+        if not isinstance(value, str) or not value.strip():
+            problems.append(f"{key} is blank")
+    stamp = policy.get("declaration_date")
+    if isinstance(stamp, str) and stamp.strip():
+        try:
+            if date.fromisoformat(stamp).isoformat() != stamp:
+                problems.append("declaration_date is not an ISO calendar date")
+        except ValueError:
+            problems.append("declaration_date is not an ISO calendar date")
+    site_class = policy.get("site_class")
+    if not isinstance(site_class, str) or site_class.strip().upper() not in SITE_CLASSES:
+        problems.append(f"site_class {site_class!r} is not one of {SITE_CLASSES}")
+    risk = policy.get("risk_category")
+    if not isinstance(risk, str) or risk.strip().upper() not in RISK_CATEGORIES:
+        problems.append(f"risk_category {risk!r} is not one of {RISK_CATEGORIES}")
+    occupancy = policy.get("occupancy")
+    if not isinstance(occupancy, str) or not occupancy.strip():
+        problems.append("occupancy is blank")
+    for key in ("partition_allowance_ksf", "storage_live_fraction_in_weight", "roof_live_load_ksf", "snow_load_ksf"):
+        value = policy.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+            problems.append(f"{key} {value!r} is not a finite nonnegative number")
+    fraction = policy.get("storage_live_fraction_in_weight")
+    if isinstance(fraction, (int, float)) and not isinstance(fraction, bool) and math.isfinite(fraction) and fraction > 1:
+        problems.append("storage_live_fraction_in_weight exceeds 1")
+    ratio = policy.get("accidental_torsion_ratio")
+    if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not math.isfinite(ratio) or ratio < 0.05:
+        problems.append(f"accidental_torsion_ratio {ratio!r} is below the 5% of ASCE 7-22 12.8.4.2")
+    for key in ("wind_governs", "rain_ponding_excluded", "live_load_patterning"):
+        if not isinstance(policy.get(key), bool):
+            problems.append(f"{key} is not Boolean")
+    return problems
+
+
 def evaluate_demand_basis(record):
     """Evaluate the demand-scope items from the saved policy, loads and results.
 
@@ -195,10 +249,12 @@ def evaluate_demand_basis(record):
     loads = record.get("floor_loads") or {}
     geometry = record.get("geometry") or {}
     checks = []
-    declared = bool(policy.get("declaration_basis"))
+    problems = demand_policy_problems(policy)
+    declared = not problems
     def declaration_missing(key, clause, what):
         return not_evaluated(f"demands.{key}", clause,
-                             f"{what}: declare DemandPolicy (declaration_basis, declared_by) in Design/Config.py.")
+                             f"{what}: declare DemandPolicy (declared_by, declaration_date, declaration_basis) in "
+                             f"Design/Config.py. Rejected: {'; '.join(problems) if problems else 'not declared'}.")
     # Site hazard and SDC.
     try:
         sdc = seismic_design_category(seismic["sds"], seismic["sd1"], seismic["s1"], policy.get("risk_category", "II"))

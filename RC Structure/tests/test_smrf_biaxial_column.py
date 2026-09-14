@@ -84,6 +84,32 @@ class BiaxialColumnTests(unittest.TestCase):
         result = check_column_pm(0.5 * cap, 0.0, 0.0, diagrams, cfg)
         self.assertAlmostEqual(result.dcr, 0.5, places=9)
 
+    def test_axial_cap_holds_whatever_the_moment(self):
+        """The cross-check's counterexample: above phi Pn,max, 1 kip-in of moment must not make the column pass."""
+        cfg = self._cfg(top=4, side=2)
+        diagrams = build_pm_diagrams(cfg)
+        cap = max(p for p, _m in diagrams["y"])
+        self.assertAlmostEqual(cap, diagrams["y"][0][0], places=9)             # the sweep is cut at phi Pn,max
+        self.assertTrue(all(p <= cap + 1e-9 for p, _m in diagrams["y"]))
+        over = 1.05 * cap
+        self.assertAlmostEqual(check_column_pm(over, 0.0, 0.0, diagrams, cfg).dcr, 1.05, places=9)
+        for moment in (1.0, 500.0):
+            result = check_column_pm(over, 0.0, moment, diagrams, cfg)
+            self.assertAlmostEqual(result.dcr, 1.05, places=9)
+            self.assertFalse(result.ok)
+        # Just under the cap the axial ratio still governs a small moment.
+        result = check_column_pm(0.97 * cap, 0.0, 10.0, diagrams, cfg)
+        self.assertAlmostEqual(result.dcr, 0.97, places=9)
+        # The steel picker's own sweep is cut the same way.
+        from Redesign import _phi_Mn_at_Pu
+        sp.COL_TOP_BARS = sp.COL_BOT_BARS = 4; sp.COL_SIDE_BARS = 2
+        self.assertIsNone(_phi_Mn_at_Pu(over, 12 * sp.rebar_area(8)))
+        # And the nominal surface used for SCWB and the hinges stops at 0.80 P0.
+        from Model.IMK_Calibration import column_pm_nominal
+        nominal = column_pm_nominal()
+        ag = sp.B_COL * sp.H_COL; ast = 12 * sp.rebar_area(8)
+        self.assertAlmostEqual(max(p for p, _m in nominal), 0.80 * (0.85 * sp.FC_COL_KSI * (ag - ast) + sp.FY_KSI * ast), places=6)
+
     def test_single_diagram_is_accepted_for_both_axes(self):
         cfg = self._cfg(top=4, side=2)
         y = build_pm_diagram(cfg, axis="y")

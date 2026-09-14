@@ -132,12 +132,19 @@ def write_evidence_summary(r, out_dir, elapsed=None):
     by = {(x["axis"], x["line_index"], x["span_index"]): x for x in dead["beams"]}
     xi = by[("x", 1, 1)]; xe = by[("x", 0, 1)]
     dead_ksf = tr["dead_pressure_ksf"]
-    tri = dead_ksf / 144.0 * 2 * (g["bay_x_in"] * g["bay_y_in"] / 4.0)      # two triangles, square bays
+    # Two-way tributary to an x-beam from one panel: a triangle when the beam is
+    # on the panel's short side, a trapezoid when on its long side; an interior
+    # beam has a panel on each side.
+    lx_, ly_ = g["bay_x_in"], g["bay_y_in"]
+    short_, long_ = min(lx_, ly_), max(lx_, ly_)
+    panel_to_x_beam = (short_ ** 2 / 4.0) if lx_ <= ly_ else (long_ - short_ / 2.0) * short_ / 2.0
+    tri = dead_ksf / 144.0 * 2 * panel_to_x_beam
+    shape = "two triangles" if lx_ <= ly_ else "two trapezoids"
     line(f"- Mesh {tr['mesh_per_bay']}/bay; unit dead {dead['applied_kip']:.2f} kip = {dead_ksf:.4f} ksf × {loads['floor_area_sqft']:.0f} ft²; unit live {live['applied_kip']:.2f} kip. "
          f"Direct-to-column share (point-support mesh artifact, recorded not redistributed): {100*dead['column_direct_fraction']:.1f}% (dead).")
     line(f"- Equilibrium of every unit case: {'all balanced to 1e-8' if all(c['equilibrium']['numerical_balance_passed'] for c in tr['unit_cases'].values() if c) else 'NOT balanced'}.")
-    line(f"- Interior x-beam, unit dead: {xi['total_kip']:.3f} kip vs two-way triangular tributary {tri:.3f} kip ({pct(xi['total_kip'], tri):+.1f}%); "
-         f"edge x-beam {xe['total_kip']:.3f} kip vs half of that {tri/2:.3f} kip ({pct(xe['total_kip'], tri/2):+.1f}%).")
+    line(f"- Interior x-beam, unit dead: {xi['total_kip']:.3f} kip vs two-way tributary ({shape}, bays {lx_/12:g}×{ly_/12:g} ft) {tri:.3f} kip "
+         f"({pct(xi['total_kip'], tri):+.1f}%); edge x-beam {xe['total_kip']:.3f} kip vs half of that {tri/2:.3f} kip ({pct(xe['total_kip'], tri/2):+.1f}%).")
     line(f"- Exported inventory (transfer schema {tr['schema']}): node forces plus torsion/bending couples at every beam-line node, "
          f"column direct loads plus beam-end couples at every column node; force and both first moments balance to "
          f"{max(dead['equilibrium']['x_first_moment_relative_error'], dead['equilibrium']['y_first_moment_relative_error']):.1e} (dead). "
@@ -164,20 +171,41 @@ def write_evidence_summary(r, out_dir, elapsed=None):
     line(f"- Cases: {', '.join(c['id'] for c in actions['cases'])}; pattern rule: {actions['pattern_rule']}.")
     line(f"- Membrane resultants max |p| = {actions['max_abs_membrane_kip_per_in']:.1e} kip/in (in-plane DOFs fixed). Equilibrium: "
          f"{'every case balanced' if all(e['numerical_balance_passed'] for e in actions['equilibrium']) else 'NOT balanced'}.")
-    line(f"- Factored pressure w = 1.2·{dead_ksf:.4f} + 1.6·{loads['floor_live_load_ksf']:.3f} = {w:.4f} ksf; clear span {lc:.2f} ft (square panels, m = 1).")
+    square = abs(g["bay_x_in"] - g["bay_y_in"]) < 1e-9
+    line(f"- Factored pressure w = 1.2·{dead_ksf:.4f} + 1.6·{loads['floor_live_load_ksf']:.3f} = {w:.4f} ksf; clear span {lc:.2f} ft"
+         + (" (square panels, m = 1)." if square else f" (panels {g['bay_x_in']/12:g}×{g['bay_y_in']/12:g} ft, m = {min(g['bay_x_in'], g['bay_y_in'])/max(g['bay_x_in'], g['bay_y_in']):.2f})."))
     line()
-    line("| panel | face | Wood-Armer envelope, kip-in/ft (x / y) | ACI 318-63 Method 2 reference | note |")
-    line("|---|---|---|---|---|")
-    for pid, label, coef in ((interior, "interior (Case 2)", c2), (corner, "corner (Case 4)", c4)):
-        neg, pos = ref(coef)
-        for face, refv in (("top", neg), ("bottom", pos)):
-            mx = strips[(pid, "x", face)]["mu_kip_in_per_ft"]; my = strips[(pid, "y", face)]["mu_kip_in_per_ft"]
-            line(f"| {pid} ({label}) | {face} | {mx:.2f} / {my:.2f} | {refv:.2f} | FE {pct(max(mx,my), refv):+.0f}% (Gauss maxima incl. twisting vs strip-average coefficients) |")
+    if square:
+        line("| panel | face | Wood-Armer envelope, kip-in/ft (x / y) | ACI 318-63 Method 2 reference (m = 1) | note |")
+        line("|---|---|---|---|---|")
+        for pid, label, coef in ((interior, "interior (Case 2)", c2), (corner, "corner (Case 4)", c4)):
+            neg, pos = ref(coef)
+            for face, refv in (("top", neg), ("bottom", pos)):
+                mx = strips[(pid, "x", face)]["mu_kip_in_per_ft"]; my = strips[(pid, "y", face)]["mu_kip_in_per_ft"]
+                line(f"| {pid} ({label}) | {face} | {mx:.2f} / {my:.2f} | {refv:.2f} | FE {pct(max(mx,my), refv):+.0f}% (Gauss maxima incl. twisting vs strip-average coefficients) |")
+    else:
+        line("| panel | face | Wood-Armer envelope, kip-in/ft (x / y) |")
+        line("|---|---|---|")
+        for pid, label in ((interior, "interior"), (corner, "corner")):
+            for face in ("top", "bottom"):
+                mx = strips[(pid, "x", face)]["mu_kip_in_per_ft"]; my = strips[(pid, "y", face)]["mu_kip_in_per_ft"]
+                line(f"| {pid} ({label}) | {face} | {mx:.2f} / {my:.2f} |")
+        line()
+        line("- The ACI 318-63 Method 2 reference is tabulated here only for square panels (m = 1); for this panel ratio "
+             "take the coefficients for m from the method's tables before comparing.")
     vmax = max(x["vu_kip_per_ft"] for x in actions["strips"])
     line()
     line(f"- Support-face shear max {vmax:.3f} kip/ft (points outside the beam width, face in tension); one-way reference w·ℓc/2 = {w*lc/2:.3f} kip/ft, two-way share roughly half of that.")
-    line(f"- Selected mats: #{layout['bar_size']} @ 10 in each face; capacity/demand top ≈ {layout['layers']['x_top']['flexure']['phi_mn_kip_in_per_ft']/layout['layers']['x_top']['demand_envelope']['mu_kip_in_per_ft']:.1f}×; "
-         f"the 2h = {2*slab['thickness_in']:g} in spacing limit governs, not strength. Minimum steel 0.0018bh = {0.0018*12*slab['thickness_in']:.3f} in²/ft vs provided {layout['layers']['x_top']['area_in2_per_ft']:.3f}.")
+    spacings = {name: layer["spacing_in"] for name, layer in sorted(layout["layers"].items())}
+    ratio_top = min(layer["flexure"]["phi_mn_kip_in_per_ft"] / layer["demand_envelope"]["mu_kip_in_per_ft"]
+                    for name, layer in layout["layers"].items() if layer["demand_envelope"]["mu_kip_in_per_ft"] > 0)
+    governed_by_spacing = all(abs(layer["spacing_in"] - layer["maximum_spacing_in"]) < 1e-9
+                              for layer in layout["layers"].values())
+    line(f"- Selected mats: #{layout['bar_size']} @ " + ", ".join(f"{k} {v:g}" for k, v in spacings.items())
+         + f" in; lowest capacity/demand over the layers {ratio_top:.1f}×; "
+         + (f"the 2h = {2*slab['thickness_in']:g} in spacing limit governs, not strength" if governed_by_spacing else "strength or another limit governs the spacing")
+         + f". Minimum steel 0.0018bh = {0.0018*12*slab['thickness_in']:.3f} in²/ft vs provided "
+         + ", ".join(f"{name} {layer['area_in2_per_ft']:.3f}" for name, layer in sorted(layout['layers'].items())) + ".")
     line("- What the flags assert (see `numerical_basis` in `slab_actions`): applicability of an elastic plate FE with uniform gravity; one common floor represents all floors (uniform slab, SDL, live incl. roof); "
          "the 6.4.3.3 pattern rule; Gauss-point (not strip-averaged) maxima; Wood-Armer twisting resolution; membrane-free; overall verification. `two_way_shear_path_assessed`: "
          f"α_f min {min(e['alpha_f'] for p in slab['panels'] for e in p['edges']):.2f} on every edge → beams carry slab shear (8.10.8), one-way strip check only.")
@@ -208,11 +236,16 @@ def write_evidence_summary(r, out_dir, elapsed=None):
         L_ = g["bay_x_in"] if axis_ == "x" else g["bay_y_in"]
         f_ = m["local_force_kip_kipin"]
         fem = [0.0, 0.0]
+        from Loads.Gravity_Loads import _bending_couple_pair
         for unit, factor in ((unit_dead, 1.2), (unit_live, 1.6)):
-            for x_, p_ in unit[(axis_, line_, span_)]["node_loads"]:
+            beam_ = unit[(axis_, line_, span_)]
+            point_loads = [(x_, -factor * p_) for x_, p_ in beam_["node_loads"]]            # downward
+            for x_, _cx, cy_ in beam_.get("node_couples", []):
+                point_loads += _bending_couple_pair(x_, factor * cy_, L_)                    # the bending couple, as applied
+            for x_, pz_ in point_loads:
                 a_, b_ = x_ * L_, (1 - x_) * L_
-                fem[0] += factor * p_ * a_ * b_ * b_ / L_ ** 2
-                fem[1] += factor * p_ * a_ * a_ * b_ / L_ ** 2
+                fem[0] += -pz_ * a_ * b_ * b_ / L_ ** 2                                      # hogging positive
+                fem[1] += -pz_ * a_ * a_ * b_ / L_ ** 2
         w_ = 1.2 * slab["concrete_unit_weight_kcf"] / 1728 * s["b_beam_in"] * (s["h_beam_in"] - slab["thickness_in"]) \
             * (1 - (s["h_col_in"] if axis_ == "x" else s["b_col_in"]) / L_)
         fem = [v + w_ * L_ ** 2 / 12 for v in fem]
@@ -227,7 +260,7 @@ def write_evidence_summary(r, out_dir, elapsed=None):
                                          + 1.6 * loads["floor_live_load_ksf"] * loads["floor_area_sqft"])
     line(f"- Load ledger under 1.2D+1.6L: story-1 column axials at the joint faces sum to {base_axial:.1f} kip; factored building gravity "
          f"1.2(D + members) + 1.6L = {factored_gravity:.1f} kip ({base_axial - factored_gravity:+.1e}). Floor pressure reaches the frame exactly once.")
-    line(f"- Beam hogging vs the fixed-end moment of each beam's own transfer loads (point forces at their positions plus drop weight): "
+    line(f"- Beam hogging vs the fixed-end moment of each beam's own transfer loads (point forces and bending couples at their positions, as applied, plus drop weight): "
          f"interior beams {min(ratios['interior']):.2f}-{max(ratios['interior']):.2f}, edge beams {min(ratios['edge']):.2f}-{max(ratios['edge']):.2f} "
          f"of fixed-end -- exterior ends relieved by joint rotation, first interior supports raised, as a continuous beam should. "
          f"Largest hogging {worst_hog[0]:.0f} kip-in ({worst_hog[2]}) against a fixed-end reference of {worst_hog[1]:.0f}.")
@@ -272,6 +305,13 @@ def write_evidence_summary(r, out_dir, elapsed=None):
     line(f"- Composite Mn⁻ / Mn⁺: interior {fi['mn_negative_kip_in']:.0f} / {fi['mn_positive_kip_in']:.0f} kip-in ({pct(fi['mn_negative_kip_in'], fi['rectangular']['negative']['mn_kip_in']):+.0f}% / {pct(fi['mn_positive_kip_in'], fi['rectangular']['positive']['mn_kip_in']):+.0f}% vs rectangular); edge {fe['mn_negative_kip_in']:.0f} / {fe['mn_positive_kip_in']:.0f}. "
          "Same numbers feed SCWB, the joint evidence and the hinge yield moments (`hinge_backbone.csv` will show hogging/sagging per beam family).")
     sc = r["scwb"]
+    for axis in ("x", "y"):
+        anc = fam[f"{axis}_edge"].get("exterior_anchorage")
+        if anc:
+            line(f"- Slab mats parallel to {axis} at the perimeter: hooked into the {s['b_beam_in']:g}-in perimeter beam, "
+                 f"ℓdh (25.4.3.1, #{anc['bar_size']}, ψr {anc['governing']['psi_r']:g}, ψc {anc['governing']['psi_c']:.3f}) = "
+                 f"{anc['ldh_required_in']:.2f} in ≤ embedment {anc['embedment_available_in']:.2f} in → "
+                 f"{'developed: credited at exterior beam ends' if anc['developed'] else 'NOT developed: exterior hogging ends use the rectangular beam'}.")
     line(f"- SCWB screen, governing interior roof joint: Mnc {sc['column_nominal_moment_kip_in']:.0f} vs 1.2·(Mnb⁻ + Mnb⁺) = 1.2·{sc['beam_nominal_moment_kip_in']:.0f} = {1.2*sc['beam_nominal_moment_kip_in']:.0f} kip-in → ratio {sc['ratio_provided']:.2f}; exact per-joint checks: "
          f"{sum(1 for c in q['checks'] if c['id']=='scwb' and c['status']=='pass')} pass, {sum(1 for c in q['checks'] if c['id']=='scwb' and c['status']!='pass')} otherwise.")
     bs, cs = cap["beams"], cap["columns"]
@@ -333,7 +373,9 @@ def write_evidence_summary(r, out_dir, elapsed=None):
     line("- `SlabActionAssertions`: seven flags + `two_way_shear_path_assessed`, with `asserted_by`, `assertion_date`, `assertion_basis` (e.g. 'reviewed evidence_summary §2–3 for case 3x3x8 sdc_d_high, 2026-09-13').")
     line("- `DemandPolicy`: keep the defaults if §5 matches your archetype; add `declared_by`, `declaration_date`, `declaration_basis`.")
     line("- `IndependentVerification`: `floor_hand_check_verified` (§2–3), `strength_model_verified` (§6), `detailing_model_consistency_verified` (§7), `slab_column_local_steel_assessed` (8.6.1.2 for a beam-supported slab), `fire_resistance_scope_accepted`, `congestion_and_placement_accepted` (hook geometry, crosstie end alternation and placement of the generated hoop/crosstie arrangement in §6), `floor_frame_compatibility_reviewed` (§4: the coupled comparison, its pattern case, mesh sensitivity and `moment_significance`); `asserted_by`, `assertion_date`, `assertion_basis`.")
-    line("- Then `GENERATION_RELEASE_READY = True` in `Design/SMRF_Qualification.py`. Every design made afterwards records these blocks in its request identity.")
+    line("- Every design made after the blocks are filled records them in its request identity. `GENERATION_RELEASE_READY` is not the next step: "
+         "it follows the design-only verification run over the plan (`Design/Verify_Designs.py`) with the real assertions, "
+         "since this document covers one case, not the design range.")
     line()
     line(f"Artifact: `{(out_dir / 'design.json').as_posix()}` — {(out_dir / 'design.json').stat().st_size/1e6:.1f} MB; open items in it: {', '.join(q['not_evaluated'])}.")
 

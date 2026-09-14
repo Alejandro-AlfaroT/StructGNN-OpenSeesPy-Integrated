@@ -1,5 +1,34 @@
 # SMRF follow-up review — 2026-09-13
 
+## Third cross-check (Astra, 2026-09-14) -- resolution
+
+1. Confirmed: the P-M sweeps ran above phi Pn,max, so a column at 1.05 of its
+   axial cap passed with 1 kip-in of moment. Every sweep is now cut at the
+   cap and the check reports max(contour, Pu / phi Pn,max); the
+   counterexample is `tests/test_smrf_biaxial_column.py`.
+2. Confirmed: slab bars were credited as developed at every beam end.
+   Exterior ends now depend on an explicit hook check into the perimeter
+   beam (ACI 318-19 25.4.3.1); where it fails the hogging entries carry
+   `terminated_undeveloped`, the hinge at that end yields at the rectangular
+   strength, the slab design checks the same hook and the bar ladder never
+   offers a bar whose hook does not fit (`tests/test_smrf_slab_anchorage.py`).
+3. Confirmed: the two-way shear exemption cited 318-19 8.10.8, which the
+   2019 edition does not carry. The basis is now 8.4.4.1 / 8.4.4.2.1 with the
+   geometric fact that every column is at a beam intersection, plus the
+   direct-design stiffness criterion (318-14 8.10.8 via 318-19 R8.2.1); the
+   assertion remains the engineer's.
+4. Confirmed: blank/whitespace provenance and an invalid site class were
+   accepted. `demand_policy_problems` rejects them explicitly; the design
+   refuses a partly filled declaration and qualification lists the rejection.
+5. Confirmed: the summary generator hardcoded the 10-in spacing and square
+   panels, omitted the transferred couples from the fixed-end reference, and
+   told the reader to flip the release flag. All computed now (couples
+   included: the reference for the highlighted member is 154, as the
+   reviewer found); the Method-2 table is produced only for square panels;
+   the flag is stated to follow the plan verification run, not this document.
+
+`GENERATION_RELEASE_READY` is still False.
+
 ## Cage layout generated (2026-09-13, after the follow-up)
 
 The open item the follow-up named is now code, not a flag:

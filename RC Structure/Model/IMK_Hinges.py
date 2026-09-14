@@ -88,13 +88,17 @@ def beam_yield_moments(member_type, n_i, n_j):
     if sp.SLAB_THICKNESS_IN is None:
         symmetric = sp.beam_nominal_moment_y()
         return symmetric, symmetric, {"basis": "legacy symmetric max(top, bottom) bars", "family": None}
-    from Design.SMRF_Beam_Slab_Strength import composite_beam_strengths, beam_family
+    from Design.SMRF_Beam_Slab_Strength import (composite_beam_strengths, beam_family,
+                                                perimeter_slab_bar_anchorage, exterior_ends)
     xi, yi, _ = ops.nodeCoord(n_i)
     if member_type == "beam_x":
         line = int(round(yi / sp.BAY_Y)) if sp.BAY_Y > 0 else 0
+        span = int(round(xi / sp.BAY_X)) if sp.BAY_X > 0 else 0
     else:
         line = int(round(xi / sp.BAY_X)) if sp.BAY_X > 0 else 0
+        span = int(round(yi / sp.BAY_Y)) if sp.BAY_Y > 0 else 0
     axis, position = beam_family(member_type, line, sp.NUM_BAY_X, sp.NUM_BAY_Y)
+    exterior = exterior_ends(member_type, span, sp.NUM_BAY_X, sp.NUM_BAY_Y)
     layout = (sp.SLAB_REINFORCEMENT or {}).get("layout")
     beam = {"b_in": sp.B_BEAM, "h_in": sp.H_BEAM, "fc_ksi": sp.FC_BEAM_KSI, "fy_ksi": sp.FY_KSI,
             "bar_size": sp.BEAM_BAR_SIZE, "top_bars": sp.BEAM_TOP_BARS, "bot_bars": sp.BEAM_BOT_BARS,
@@ -102,12 +106,20 @@ def beam_yield_moments(member_type, n_i, n_j):
     slab = {"thickness_in": sp.SLAB_THICKNESS_IN if layout is not None else 0.0}
     geometry = {"bay_x_in": sp.BAY_X, "bay_y_in": sp.BAY_Y, "h_col_in": sp.H_COL, "b_col_in": sp.B_COL}
     family = composite_beam_strengths(beam, slab, layout, geometry, axis, position)
-    return family["mn_negative_kip_in"], family["mn_positive_kip_in"], {
+    anchorage = perimeter_slab_bar_anchorage(layout, axis, sp.B_BEAM, sp.BEAM_CLEAR_COVER_IN,
+                                             sp.rebar_diameter(sp.BEAM_STIRRUP_BAR_SIZE), sp.FC_BEAM_KSI, sp.FY_KSI)
+    hogging = family["mn_negative_kip_in"]
+    rectangular = family["rectangular"]["negative"]["mn_kip_in"]
+    undeveloped = layout is not None and anchorage is not None and not anchorage["developed"]
+    hogging_ends = {end: (rectangular if (undeveloped and exterior[end]) else hogging) for end in ("i", "j")}
+    return hogging, family["mn_positive_kip_in"], {
         "basis": "beam plus developed slab mats in the ACI 6.3.2 flange" if layout is not None
                  else "rectangular beam, actual top and bottom bars; slab reinforcement not established",
         "family": f"{axis}_{position}",
         "effective_flange_width_in": family["effective_flange_width_in"],
-        "slab_steel_in_flange_in2": family["slab_steel_in_flange_in2"]}
+        "slab_steel_in_flange_in2": family["slab_steel_in_flange_in2"],
+        "hogging_i_kip_in": hogging_ends["i"], "hogging_j_kip_in": hogging_ends["j"],
+        "exterior_ends": exterior, "exterior_anchorage": anchorage}
 
 
 def _member_properties(member_type, axial_kip=0.0):
@@ -344,7 +356,10 @@ def _create_end_hinge(
     # Beam hinges are asymmetric. Measured on the zeroLength springs (see
     # tests/test_beam_hinge_asymmetry.py): hogging is POSITIVE spring
     # deformation at end i and NEGATIVE at end j, for beam_x and beam_y alike.
-    hogging = props.get("my_hogging", props["my"])
+    # Hogging can differ between the ends: at an exterior end whose slab bars
+    # are not developed at the perimeter the hinge yields at the rectangular
+    # beam strength (beam_yield_moments).
+    hogging = props.get("my_hogging_i" if end_id == 1 else "my_hogging_j", props.get("my_hogging", props["my"]))
     sagging = props.get("my_sagging", props["my"])
     if end_id == 1:
         positive, negative = hogging, sagging
@@ -382,7 +397,9 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
     strength_basis = None
     if member_type in ("beam_x", "beam_y"):
         hogging, sagging, strength_basis = beam_yield_moments(member_type, n_i, n_j)
-        props.update(my_hogging=hogging, my_sagging=sagging, my=max(hogging, sagging))
+        props.update(my_hogging=hogging, my_sagging=sagging, my=max(hogging, sagging),
+                     my_hogging_i=strength_basis.get("hogging_i_kip_in", hogging),
+                     my_hogging_j=strength_basis.get("hogging_j_kip_in", hogging))
     backbone = backbone_for_member(member_type, axial_kip=axial_kip)
     length = _member_length(n_i, n_j)
     i_hinge_node = hinge_node_tag(ele_tag, 1)
@@ -404,7 +421,10 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         "length_in": length,
         "yield_moment_y_kip_in": props["my"],
         "yield_moment_y_hogging_kip_in": props.get("my_hogging", props["my"]),
+        "yield_moment_y_hogging_i_kip_in": props.get("my_hogging_i", props.get("my_hogging", props["my"])),
+        "yield_moment_y_hogging_j_kip_in": props.get("my_hogging_j", props.get("my_hogging", props["my"])),
         "yield_moment_y_sagging_kip_in": props.get("my_sagging", props["my"]),
+        "exterior_slab_anchorage": (strength_basis or {}).get("exterior_anchorage"),
         "yield_moment_z_kip_in": props["mz"],
         "strength_basis": (strength_basis or {}).get("basis"),
         "beam_family": (strength_basis or {}).get("family"),

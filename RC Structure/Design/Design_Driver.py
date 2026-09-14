@@ -215,7 +215,14 @@ def _slab_completion_context(slab, cfg):
             "thickness_screen_passed": slab["thickness_screen_passed"] is True,
             "column_core_width_in": min(sp.B_COL, sp.H_COL) - 2.0 * sp.longitudinal_cover_in("column"),
             "two_way_shear_path_assessed": (cfg.slab_actions.all_asserted()
-                                             and cfg.slab_actions.two_way_shear_path_assessed is True)}
+                                             and cfg.slab_actions.two_way_shear_path_assessed is True),
+            # Every column of this frame stands at the intersection of an x-beam
+            # line and a y-beam line (SMRF_Elastic.physical_members); the slab
+            # never bears on a column directly.
+            "columns_at_beam_intersections": True,
+            "beam_clear_cover_in": sp.BEAM_CLEAR_COVER_IN,
+            "beam_hoop_diameter_in": sp.rebar_diameter(sp.BEAM_STIRRUP_BAR_SIZE),
+            "fc_beam_ksi": sp.FC_BEAM_KSI}
 
 
 def _update_slab_reinforcement(cfg, slab):
@@ -1156,6 +1163,16 @@ def design_structure(cfg=None, max_section_iter=10, max_steel_iter=6, verbose=Tr
     for value in (cfg.rebar.beam_clear_cover_in, cfg.rebar.col_clear_cover_in):
         if isinstance(value, bool) or not math.isfinite(value) or value < 1.5:
             raise ValueError("Frame clear cover must be finite and at least 1.5 in outside hoops.")
+    # A partly filled or invalid declaration is a mistake to fix, not an open
+    # item to carry: refuse it here. An entirely undeclared policy (all three
+    # provenance fields blank) is the legitimate "not yet declared" state.
+    provenance = (cfg.demands.declared_by, cfg.demands.declaration_date, cfg.demands.declaration_basis)
+    if any(str(v).strip() for v in provenance) or any(
+            key not in ("declared_by is blank", "declaration_date is blank", "declaration_basis is blank")
+            for key in cfg.demands.problems()):
+        problems = cfg.demands.problems()
+        if problems:
+            raise ValueError("DemandPolicy is not a valid declaration: " + "; ".join(problems))
     aggregate = cfg.rebar.aggregate_max_size_in
     if isinstance(aggregate, bool) or not math.isfinite(aggregate) or aggregate <= 0:
         raise ValueError("Maximum aggregate size must be finite and positive.")

@@ -96,12 +96,13 @@ class SlabReinforcementTests(unittest.TestCase):
     def test_floor_context_settles_development_shear_path_and_corner_checks(self):
         context = {"clear_span_x_in": 102.0, "clear_span_y_in": 102.0, "beam_width_in": 10.0,
                    "alpha_f_min": 5.6, "thickness_screen_passed": True, "column_core_width_in": 13.0,
-                   "two_way_shear_path_assessed": True}
+                   "two_way_shear_path_assessed": True, "columns_at_beam_intersections": True,
+                   "beam_clear_cover_in": 1.5, "beam_hoop_diameter_in": 0.5, "fc_beam_ksi": 4.0}
         result = design_slab_reinforcement(inputs(), evidence(), context=context)
         self.assertTrue(result["screen_passed"])
-        ids = {c["id"]: c for c in result["checks"] if c["location"] in ("", "x_top")}
-        for check_id in ("slab_bar_development", "slab_continuity_and_extensions", "slab_crack_control_spacing",
-                         "slab_two_way_shear_applicability", "slab_deflection_control",
+        ids = {c["id"]: c for c in result["checks"] if c["location"] in ("", "x_top", "x")}
+        for check_id in ("slab_bar_development", "slab_perimeter_bar_anchorage", "slab_continuity_and_extensions",
+                         "slab_crack_control_spacing", "slab_two_way_shear_applicability", "slab_deflection_control",
                          "slab_integrity_bottom_bars_through_column", "slab_corner_reinforcement"):
             self.assertEqual(ids[check_id]["status"], "pass", check_id)
         self.assertEqual(set(result["summary"]["not_evaluated"]), {"slab_column_local_minimum_steel", "slab_fire_resistance"})
@@ -113,6 +114,12 @@ class SlabReinforcementTests(unittest.TestCase):
         self.assertIn("slab_two_way_shear_applicability", weak["summary"]["not_evaluated"])
         # So does a stiff-beam floor whose shear path the engineer has not assessed.
         unassessed = design_slab_reinforcement(inputs(), evidence(), context={**context, "two_way_shear_path_assessed": False})
+        # And a column bearing on the slab directly is a slab-column connection: not covered, whatever is asserted.
+        direct = design_slab_reinforcement(inputs(), evidence(), context={**context, "columns_at_beam_intersections": False})
+        self.assertIn("slab_two_way_shear_applicability", direct["summary"]["not_evaluated"])
+        applicability = next(c for c in result["checks"] if c["id"] == "slab_two_way_shear_applicability")
+        self.assertIn("8.4.4.2.1", applicability["clause"])
+        self.assertNotIn("8.10.8.1", applicability["clause"])
         self.assertIn("slab_two_way_shear_applicability", unassessed["summary"]["not_evaluated"])
         self.assertTrue(unassessed["screen_passed"])
         malformed = design_slab_reinforcement(inputs(), evidence(), context={"clear_span_x_in": 1})

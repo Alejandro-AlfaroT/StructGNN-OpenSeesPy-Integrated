@@ -317,6 +317,15 @@ class DemandPolicy:
     declaration_date: str = ""
     declaration_basis: str = ""
 
+    def declared(self):
+        """True when this is a complete, valid declaration (SMRF_Demands.demand_policy_problems)."""
+        from Design.SMRF_Demands import demand_policy_problems
+        return not demand_policy_problems(vars(self))
+
+    def problems(self):
+        from Design.SMRF_Demands import demand_policy_problems
+        return demand_policy_problems(vars(self))
+
 
 @dataclass
 class IndependentVerification:

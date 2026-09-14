@@ -198,7 +198,33 @@ def build_pm_diagram(cfg: DesignConfig, n_pts: int = 120, axis: str = "y") -> Li
         phi   = _phi_PM(eps_t)
         diagram.append((phi * Pn, phi * abs(Mn)))
 
-    return diagram
+    # Usable axial strength stops at phi Pn,max (22.4.2.1); the sweep does not.
+    return truncate_at_axial_cap(diagram, 0.65 * Pn_max)
+
+
+def truncate_at_axial_cap(diagram, cap):
+    """Cut a P-M sweep at the axial strength cap (ACI 318-19 22.4.2.1).
+
+    The strain-compatibility sweep continues to pure compression, above the
+    0.80 P0 (tied) limit on usable axial strength. Points above ``cap`` are
+    dropped and the crossing point (cap, M at the cap) is inserted by linear
+    interpolation between the sweep points that bracket it, so the surface
+    is horizontal at the cap from M = 0 to that moment and nothing above it
+    can be read as capacity.
+    """
+    cap = float(cap)
+    kept = [(p, m) for p, m in diagram if p <= cap]
+    crossing = None
+    for (p1, m1), (p2, m2) in zip(diagram, diagram[1:]):
+        if (p1 <= cap < p2) or (p2 <= cap < p1):
+            t = (cap - p1) / (p2 - p1) if p2 != p1 else 0.0
+            m = m1 + t * (m2 - m1)
+            crossing = (cap, m) if crossing is None else (cap, max(crossing[1], m))
+    if crossing is not None:
+        kept.append(crossing)
+    if not any(p == cap for p, _m in kept):
+        kept.append((cap, 0.0))
+    return kept
 
 
 def build_pm_diagrams(cfg: DesignConfig, n_pts: int = 120) -> Dict[str, List[Tuple[float, float]]]:
@@ -265,14 +291,15 @@ def check_column_pm(
     Ast    = (sp.COL_TOP_BARS + sp.COL_BOT_BARS + sp.COL_SIDE_BARS * 2) * sp.COL_BAR_AREA
     min_controlled = Ast <= cfg.rebar.rho_col_min * Ag * 1.01
 
-    # Pure-compression case (zero eccentricity)
-    if abs(Muy) < 1e-4 and abs(Muz) < 1e-4:
-        phi_Pmax = min(diagram_y[0][0], diagram_z[0][0])
-        cap      = phi_Pmax if phi_Pmax > 1e-6 else 1e-9
-        dcr      = Pu / cap
+    # The axial strength cap (22.4.2.1) applies whatever the moment: a column
+    # above phi Pn,max fails on axial load, and the moment ratio never hides it.
+    phi_Pmax = min(max(p for p, _m in diagram_y), max(p for p, _m in diagram_z))
+    axial_cap = phi_Pmax if phi_Pmax > 1e-6 else 1e-9
+    axial_dcr = Pu / axial_cap
+    if (abs(Muy) < 1e-4 and abs(Muz) < 1e-4) or Pu > axial_cap:
         return LimitStateResult(
-            name="PM", demand=Pu, capacity=cap,
-            dcr=dcr, ok=dcr <= 1.0, min_controlled=min_controlled,
+            name="PM", demand=Pu, capacity=axial_cap,
+            dcr=axial_dcr, ok=axial_dcr <= 1.0, min_controlled=min_controlled,
         )
 
     phi_y = _interpolate_pm_capacity(Pu, diagram_y)
@@ -283,7 +310,8 @@ def check_column_pm(
             dcr=999.0, ok=False, min_controlled=min_controlled,
         )
 
-    dcr = ((abs(Muy) / phi_y) ** alpha + (abs(Muz) / phi_z) ** alpha) ** (1.0 / alpha)
+    contour = ((abs(Muy) / phi_y) ** alpha + (abs(Muz) / phi_z) ** alpha) ** (1.0 / alpha)
+    dcr = max(contour, axial_dcr)
     return LimitStateResult(
         name="PM", demand=dcr * phi_y, capacity=phi_y,
         dcr=dcr, ok=dcr <= 1.0, min_controlled=min_controlled,

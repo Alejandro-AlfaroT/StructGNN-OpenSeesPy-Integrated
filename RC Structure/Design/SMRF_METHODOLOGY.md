@@ -423,9 +423,16 @@ type rather than silently adopting these assumptions for unrelated input data.
    moment (DCR x phiMny) so it targets the biaxial ratio; the true
    components and both capacities are recorded per member. Column DCRs rose
    5-10% on the sweep cases; sections did not change (columns are
-   capacity-protected and sit at DCR 0.4-0.6). Still open: independent
-   verification of the contour exponent, action transformations and force
-   signs (item 7, `strength_model_verified`). The
+   capacity-protected and sit at DCR 0.4-0.6). The axial strength cap
+   (22.4.2.1, phi Pn,max = 0.65 x 0.80 P0 for tied columns) is enforced
+   whatever the moment: every P-M sweep (design phi surfaces, the steel
+   picker's, the nominal surface the hinges and SCWB read) is cut at the
+   cap, and the check reports max(contour ratio, Pu / phi Pn,max). The
+   third cross-check found the cap enforced only at zero moment, so a
+   column at 1.05 phi Pn,max passed with 1 kip-in of bending; that case is
+   now a test. Still open: independent verification of the contour
+   exponent, action transformations and force signs (item 7,
+   `strength_model_verified`). The
    `sdc_c` preset was re-valued to SDS 0.40 / SD1 0.19 / S1 0.19 on
    2026-09-13: its former 0.50 / 0.25 pair sat on the Table 11.6-1/11.6-2
    thresholds and derived as SDC D. The legacy mode retains its old D+100%L
@@ -732,6 +739,19 @@ a representative floor.
 
 ## Slab strip actions and reinforcement
 
+Shear path (corrected basis, 2026-09-14): ACI 318-19 8.4.4.1 governs one-way
+shear in the slab, checked at the beam faces by the strip routine; 8.4.4.2.1
+requires two-way shear at slab-column connections and concentrated loads,
+and this frame has none -- every column stands at the intersection of an
+x-beam line and a y-beam line, a geometric fact of the model recorded as
+`columns_at_beam_intersections`. That the beams are stiff enough to be the
+slab's supports is the direct-design criterion alpha_f >= 1.0 on every
+panel edge (ACI 318-14 8.10.8; the 2019 body text no longer carries those
+clauses and R8.2.1 continues to permit the method). Whether that load path
+is accepted for the floor remains the engineer's assessment,
+`two_way_shear_path_assessed`; the earlier citation of "318-19 8.10.8" was
+wrong and is replaced.
+
 `Design/SMRF_Slab_Actions.build_slab_action_evidence` produces the demand
 evidence the strip routine requires, from the same flexible-beam floor model
 as the transfer: 1.4D and 1.2D+1.6L (ACI 5.3.1), with live-load patterns per
@@ -891,6 +911,15 @@ SCWB and slab actions as `not_evaluated`; it is not an accepted design.
 
 ## Demand basis
 
+A declaration is validated, not trusted (2026-09-14): `DemandPolicy` must
+carry a non-blank author, an ISO calendar date and a non-blank basis, a site
+class and risk category from ASCE 7-22's lists, a non-blank occupancy,
+finite nonnegative loads, an accidental-torsion ratio of at least 5% and
+Boolean flags (`SMRF_Demands.demand_policy_problems`). The design refuses a
+partly filled or invalid declaration outright, and at qualification every
+`demands.*` item stays unevaluated with the rejection listed -- a
+whitespace basis or a mistyped site class is never approved evidence.
+
 `Design/SMRF_Demands.evaluate_demand_basis` reads the design record: the
 declared `DemandPolicy`, the load inventory, the saved torsion assessment
 and the drift/ELF assumptions. Items:
@@ -920,6 +949,28 @@ and the drift/ELF assumptions. Items:
   full D+L gravity state, derived SDC for the limits.
 
 ## Beam-plus-slab strengths
+
+Where the slab ends: at a beam's exterior end the slab bars in its flange run
+to the building edge, and the only concrete beyond the critical section is
+the perimeter beam. The mats are credited there only if a standard hook
+into that beam develops them -- ACI 318-19 25.4.3.1 (the db^1.5 form, psi_r
+from the mat spacing, psi_c from f'c, psi_o = 1 with the beam continuous
+along the perimeter; at least 8 db and 6 in) against the beam width less the
+far-side cover and hoop (`perimeter_slab_bar_anchorage`). Where the hook
+fits, the entries and hinges keep the composite hogging strength and record
+the hook; where it does not, the exterior-end hogging entries carry
+`slab_basis = terminated_undeveloped` with zero slab contribution (the joint
+rule accepts it), the hinge at that end yields at the rectangular strength
+(`yield_moment_y_hogging_i/j`), and sagging keeps the flange concrete,
+which needs no bar development. The slab design itself checks the same
+hook (`slab_perimeter_bar_anchorage`, both axes) and the bar ladder never
+offers a size whose hook does not fit the perimeter beam. Interior ends are
+developed by continuity (25.4.2.4 within half the adjacent clear span,
+`slab_bar_development`). The probable strengths the capacity design uses
+for beam shear and joint shear keep the composite value everywhere, which
+is the conservative side for a demand. On the review case #4 mats need 6.0
+in and the 10-in perimeter beam offers 8.0; #6 mats (9.7 in) would not fit
+and the ladder would not select them.
 
 `Design/SMRF_Beam_Slab_Strength` computes, per beam family (x/y, perimeter
 or interior line), the rectangular and the composite nominal moments by

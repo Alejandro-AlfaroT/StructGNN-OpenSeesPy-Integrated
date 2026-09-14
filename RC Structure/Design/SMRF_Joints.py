@@ -44,7 +44,7 @@ from Design.SMRF_Common import make_check, not_evaluated
 SCWB_CLAUSE = "ACI 318-19 18.7.3.2"
 BEAM_SHEAR_CLAUSE = "ACI 318-19 18.6.5.1"
 JOINT_SHEAR_CLAUSE = "ACI 318-19 18.8.4; 21.2.4.4"
-SLAB_BASES = {"no_slab", "not_in_tension", "developed_effective_width"}
+SLAB_BASES = {"no_slab", "not_in_tension", "developed_effective_width", "terminated_undeveloped"}
 MPR_BASIS = "fy_at_least_1.25_phi_1.0"
 
 

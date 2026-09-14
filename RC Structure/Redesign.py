@@ -178,6 +178,10 @@ def _phi_Mn_at_Pu(Pu, Ast, n_pts=60, candidate=None):
             phi = 0.65 + (eps_t - 0.002) / 0.003 * 0.25
         diagram.append((phi * Pn, phi * abs(Mn)))
 
+    # Usable axial strength stops at phi Pn,max (ACI 318-19 22.4.2.1).
+    from Design.ACI_Checks import truncate_at_axial_cap
+    diagram = truncate_at_axial_cap(diagram, 0.65 * Pn_max)
+
     # Interpolate envelope at Pu
     pts = sorted(diagram, key=lambda p: -p[0])
     cap = None
