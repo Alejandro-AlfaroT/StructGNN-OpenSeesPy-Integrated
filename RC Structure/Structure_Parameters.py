@@ -36,7 +36,14 @@ H_COL = 18.0
 B_BEAM = 12.0
 H_BEAM = 18.0
 
+# Legacy distance from concrete face to longitudinal bar centroid. New slab-
+# aware designs instead use the explicit clear cover outside transverse steel.
 COVER = 1.5
+BEAM_CLEAR_COVER_IN = 1.5  # sheltered interior research frames, outside hoops
+COL_CLEAR_COVER_IN = 1.5
+AGGREGATE_MAX_SIZE_IN = 0.75
+REINFORCEMENT_SPECIFICATION = "ASTM A706 Grade 60"
+MATERIAL_EXPOSURE = "sheltered_interior"
 
 # Rebar database
 REBAR = {
@@ -87,6 +94,68 @@ BEAM_STIRRUP_SPACING = 6.0
 STIRRUP_MIN_SPACING = 3.0
 STIRRUP_SPACING_STEP = 1.0
 
+
+def _reinforcement_member(member_type):
+    member = str(member_type).lower()
+    if member in ("col", "column"):
+        return "column"
+    if member == "beam":
+        return "beam"
+    raise ValueError("member_type must be 'beam' or 'column'.")
+
+
+def core_cover_in(member_type):
+    """Face-to-core boundary at outside of hoops, not longitudinal centroids.
+
+    This geometry distinction does not validate a confined-concrete material
+    law; calibration to the actual confinement layout remains a separate check.
+    The old fiber partition is unchanged when no slab design is selected.
+    """
+    member = _reinforcement_member(member_type)
+    if SLAB_THICKNESS_IN is None:
+        return COVER
+    cover = COL_CLEAR_COVER_IN if member == "column" else BEAM_CLEAR_COVER_IN
+    if isinstance(cover, bool) or not math.isfinite(cover) or cover <= 0:
+        raise ValueError("Clear cover must be positive and finite.")
+    return cover
+
+
+def longitudinal_cover_in(member_type, bar_size=None, stirrup_bar_size=None):
+    """Concrete-face to longitudinal-bar centroid, in inches.
+
+    Optional bar sizes price a candidate without changing the current section.
+    New-mode bars touch the inside of the hoop: c_clear + d_hoop + d_bar/2.
+    """
+    member = _reinforcement_member(member_type)
+    if SLAB_THICKNESS_IN is None:
+        return COVER
+    is_col = member == "column"
+    if bar_size is None:
+        bar_size = COL_BAR_SIZE if is_col else BEAM_BAR_SIZE
+    if stirrup_bar_size is None:
+        stirrup_bar_size = COL_STIRRUP_BAR_SIZE if is_col else BEAM_STIRRUP_BAR_SIZE
+    return (core_cover_in(member) + rebar_diameter(stirrup_bar_size)
+            + 0.5 * rebar_diameter(bar_size))
+
+
+def longitudinal_clear_spacing_in(member_type, bar_size=None):
+    """ACI 318-19 25.2.1 / 25.2.3 unbundled single-layer minimum spacing.
+
+    The aggregate term is active only for new slab-aware research designs.
+    This does not cover hoop/crosstie or joint congestion and anchorage checks.
+    """
+    member = _reinforcement_member(member_type)
+    if bar_size is None:
+        bar_size = COL_BAR_SIZE if member == "column" else BEAM_BAR_SIZE
+    db = rebar_diameter(bar_size)
+    minimum = max(1.5, 1.5 * db) if member == "column" else max(1.0, db)
+    if SLAB_THICKNESS_IN is not None:
+        aggregate = AGGREGATE_MAX_SIZE_IN
+        if isinstance(aggregate, bool) or not math.isfinite(aggregate) or aggregate <= 0:
+            raise ValueError("Maximum aggregate size must be positive and finite.")
+        minimum = max(minimum, 4.0 * aggregate / 3.0)
+    return minimum
+
 # Design DCR target band (iterative steel redesign)
 DESIGN_DCR_MIN = 0.60   # lower bound — avoid over-design
 DESIGN_DCR_MAX = 0.95   # upper bound — demand must be met
@@ -103,15 +172,17 @@ G = 386.4
 CONCRETE_UNIT_WEIGHT_KCF = 0.150              # kip/ft³
 CONCRETE_UNIT_WEIGHT_KCI = CONCRETE_UNIT_WEIGHT_KCF / 1728.0  # kip/in³
 
-# Floor gravity load — specified as a uniform area load (ksf).
-# Dead load should cover superimposed dead only (finishes, MEP, partitions, slab).
-# Structural self-weight of beams and columns is applied separately as element
-# loads in Gravity_Loads.py — do not double-count it here.
-# Live load is the design occupancy load (50 psf = office, ASCE 7 Table 4.3-1).
-# Both are applied in full for gravity analysis (unfactored service loads).
-# The combined value is used for seismic mass (ASCE 7 §12.7.2 effective weight).
+# Legacy floor area loads are retained for existing analyses. The dead-load
+# allowance already includes slab weight: never add computed slab weight to it.
+# A selected SLAB_THICKNESS_IN opts into separately accounted slab + SDL and
+# member self-weight. SDL is an explicit research assumption, not inferred from
+# the legacy bundled allowance; effective seismic weight still needs project-
+# specific occupancy/partition/roof review before code qualification.
 FLOOR_DEAD_LOAD_KSF = 0.15   # kip/ft²  (slab self-weight + finishes + MEP)
 FLOOR_LIVE_LOAD_KSF = 0.05   # kip/ft²  (office occupancy)
+SLAB_THICKNESS_IN = None    # None preserves legacy loads/mass; design selects one h
+FLOOR_SUPERIMPOSED_DEAD_LOAD_KSF = 0.05  # explicit finishes/MEP/partition allowance
+SEISMIC_LIVE_LOAD_FRACTION = 0.0         # research office-floor assumption
 
 FX_FLOOR = 10.0
 
@@ -123,7 +194,27 @@ FX_FLOOR = 10.0
 # The nodal option is the baseline for the IMK hinge model because applying
 # uniform element loads directly to the elastic spine can create a large
 # gravity-only sidesway before pushover starts.
+#
+# When a design has produced a slab-to-frame transfer (Design/SMRF_Floor_Transfer),
+# FLOOR_TRANSFER holds it and Gravity_Loads applies the slab's discrete beam
+# node loads and column footprint loads instead of either option above. The
+# effective mode is then "slab_transfer"; GRAVITY_LOAD_MODEL keeps naming the
+# request's fallback so the design request identity stays stable.
 GRAVITY_LOAD_MODEL = "nodal"
+FLOOR_TRANSFER = None
+
+# Selected slab reinforcement (Design/SMRF_Slab_Reinforcement record). When
+# its layout exists, beam strengths for SCWB and for the IMK beam hinges
+# include the developed slab mats within the ACI 6.3.2 effective flange
+# (Design/SMRF_Beam_Slab_Strength); None keeps rectangular beam strengths.
+SLAB_REINFORCEMENT = None
+# The computed slab strip action evidence (Design/SMRF_Slab_Actions), kept
+# whether or not it has been asserted as verified, so it can be reviewed.
+SLAB_ACTIONS = None
+
+
+def effective_gravity_load_model():
+    return "slab_transfer" if FLOOR_TRANSFER is not None else GRAVITY_LOAD_MODEL
 
 # Material tags
 COVER_COL_TAG = 1
@@ -319,7 +410,9 @@ SCWB_RATIO_MIN = 1.2
 # (R = 8) would not be the system of choice there, and gravity would govern
 # the design and flatten the variety again.
 SEISMIC_SITE_OPTIONS = (
-    ("sdc_c",      0.50, 0.25, 0.25),
+    # SDC C per ASCE 7-22 Tables 11.6-1/11.6-2 needs SDS < 0.50 and SD1 < 0.20;
+    # the earlier 0.50/0.25 pair sat on the D thresholds and derived as SDC D.
+    ("sdc_c",      0.40, 0.19, 0.19),
     ("sdc_d_low",  0.75, 0.38, 0.38),
     ("sdc_d_high", 1.00, 0.60, 0.60),
     ("sdc_e",      1.25, 0.75, 0.75),
@@ -477,8 +570,10 @@ def approx_rect_j(b, h):
     return rect_iy(b, h) + rect_iz(b, h)
 
 
-def rc_nominal_moment_ksi(fc_ksi, width_in, depth_in, steel_area_in2):
-    d = depth_in - COVER
+def rc_nominal_moment_ksi(fc_ksi, width_in, depth_in, steel_area_in2, member_type=None):
+    # Generic legacy callers retain their former explicit COVER convention.
+    cover = COVER if member_type is None else longitudinal_cover_in(member_type)
+    d = depth_in - cover
     a = steel_area_in2 * FY_KSI / (0.85 * fc_ksi * width_in)
     a = min(a, 0.85 * depth_in)
     return steel_area_in2 * FY_KSI * (d - 0.5 * a)
@@ -486,22 +581,22 @@ def rc_nominal_moment_ksi(fc_ksi, width_in, depth_in, steel_area_in2):
 
 def beam_nominal_moment_y():
     steel_area = max(BEAM_TOP_BARS, BEAM_BOT_BARS) * BEAM_BAR_AREA
-    return rc_nominal_moment_ksi(FC_BEAM_KSI, B_BEAM, H_BEAM, steel_area)
+    return rc_nominal_moment_ksi(FC_BEAM_KSI, B_BEAM, H_BEAM, steel_area, "beam")
 
 
 def beam_nominal_moment_z():
     steel_area = max(BEAM_TOP_BARS, BEAM_BOT_BARS) * BEAM_BAR_AREA
-    return rc_nominal_moment_ksi(FC_BEAM_KSI, H_BEAM, B_BEAM, steel_area)
+    return rc_nominal_moment_ksi(FC_BEAM_KSI, H_BEAM, B_BEAM, steel_area, "beam")
 
 
 def column_nominal_moment_y():
     steel_area = max(COL_TOP_BARS, COL_BOT_BARS) * COL_BAR_AREA
-    return rc_nominal_moment_ksi(FC_COL_KSI, B_COL, H_COL, steel_area)
+    return rc_nominal_moment_ksi(FC_COL_KSI, B_COL, H_COL, steel_area, "column")
 
 
 def column_nominal_moment_z():
     steel_area = max(COL_TOP_BARS, COL_BOT_BARS) * COL_BAR_AREA
-    return rc_nominal_moment_ksi(FC_COL_KSI, H_COL, B_COL, steel_area)
+    return rc_nominal_moment_ksi(FC_COL_KSI, H_COL, B_COL, steel_area, "column")
 
 
 # ASCE 7-22 2.3.6 load combination 6 for seismic design: 1.2D + Ev + Eh + 0.5L.
@@ -513,11 +608,12 @@ SEISMIC_COMBINATION_LIVE_FACTOR = 0.5
 
 def seismic_combination_floor_factor():
     """Equivalent factor on the combined dead+live floor load for 1.2D + 0.5L."""
-    total = FLOOR_DEAD_LOAD_KSF + FLOOR_LIVE_LOAD_KSF
+    dead = floor_dead_load_ksf()
+    total = dead + FLOOR_LIVE_LOAD_KSF
     if total <= 0.0:
         return SEISMIC_COMBINATION_DEAD_FACTOR
     factored = (
-        SEISMIC_COMBINATION_DEAD_FACTOR * FLOOR_DEAD_LOAD_KSF
+        SEISMIC_COMBINATION_DEAD_FACTOR * dead
         + SEISMIC_COMBINATION_LIVE_FACTOR * FLOOR_LIVE_LOAD_KSF
     )
     return factored / total
@@ -525,7 +621,47 @@ def seismic_combination_floor_factor():
 
 def floor_load_ksi():
     """Total gravity floor load converted to kip/in²."""
-    return (FLOOR_DEAD_LOAD_KSF + FLOOR_LIVE_LOAD_KSF) / 144.0
+    return (floor_dead_load_ksf() + FLOOR_LIVE_LOAD_KSF) / 144.0
+
+
+def _validate_slab_load_state():
+    """Reject invalid selected slab/load geometry instead of clipping weights."""
+    if SLAB_THICKNESS_IN is None:
+        return
+    positive = {
+        "SLAB_THICKNESS_IN": SLAB_THICKNESS_IN, "H_BEAM": H_BEAM,
+        "STORY_H": STORY_H, "B_BEAM": B_BEAM, "B_COL": B_COL,
+        "H_COL": H_COL, "BAY_X": BAY_X, "BAY_Y": BAY_Y,
+        "CONCRETE_UNIT_WEIGHT_KCF": CONCRETE_UNIT_WEIGHT_KCF,
+    }
+    for name, value in positive.items():
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be finite and positive in slab-aware mode.")
+    if not SLAB_THICKNESS_IN < H_BEAM < STORY_H:
+        raise ValueError("Slab-aware loads require SLAB_THICKNESS_IN < H_BEAM < STORY_H.")
+    if H_COL >= BAY_X or B_COL >= BAY_Y:
+        raise ValueError("Slab-aware beam self-weight requires positive clear spans in X and Y.")
+    for name, value in (("FLOOR_SUPERIMPOSED_DEAD_LOAD_KSF", FLOOR_SUPERIMPOSED_DEAD_LOAD_KSF),
+                        ("FLOOR_LIVE_LOAD_KSF", FLOOR_LIVE_LOAD_KSF)):
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{name} must be finite and nonnegative.")
+    if not math.isfinite(SEISMIC_LIVE_LOAD_FRACTION) or not 0 <= SEISMIC_LIVE_LOAD_FRACTION <= 1:
+        raise ValueError("SEISMIC_LIVE_LOAD_FRACTION must be finite and between 0 and 1.")
+
+
+def slab_self_weight_ksf():
+    """Selected slab weight; legacy bundled dead load has no known slab share."""
+    if SLAB_THICKNESS_IN is None:
+        return None
+    _validate_slab_load_state()
+    return CONCRETE_UNIT_WEIGHT_KCF * SLAB_THICKNESS_IN / 12.0
+
+
+def floor_dead_load_ksf():
+    """Area dead load, without separately applied beam/column self-weight."""
+    if SLAB_THICKNESS_IN is None:
+        return FLOOR_DEAD_LOAD_KSF
+    return FLOOR_SUPERIMPOSED_DEAD_LOAD_KSF + slab_self_weight_ksf()
 
 
 def node_tributary_area_in2(i, j):
@@ -546,7 +682,11 @@ def node_gravity_load_kip(i, j):
 
 def node_seismic_mass(i, j):
     """Translational seismic mass (kip·s²/in) at grid node (i, j)."""
-    return node_gravity_load_kip(i, j) / G
+    if SLAB_THICKNESS_IN is None:
+        return node_gravity_load_kip(i, j) / G
+    area_weight = ((floor_dead_load_ksf() + SEISMIC_LIVE_LOAD_FRACTION * FLOOR_LIVE_LOAD_KSF)
+                   * node_tributary_area_in2(i, j) / 144.0)
+    return (area_weight + node_structural_self_weight_kip(i, j)) / G
 
 
 def total_floor_gravity_load():
@@ -583,12 +723,41 @@ def pushover_target_disp():
 
 
 def col_self_weight_kip_per_in():
-    """Column self-weight per unit length (kip/in), downward."""
+    """Equivalent column line weight; new mode excludes the slab-height slice."""
+    if SLAB_THICKNESS_IN is not None:
+        _validate_slab_load_state()
+        return (CONCRETE_UNIT_WEIGHT_KCF / 1728.0 * B_COL * H_COL
+                * (STORY_H - SLAB_THICKNESS_IN) / STORY_H)
     return CONCRETE_UNIT_WEIGHT_KCI * B_COL * H_COL
 
 
-def beam_self_weight_kip_per_in():
-    """Beam self-weight per unit length (kip/in), downward."""
+def beam_drop_weight_kip_per_in():
+    """Physical weight per inch of the beam between the joint faces.
+
+    Slab-aware mode: the drop below the slab, b (h - t); legacy mode the
+    full section. beam_self_weight_kip_per_in smears this over the full
+    centerline element (times the clear fraction); this is the unreduced
+    value for a free body cut at the column faces.
+    """
+    if SLAB_THICKNESS_IN is not None:
+        _validate_slab_load_state()
+        return CONCRETE_UNIT_WEIGHT_KCF / 1728.0 * B_BEAM * (H_BEAM - SLAB_THICKNESS_IN)
+    return CONCRETE_UNIT_WEIGHT_KCI * B_BEAM * H_BEAM
+
+
+def beam_self_weight_kip_per_in(beam_axis=None):
+    """Equivalent beam line weight, applied over the centerline element.
+
+    Slab-aware mode counts only the drop below the slab, between column faces;
+    beam section/stiffness dimensions are unchanged. An explicit axis is needed
+    because X/Y column face dimensions and spans need not match.
+    """
+    if SLAB_THICKNESS_IN is not None:
+        _validate_slab_load_state()
+        if beam_axis not in {"x", "y"}:
+            raise ValueError("Slab-aware beam self-weight requires beam_axis='x' or 'y'.")
+        clear_fraction = (1.0 - H_COL / BAY_X) if beam_axis == "x" else (1.0 - B_COL / BAY_Y)
+        return CONCRETE_UNIT_WEIGHT_KCF / 1728.0 * B_BEAM * (H_BEAM - SLAB_THICKNESS_IN) * clear_fraction
     return CONCRETE_UNIT_WEIGHT_KCI * B_BEAM * H_BEAM
 
 
@@ -604,5 +773,67 @@ def total_structural_self_weight_per_floor():
     n_beam_x = NUM_BAY_X * (NUM_BAY_Y + 1)
     n_beam_y = (NUM_BAY_X + 1) * NUM_BAY_Y
     w_col_floor  = col_self_weight_kip_per_in()  * STORY_H * n_col
-    w_beam_floor = beam_self_weight_kip_per_in() * BAY_X   * (n_beam_x + n_beam_y)
+    w_beam_floor = (beam_self_weight_kip_per_in("x") * BAY_X * n_beam_x
+                    + beam_self_weight_kip_per_in("y") * BAY_Y * n_beam_y)
     return w_col_floor + w_beam_floor
+
+
+def node_structural_self_weight_kip(i, j):
+    """One column story plus half of every incident beam's accounted weight.
+
+    This is a mass/tributary-axial helper, NOT an extra nodal gravity load:
+    Gravity_Loads applies the same member weights as distributed element loads.
+    One whole column story is lumped at its upper floor (roof included).
+    """
+    if not (0 <= i <= NUM_BAY_X and 0 <= j <= NUM_BAY_Y):
+        raise ValueError("Node indices must lie on the structural floor grid.")
+    incident_x = int(i > 0) + int(i < NUM_BAY_X)
+    incident_y = int(j > 0) + int(j < NUM_BAY_Y)
+    return (col_self_weight_kip_per_in() * STORY_H
+            + 0.5 * incident_x * BAY_X * beam_self_weight_kip_per_in("x")
+            + 0.5 * incident_y * BAY_Y * beam_self_weight_kip_per_in("y"))
+
+
+def total_floor_seismic_weight():
+    """Floor weight matching exactly the mass assigned to structural grid nodes."""
+    if SLAB_THICKNESS_IN is None:
+        return total_floor_gravity_load()
+    area = BAY_X * NUM_BAY_X * BAY_Y * NUM_BAY_Y
+    return ((floor_dead_load_ksf() + SEISMIC_LIVE_LOAD_FRACTION * FLOOR_LIVE_LOAD_KSF) * area / 144.0
+            + total_structural_self_weight_per_floor())
+
+
+def floor_load_metadata():
+    """Persist the load model without changing the existing numeric feature order."""
+    selected = SLAB_THICKNESS_IN is not None
+    dead = floor_dead_load_ksf()
+    area_sqft = BAY_X * NUM_BAY_X * BAY_Y * NUM_BAY_Y / 144.0
+    column_weight = (NUM_BAY_X + 1) * (NUM_BAY_Y + 1) * STORY_H * col_self_weight_kip_per_in()
+    beam_weight_x = NUM_BAY_X * (NUM_BAY_Y + 1) * BAY_X * beam_self_weight_kip_per_in("x")
+    beam_weight_y = NUM_BAY_Y * (NUM_BAY_X + 1) * BAY_Y * beam_self_weight_kip_per_in("y")
+    return {
+        "load_model": "slab_aware_v1" if selected else "legacy_bundled_v1",
+        "slab_thickness_in": SLAB_THICKNESS_IN,
+        "floor_superimposed_dead_load_ksf": FLOOR_SUPERIMPOSED_DEAD_LOAD_KSF if selected else None,
+        "slab_self_weight_ksf": slab_self_weight_ksf(),
+        "floor_dead_load_ksf": dead,
+        "floor_live_load_ksf": FLOOR_LIVE_LOAD_KSF,
+        "seismic_live_load_fraction": SEISMIC_LIVE_LOAD_FRACTION if selected else 1.0,
+        "floor_area_sqft": area_sqft,
+        "floor_area_dead_weight_kip": dead * area_sqft,
+        "total_floor_gravity_load_kip": total_floor_gravity_load(),
+        "column_self_weight_per_floor_kip": column_weight,
+        "beam_x_self_weight_per_floor_kip": beam_weight_x,
+        "beam_y_self_weight_per_floor_kip": beam_weight_y,
+        "member_self_weight_per_floor_kip": column_weight + beam_weight_x + beam_weight_y,
+        "total_floor_seismic_weight_kip": total_floor_seismic_weight(),
+        "load_accounting_basis": (
+            "Uniform slab over centerline floor footprint; beam drops over clear spans between column faces; "
+            "columns over story height minus slab thickness. Equivalent member weights distributed over "
+            "centerline elements. One column story lumped at its upper floor plus half each incident beam. "
+            "Perimeter surfaces and joints remain centerline-model idealizations, not a physical quantity takeoff."
+            if selected else
+            "Legacy bundled slab/finishes/MEP area dead load; full rectangular centerline member gravity weights; "
+            "seismic mass uses floor D+100%L only and omits member self-weight."
+        ),
+    }

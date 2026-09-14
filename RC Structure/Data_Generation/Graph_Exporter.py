@@ -462,6 +462,62 @@ def collect_force_diagnostics(force_rows):
     return diagnostics
 
 
+def collect_reinforcement_geometry():
+    """Selected SMRF reinforcement geometry, separate from the tensor schema.
+
+    Legacy COVER combined core and bar-centroid offsets; its clear cover and
+    exposure cannot be reconstructed safely. Return None for legacy mode.
+    Core dimensions below describe the actual fiber partition at the outside
+    of hoops, not a validation of its confinement constitutive properties.
+    """
+    if sp.SLAB_THICKNESS_IN is None:
+        return None
+    members = {}
+    for member, prefix in (("column", "COL"), ("beam", "BEAM")):
+        b, h = getattr(sp, f"B_{prefix}"), getattr(sp, f"H_{prefix}")
+        core_cover = sp.core_cover_in(member)
+        bar_cover = sp.longitudinal_cover_in(member)
+        bar_size = getattr(sp, f"{prefix}_BAR_SIZE")
+        hoop_size = getattr(sp, f"{prefix}_STIRRUP_BAR_SIZE")
+        hoop_diameter = sp.rebar_diameter(hoop_size)
+        if any(not math.isfinite(v) or v <= 0 for v in (b, h, core_cover, bar_cover)):
+            raise ValueError("Reinforcement export requires finite positive geometry.")
+        if 2 * bar_cover >= min(b, h):
+            raise ValueError("Reinforcement bar centroids must fit inside the exported section.")
+        members[member] = {
+            "clear_cover_outside_hoops_in": core_cover,
+            "longitudinal_centroid_offset_in": bar_cover,
+            "longitudinal_bar_diameter_in": sp.rebar_diameter(bar_size),
+            "stirrup_bar_diameter_in": hoop_diameter,
+            "stirrup_bar_size": hoop_size,
+            "stirrup_legs": getattr(sp, f"{prefix}_STIRRUP_LEGS"),
+            "stirrup_spacing_in": getattr(sp, f"{prefix}_STIRRUP_SPACING"),
+            "fiber_core_boundary_offset_in": core_cover,
+            "fiber_core_width_in": b - 2 * core_cover,
+            "fiber_core_depth_in": h - 2 * core_cover,
+            "fiber_core_area_in2": (b - 2 * core_cover) * (h - 2 * core_cover),
+            "hoop_centerline_width_in": b - 2 * core_cover - hoop_diameter,
+            "hoop_centerline_depth_in": h - 2 * core_cover - hoop_diameter,
+        }
+    aggregate = sp.AGGREGATE_MAX_SIZE_IN
+    if isinstance(aggregate, bool) or not math.isfinite(aggregate) or aggregate <= 0:
+        raise ValueError("Reinforcement export requires a finite positive maximum aggregate size.")
+    return {
+        "schema_version": "smrf_reinforcement_geometry_v1",
+        "cover_basis": "clear to outside of hoop; longitudinal centroid = clear + hoop diameter + half bar diameter",
+        "fiber_core_basis": "boundary at outside of hoops; geometry only, confinement material calibration not implied",
+        "aggregate_max_size_in": aggregate,
+        "materials": {
+            "reinforcement_specification": getattr(sp, "REINFORCEMENT_SPECIFICATION", None),
+            "exposure": getattr(sp, "MATERIAL_EXPOSURE", None),
+            "fy_ksi": sp.FY_KSI,
+            "es_ksi": sp.ES_KSI,
+            "concrete_unit_weight_kcf": sp.CONCRETE_UNIT_WEIGHT_KCF,
+        },
+        **members,
+    }
+
+
 def collect_global_parameters():
     return {
         "num_bay_x": sp.NUM_BAY_X,
@@ -495,7 +551,9 @@ def collect_global_parameters():
         "beam_stirrup_legs": sp.BEAM_STIRRUP_LEGS,
         "beam_stirrup_spacing_in": sp.BEAM_STIRRUP_SPACING,
         "beam_stirrup_area_in2": sp.BEAM_STIRRUP_LEGS * sp.rebar_area(sp.BEAM_STIRRUP_BAR_SIZE),
-        "floor_dead_load_ksf": sp.FLOOR_DEAD_LOAD_KSF,
+        "floor_dead_load_ksf": sp.floor_dead_load_ksf(),
+        "floor_loads": sp.floor_load_metadata() if sp.SLAB_THICKNESS_IN is not None else None,
+        "reinforcement_geometry": collect_reinforcement_geometry(),
         "floor_live_load_ksf": sp.FLOOR_LIVE_LOAD_KSF,
         "floor_load_ksi": sp.floor_load_ksi(),
         "total_floor_gravity_load_kip": sp.total_floor_gravity_load(),

@@ -87,12 +87,23 @@ def make_rc_rect_section(
     bar_area,
     side_bars=0,
     gj=1.0e8,
+    longitudinal_cover=None,
 ):
+    """Build a rectangular fiber section with independent core and bar offsets.
+
+    ``cover`` is the face-to-core boundary, at the outside of hoops for new
+    designs. ``longitudinal_cover`` locates longitudinal-bar centroids. Omitting
+    it preserves the original shared-offset fiber layout for legacy callers.
+    """
     if cover <= 0:
         raise ValueError("cover must be positive.")
 
     if 2.0 * cover >= min(b, h):
         raise ValueError("cover is too large for the section dimensions.")
+
+    longitudinal_cover = cover if longitudinal_cover is None else longitudinal_cover
+    if not (cover <= longitudinal_cover < min(b, h) / 2.0):
+        raise ValueError("Longitudinal centroid offset must be inside the core and section.")
 
     if top_bars <= 0 or bot_bars <= 0:
         raise ValueError("top_bars and bot_bars must be positive.")
@@ -115,6 +126,10 @@ def make_rc_rect_section(
     yc2 = y2 - cover
     zc1 = z1 + cover
     zc2 = z2 - cover
+    ys1 = y1 + longitudinal_cover
+    ys2 = y2 - longitudinal_cover
+    zs1 = z1 + longitudinal_cover
+    zs2 = z2 - longitudinal_cover
 
     ops.section("Fiber", sec_tag, "-GJ", gj)
 
@@ -173,21 +188,21 @@ def make_rc_rect_section(
         zc2,
     )
 
-    ops.layer("straight", steel_mat, top_bars, bar_area, yc1, zc2, yc2, zc2)
-    ops.layer("straight", steel_mat, bot_bars, bar_area, yc1, zc1, yc2, zc1)
+    ops.layer("straight", steel_mat, top_bars, bar_area, ys1, zs2, ys2, zs2)
+    ops.layer("straight", steel_mat, bot_bars, bar_area, ys1, zs1, ys2, zs1)
 
     if side_bars > 0:
-        z_side_bot = zc1 + (zc2 - zc1) / (side_bars + 1)
-        z_side_top = zc2 - (zc2 - zc1) / (side_bars + 1)
+        z_side_bot = zs1 + (zs2 - zs1) / (side_bars + 1)
+        z_side_top = zs2 - (zs2 - zs1) / (side_bars + 1)
 
         ops.layer(
             "straight",
             steel_mat,
             side_bars,
             bar_area,
-            yc1,
+            ys1,
             z_side_bot,
-            yc1,
+            ys1,
             z_side_top,
         )
 
@@ -196,9 +211,9 @@ def make_rc_rect_section(
             steel_mat,
             side_bars,
             bar_area,
-            yc2,
+            ys2,
             z_side_bot,
-            yc2,
+            ys2,
             z_side_top,
         )
 
@@ -210,7 +225,8 @@ def define_column_section():
         sec_tag=sp.COL_SEC_TAG,
         b=sp.B_COL,
         h=sp.H_COL,
-        cover=sp.COVER,
+        cover=sp.core_cover_in("column"),
+        longitudinal_cover=sp.longitudinal_cover_in("column"),
         core_mat=sp.CORE_COL_TAG,
         cover_mat=sp.COVER_COL_TAG,
         steel_mat=sp.STEEL_TAG,
@@ -229,7 +245,8 @@ def define_beam_section():
         sec_tag=sp.BEAM_SEC_TAG,
         b=sp.B_BEAM,
         h=sp.H_BEAM,
-        cover=sp.COVER,
+        cover=sp.core_cover_in("beam"),
+        longitudinal_cover=sp.longitudinal_cover_in("beam"),
         core_mat=sp.CORE_BEAM_TAG,
         cover_mat=sp.COVER_BEAM_TAG,
         steel_mat=sp.STEEL_TAG,

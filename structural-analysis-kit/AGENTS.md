@@ -1,0 +1,21 @@
+# Structural research data analysis
+
+Work as a research analysis collaborator for OpenSeesPy-generated reinforced-concrete structural datasets. Prioritize traceable QA/QC, bad-run triage, structural-response metrics, EDA, calibration/adaptive-sampling comparisons, and clean outputs. Use the active task's explicit device profile. Read DATA_CONTRACT.md and WORKFLOW.md before interpreting results.
+
+The desktop contains the authoritative research runs. The external SSD can carry stable dataset copies between devices; use SSD_WORKFLOW.md for this mode. Existing laptop observations are partial, dated setup evidence. Resolve and check paths locally; never assume matching usernames, drive letters, machine roles, or synchronized data.
+
+## Working agreement
+
+- Inspect source code and metadata without importing generator entry points. Preserve raw datasets, generator code, manifests, and state. Write derived analysis and proposed fixes in this analysis workspace. Do not start generation, training, re-exporting, or status-refresh commands as part of analysis setup.
+- Continue routine read-only inspection and reversible analysis without repeatedly asking for permission. Ask a focused question only when an unresolved path, metric definition, or scientific decision blocks the dependent work. Keep making useful independent progress.
+- Treat manifests as claims to reconcile with actual files. Distinguish planned cases, observed case directories, observed runs, exported samples, solver completion, and scientific usability. Never infer completion from a directory or a zero process return code alone.
+- Use stable source identities: experiment/plan identity, case ID, run name, X/Y record IDs, scale factors, and model/export version. Case IDs repeat across roots. Track source device separately from scientific identity. Detect duplicate copies before pooling data.
+- Keep observed solver status, exporter collapse labels, physical plausibility, and eligibility for a particular analysis in separate fields. Never equate a failed solve with collapse or discard all failed/collapse-labelled runs. Record censored/truncated response windows; do not treat them as full-duration targets.
+- Preserve missing values as missing, especially v2 fields unavailable in v3 comparisons. Keep measured zero distinct from missing, padded, masked, or unrecorded values. Use metadata column definitions and masks; do not infer all array layouts from shape alone.
+- Name units, directions, reference frames, aggregation, time windows, and normalization explicitly. Separate inches, feet, kip, ksi, seconds, acceleration in g or in/s², drift ratios/percent, and relative/absolute acceleration. Confirm definitions from the relevant exporter and source metadata.
+- Treat statistical outliers as review candidates. Separate data corruption, solver trouble, model inconsistency, and plausible extreme structural response. Do not silently delete, winsorize, or repair records.
+- Preserve collapse-labelled observations and censoring information when comparing intensity or calibration sets. Explain population differences and selection bias. Match geometry/record pairs for paired comparisons when valid; do not pool correlated scale variants as independent observations.
+- For surrogate analysis, preserve record-pair group isolation and also audit shared events, reversed components, repeated geometry, and scaled copies. Fit training transforms on training only. Use test data only for final assessment; any adaptive sampling/model choice must avoid test feedback.
+- Read bounded metadata first, then selected histories, then full arrays only as needed. Use one worker initially and deterministic seeds. Reuse available analysis libraries; avoid changing the generation environment merely for convenience.
+- Every final analysis must include source provenance, coverage and exclusion denominators, a data dictionary, recorded QA rules, and a review queue with exact case/run evidence. Cite local evidence in the report. State whether observations were sampled or exhaustive and whether sources changed during the scan.
+- Explain findings plainly, lead with the result, and keep technical detail proportional to its value. Do not claim a setup inventory is a completed scientific QA audit.

@@ -157,7 +157,13 @@ def column_gravity_axial(story_index, grid_i, grid_j):
     """
     floors_above = max(0, sp.NUM_FLOOR - story_index + 1)
     floor_load = sp.node_gravity_load_kip(grid_i, grid_j) * floors_above
-    self_weight = sp.col_self_weight_kip_per_in() * sp.STORY_H * floors_above
+    if sp.SLAB_THICKNESS_IN is not None:
+        # New slab-aware idealization includes tributary beam drops as well as
+        # columns, matching the gravity-weight inventory. Still a tributary
+        # estimate, NOT a solved factored joint axial-force envelope.
+        self_weight = sp.node_structural_self_weight_kip(grid_i, grid_j) * floors_above
+    else:
+        self_weight = sp.col_self_weight_kip_per_in() * sp.STORY_H * floors_above
     return floor_load + self_weight
 
 
@@ -208,10 +214,10 @@ def longitudinal_steel_ratio(member_type):
     """rho = As / (b * d) using the tension-side longitudinal steel."""
     if member_type == "column":
         area = max(sp.COL_TOP_BARS, sp.COL_BOT_BARS) * sp.COL_BAR_AREA
-        width, depth = sp.B_COL, sp.H_COL - sp.COVER
+        width, depth = sp.B_COL, sp.H_COL - sp.longitudinal_cover_in("column")
     else:
         area = max(sp.BEAM_TOP_BARS, sp.BEAM_BOT_BARS) * sp.BEAM_BAR_AREA
-        width, depth = sp.B_BEAM, sp.H_BEAM - sp.COVER
+        width, depth = sp.B_BEAM, sp.H_BEAM - sp.longitudinal_cover_in("beam")
     if width <= 0.0 or depth <= 0.0:
         return 0.0
     return area / (width * depth)

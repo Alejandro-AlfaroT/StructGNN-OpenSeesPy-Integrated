@@ -102,16 +102,20 @@ def _beta1(fc_ksi):
     return max(0.65, min(0.85, 0.85 - 0.05 * (fc_ksi - 4.0)))
 
 
-def _layers_for_Ast(Ast):
+def _layers_for_Ast(Ast, candidate=None):
     """
     Distribute Ast proportionally to the current top/side/bot layout in sp.
     Returns [(area, d_from_comp_face), ...].
     """
-    cover  = sp.COVER
+    cover  = sp.longitudinal_cover_in("column")
     h      = sp.H_COL
     n_top  = sp.COL_TOP_BARS
     n_bot  = sp.COL_BOT_BARS
     n_side = sp.COL_SIDE_BARS * 2   # total side bars (2 faces)
+    if candidate is not None and sp.SLAB_THICKNESS_IN is not None:
+        bar_size, n_top, n_bot, n_side_pf, _ = candidate
+        cover = sp.longitudinal_cover_in("column", bar_size)
+        n_side = 2 * n_side_pf
     n_tot  = n_top + n_bot + n_side
 
     layers = [
@@ -119,11 +123,17 @@ def _layers_for_Ast(Ast):
         (Ast * n_bot / n_tot, h - cover),
     ]
     if n_side > 0:
-        layers.insert(1, (Ast * n_side / n_tot, h / 2.0))
+        if sp.SLAB_THICKNESS_IN is None:
+            layers.insert(1, (Ast * n_side / n_tot, h / 2.0))
+        else:
+            n_side_pf = n_side // 2
+            layers[1:1] = [(2 * Ast / n_tot,
+                            cover + (h - 2 * cover) * k / (n_side_pf + 1))
+                           for k in range(1, n_side_pf + 1)]
     return layers
 
 
-def _phi_Mn_at_Pu(Pu, Ast, n_pts=60):
+def _phi_Mn_at_Pu(Pu, Ast, n_pts=60, candidate=None):
     """
     Return φMn capacity at the given Pu for a column with total steel Ast.
     Uses the same sweep as build_column_PM_diagram in RC_Design_Check.
@@ -134,7 +144,7 @@ def _phi_Mn_at_Pu(Pu, Ast, n_pts=60):
     Es     = sp.ES_KSI
     b      = sp.B_COL
     h      = sp.H_COL
-    layers = _layers_for_Ast(Ast)
+    layers = _layers_for_Ast(Ast, candidate=candidate)
 
     b1  = _beta1(fc)
     Ag  = b * h
@@ -226,6 +236,22 @@ def _bisect_Ast(Pu, Mu_target, tol=1e-2, n_iter=40,
 # Candidate generation and selection
 # ─────────────────────────────────────────────────────────────────────────────
 
+COLUMN_SUPPORTED_BAR_HX_MAX_IN = 14.0
+
+
+def _max_tied_face_bars():
+    """Largest face bar count the hoop ladder can support (25.7.2.3 alternate bars).
+
+    A face with n bars needs at least floor((n - 2) / 2) crossties, i.e.
+    2 + floor((n - 2) / 2) legs; with L legs available that is n <= 2L - 2.
+    """
+    from Design.SMRF_Capacity_Design import STIRRUP_LADDER
+    return 2 * max(legs for _bar, legs in STIRRUP_LADDER) - 2
+
+
+COLUMN_MAX_TIED_FACE_BARS = _max_tied_face_bars()   # ACI 318-19 18.7.5.2(f)
+
+
 def _col_candidates(Ast_lo, Ast_hi, cfg=None):
     """
     All (bar_size, n_top, n_bot, n_side_per_face, Ast) column combos where:
@@ -245,7 +271,32 @@ def _col_candidates(Ast_lo, Ast_hi, cfg=None):
                 n_total = n_top + n_bot + n_side_pf * 2
                 Ast     = n_total * Ab
                 rho     = Ast / Ag
-                if not (cfg.rebar.rho_col_min <= rho <= cfg.rebar.rho_col_max):
+                if not (max(0.01, cfg.rebar.rho_col_min) <= rho <= min(0.06, cfg.rebar.rho_col_max)):
+                    continue
+                db = sp.rebar_diameter(bar_size)
+                # Single-layer geometry matching the current fiber layout.
+                clear_min = sp.longitudinal_clear_spacing_in("column", bar_size)
+                cover = (sp.longitudinal_cover_in("column", bar_size)
+                         if sp.SLAB_THICKNESS_IN is not None else cfg.rebar.cover_in)
+                if n_top < 2 or n_side_pf < 0:
+                    continue
+                if (sp.B_COL - 2 * cover) / (n_top - 1) - db < clear_min:
+                    continue
+                if (sp.H_COL - 2 * cover) / (n_side_pf + 1) - db < clear_min:
+                    continue
+                # ACI 318-19 18.7.5.2(f): laterally supported bars no more than
+                # 14 in apart around the perimeter (every face bar is tied by
+                # the capacity-design hoops). A wide column with only corner
+                # bars on its side faces fails this, so the SMRF path never
+                # offers it; the legacy bundled-load path keeps its old cages.
+                if sp.SLAB_THICKNESS_IN is not None and (
+                        (sp.B_COL - 2 * cover) / (n_top - 1) > COLUMN_SUPPORTED_BAR_HX_MAX_IN
+                        or (sp.H_COL - 2 * cover) / (n_side_pf + 1) > COLUMN_SUPPORTED_BAR_HX_MAX_IN):
+                    continue
+                # The capacity-design hoops support every corner and alternate
+                # bar with a leg or a crosstie (SMRF_Cage_Layout); a face with
+                # more bars than the hoop ladder can support is not offered.
+                if max(n_top, n_side_pf + 2) > COLUMN_MAX_TIED_FACE_BARS:
                     continue
                 if Ast_lo <= Ast <= Ast_hi:
                     candidates.append((bar_size, n_top, n_bot, n_side_pf, Ast))
@@ -260,18 +311,72 @@ def _beam_candidates(As_top_lo, As_top_hi, As_bot_lo, As_bot_hi, cfg=None):
     """
     cfg        = cfg or DesignConfig()
     candidates = []
+    # ACI 318-19 18.8.2.3: a beam bar passing through a joint needs a joint
+    # depth of 20 db (normalweight). Uniform bars pass through every interior
+    # joint, so in each direction with two or more bays the column dimension
+    # parallel to the bars bounds the bar size. SMRF path only, like the
+    # column hx filter; the legacy bundled-load path keeps its old cages.
+    through_depth = None
+    if sp.SLAB_THICKNESS_IN is not None:
+        depths = ([sp.H_COL] if sp.NUM_BAY_X >= 2 else []) + ([sp.B_COL] if sp.NUM_BAY_Y >= 2 else [])
+        through_depth = min(depths) if depths else None
     for bar_size in cfg.rebar.bar_sizes_beam:
         Ab = sp.rebar_area(bar_size)
+        db = sp.rebar_diameter(bar_size)
+        if through_depth is not None and 20.0 * db > through_depth:
+            continue
+        cover = (sp.longitudinal_cover_in("beam", bar_size)
+                 if sp.SLAB_THICKNESS_IN is not None else cfg.rebar.cover_in)
+        d = sp.H_BEAM - cover
+        clear_min = sp.longitudinal_clear_spacing_in("beam", bar_size)
+        code_min = (_beam_As_min(sp.FC_BEAM_KSI, sp.FY_KSI, sp.B_BEAM, d)
+                    if sp.SLAB_THICKNESS_IN is not None else 0.0)
         for n_top in cfg.rebar.beam_n_iter():
             As_top = n_top * Ab
-            if not (As_top_lo <= As_top <= As_top_hi):
+            if n_top < 2 or d <= 0 or As_top > 0.025 * sp.B_BEAM * d:
+                continue
+            if (sp.B_BEAM - 2 * cover) / (n_top - 1) - db < clear_min:
+                continue
+            if not (max(As_top_lo, code_min) <= As_top <= As_top_hi):
                 continue
             for n_bot in cfg.rebar.beam_n_iter():
                 As_bot = n_bot * Ab
-                if not (As_bot_lo <= As_bot <= As_bot_hi):
+                if n_bot < 2 or As_bot > 0.025 * sp.B_BEAM * d:
+                    continue
+                if (sp.B_BEAM - 2 * cover) / (n_bot - 1) - db < clear_min:
+                    continue
+                def nominal(area):
+                    a = area * sp.FY_KSI / (0.85 * sp.FC_BEAM_KSI * sp.B_BEAM)
+                    return area * sp.FY_KSI * (d - a / 2)
+                mn_pos, mn_neg = nominal(As_bot), nominal(As_top)
+                # Uniform bars along the member: enforce end reversal balance
+                # and the minimum strength along the span (ACI 18.6.3.2).
+                if min(mn_pos, mn_neg) <= 0 or mn_pos < 0.5 * mn_neg:
+                    continue
+                if min(mn_pos, mn_neg) < 0.25 * max(mn_pos, mn_neg):
+                    continue
+                if not (max(As_bot_lo, code_min) <= As_bot <= As_bot_hi):
                     continue
                 candidates.append((bar_size, n_top, n_bot))
     return candidates
+
+
+def _least_steel_within_tolerance(candidates, deviation, steel_area, tol):
+    """
+    Pick the candidate with the smallest deviation from the DCR target, but
+    treat deviations within ``tol`` of the best as equal and break that tie
+    on the least steel.
+
+    The objective is flat in the non-governing direction (adding top bars
+    does nothing when the bottom bars govern), so several candidates share
+    the same governing DCR up to float noise from the +/-E load patterns.
+    A plain ``min`` resolved such ties on differences of ~1e-5 and could
+    land on the candidate with an unnecessary extra bar.
+    """
+    scored = [(deviation(c), c) for c in candidates]
+    best = min(score for score, _ in scored)
+    tied = [c for score, c in scored if score <= best + tol]
+    return min(tied, key=steel_area)
 
 
 def _pick_col(candidates, Pu: float = 0.0, Mu: float = 0.0, cfg=None):
@@ -295,12 +400,17 @@ def _pick_col(candidates, Pu: float = 0.0, Mu: float = 0.0, cfg=None):
 
     def _dcr_estimate(c):
         bar_size, n_top, n_bot, n_side_pf, Ast = c
-        cap = _phi_Mn_at_Pu(Pu, Ast)
+        cap = _phi_Mn_at_Pu(Pu, Ast, candidate=c)
         if cap is None or cap < 1e-6:
             return 999.0
         return Mu / cap
 
-    return min(candidates, key=lambda c: abs(_dcr_estimate(c) - target))
+    return _least_steel_within_tolerance(
+        candidates,
+        deviation=lambda c: abs(_dcr_estimate(c) - target),
+        steel_area=lambda c: c[4],
+        tol=cfg.iteration.convergence_tol,
+    )
 
 
 def _pick_beam(candidates, Mu_pos: float = 0.0, Mu_neg: float = 0.0, cfg=None):
@@ -316,7 +426,7 @@ def _pick_beam(candidates, Mu_pos: float = 0.0, Mu_neg: float = 0.0, cfg=None):
     fc     = sp.FC_BEAM_KSI
     fy     = sp.FY_KSI
     b      = sp.B_BEAM
-    d      = sp.H_BEAM - sp.COVER
+    d      = sp.H_BEAM - sp.longitudinal_cover_in("beam")
 
     if cfg.dcr.objective == "min_volume":
         return min(candidates, key=lambda c: (c[1] + c[2]) * sp.rebar_area(c[0]))
@@ -325,18 +435,25 @@ def _pick_beam(candidates, Mu_pos: float = 0.0, Mu_neg: float = 0.0, cfg=None):
 
     def _dcr_estimate(c):
         bar_size, n_top, n_bot = c
+        candidate_d = (sp.H_BEAM - sp.longitudinal_cover_in("beam", bar_size)
+                       if sp.SLAB_THICKNESS_IN is not None else d)
         Ab       = sp.rebar_area(bar_size)
         As_top   = n_top * Ab
         As_bot   = n_bot * Ab
         a_top    = As_top * fy / (0.85 * fc * b)
         a_bot    = As_bot * fy / (0.85 * fc * b)
-        phi_Mn_neg = PHI_FLEX * As_top * fy * (d - a_top / 2.0) if As_top > 0 else 1e-9
-        phi_Mn_pos = PHI_FLEX * As_bot * fy * (d - a_bot / 2.0) if As_bot > 0 else 1e-9
+        phi_Mn_neg = PHI_FLEX * As_top * fy * (candidate_d - a_top / 2.0) if As_top > 0 else 1e-9
+        phi_Mn_pos = PHI_FLEX * As_bot * fy * (candidate_d - a_bot / 2.0) if As_bot > 0 else 1e-9
         dcr_neg    = Mu_neg / phi_Mn_neg if phi_Mn_neg > 1e-6 else 0.0
         dcr_pos    = Mu_pos / phi_Mn_pos if phi_Mn_pos > 1e-6 else 0.0
         return max(dcr_neg, dcr_pos)
 
-    return min(candidates, key=lambda c: abs(_dcr_estimate(c) - target))
+    return _least_steel_within_tolerance(
+        candidates,
+        deviation=lambda c: abs(_dcr_estimate(c) - target),
+        steel_area=lambda c: (c[1] + c[2]) * sp.rebar_area(c[0]),
+        tol=cfg.iteration.convergence_tol,
+    )
 
 
 def _spacing_update(current_spacing, governing_dcr, cfg):
@@ -554,7 +671,7 @@ def redesign_steel(design_results: dict, cfg: Optional[DesignConfig] = None):
         fc = sp.FC_BEAM_KSI
         fy = sp.FY_KSI
         b  = sp.B_BEAM
-        d  = sp.H_BEAM - sp.COVER
+        d  = sp.H_BEAM - sp.longitudinal_cover_in("beam")
 
         def _mu_neg(r):
             if hasattr(r, "limit_states"):

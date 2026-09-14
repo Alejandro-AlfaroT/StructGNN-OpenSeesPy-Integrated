@@ -12,12 +12,11 @@ the same forces.
 
 Seismic weight
 --------------
-W is taken from the same floor load that Model/mass.py turns into nodal mass
-(sp.total_floor_gravity_load()), so the design base shear and the modal
-properties describe the same building. Note that load includes live load,
-which is heavier than the ASCE 7 12.7.2 effective seismic weight (dead plus
-partitions); it is kept for internal consistency with the analysis mass
-rather than silently designing to a different W than the model vibrates with.
+W is taken from the same accounted weight that Model/mass.py turns into nodal
+mass (sp.total_floor_seismic_weight()). Legacy mode retains floor D+100%L and
+omits member mass. Slab-aware mode includes computed slab+superimposed dead,
+the configured seismic live-load fraction, and consistently lumped member
+weight. Occupancy/partition/roof assumptions still need project-specific review.
 
 Unit system: kip, inch, second.
 """
@@ -36,7 +35,7 @@ ELF_PATTERN_TAG_Y = 22
 
 def seismic_weight_per_floor():
     """Effective seismic weight at each elevated floor, kips."""
-    return [sp.total_floor_gravity_load() for _ in range(sp.NUM_FLOOR)]
+    return [sp.total_floor_seismic_weight() for _ in range(sp.NUM_FLOOR)]
 
 
 def floor_heights_ft():
@@ -122,13 +121,30 @@ def elf_story_forces(model_period_sec=None):
     }
 
 
-def apply_elf_loads(direction, model_period_sec=None, load_factor=1.0, elf=None):
+def accidental_torsion_moment(direction, story_force_kip, ratio=0.05, amplification=1.0):
+    """ASCE 7-22 12.8.4.2/12.8.4.3: Mta = Ax * (ratio * B_perp) * Fx at one level.
+
+    B_perp is the plan dimension perpendicular to the applied force.
+    """
+    perpendicular = sp.NUM_BAY_Y * sp.BAY_Y if direction == "x" else sp.NUM_BAY_X * sp.BAY_X
+    return amplification * ratio * perpendicular * story_force_kip
+
+
+def apply_elf_loads(direction, model_period_sec=None, load_factor=1.0, elf=None,
+                    accidental_torsion_ratio=0.0, torsion_amplification=1.0, torsion_sign=1.0):
     """Apply the ELF story forces at the rigid-diaphragm master nodes.
 
     direction : "x" or "y"
     load_factor : seismic load-effect factor for the design combination
                   (1.0 for the ASCE 7 2.3.6 combinations, which already
                   treat E at strength level).
+    accidental_torsion_ratio : 0.05 applies the 12.8.4.2 accidental torsion
+                  as a moment about the diaphragm master's vertical axis at
+                  every level, amplified by Ax (12.8.4.3) and signed by
+                  torsion_sign. The building is doubly symmetric with one
+                  section family per member type, so the member envelope
+                  over all frames is the same for either torsion sign; one
+                  sign per combination is applied and recorded.
     """
     direction = direction.lower()
     if direction not in {"x", "y"}:
@@ -140,12 +156,19 @@ def apply_elf_loads(direction, model_period_sec=None, load_factor=1.0, elf=None)
 
     ops.timeSeries("Linear", series_tag)
     ops.pattern("Plain", pattern_tag, series_tag)
+    torsion = []
     for index, force in enumerate(elf["story_forces_kip"], start=1):
         master = floor_master_node(index)
         scaled = load_factor * force
+        moment = 0.0
+        if accidental_torsion_ratio:
+            moment = torsion_sign * accidental_torsion_moment(direction, scaled, accidental_torsion_ratio,
+                                                              torsion_amplification)
+        torsion.append(moment)
         if direction == "x":
-            ops.load(master, scaled, 0.0, 0.0, 0.0, 0.0, 0.0)
+            ops.load(master, scaled, 0.0, 0.0, 0.0, 0.0, moment)
         else:
-            ops.load(master, 0.0, scaled, 0.0, 0.0, 0.0, 0.0)
+            ops.load(master, 0.0, scaled, 0.0, 0.0, 0.0, moment)
 
-    return elf
+    return {**elf, "accidental_torsion_kip_in": torsion, "accidental_torsion_ratio": accidental_torsion_ratio,
+            "torsion_amplification_ax": torsion_amplification, "torsion_sign": torsion_sign}

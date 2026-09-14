@@ -2,8 +2,8 @@
 Design/Design_Driver.py
 =======================
 
-Runs a complete ACI 318-19 design for the current geometry and writes the
-result as a reusable artifact.
+Searches for a frame design candidate and writes traceable SMRF qualification
+evidence. This is NOT a complete building-code design or certification.
 
 Why this exists
 ---------------
@@ -29,10 +29,14 @@ Unit system: kip, inch, ksi.
 from __future__ import annotations
 
 import contextlib
+from dataclasses import asdict
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
+import uuid
 
 import openseespy.opensees as ops
 
@@ -56,19 +60,24 @@ from Design.Section_Design import (
 )
 from Loads.Gravity_Loads import apply_gravity_loads
 from Loads.Seismic_ELF import apply_elf_loads
-from Model.Build_Model import build_model
+from Design.SMRF_Elastic import build_design_model as build_model
 from RC_Design_Check import get_element_tags
 from Redesign import apply_updates, redesign_steel
 
 
 DESIGN_ARTIFACT_NAME = "design.json"
-DESIGN_SCHEMA_VERSION = "rc_design_v1"
+DESIGN_SCHEMA_VERSION = "rc_smrf_candidate_v7_loop_closure"
 
 _STATE_KEYS = (
     "B_COL", "H_COL", "FC_COL_KSI", "B_BEAM", "H_BEAM", "FC_BEAM_KSI",
     "COL_BAR_SIZE", "COL_TOP_BARS", "COL_BOT_BARS", "COL_SIDE_BARS", "COL_BAR_AREA",
     "BEAM_BAR_SIZE", "BEAM_TOP_BARS", "BEAM_BOT_BARS", "BEAM_SIDE_BARS", "BEAM_BAR_AREA",
     "COL_STIRRUP_SPACING", "BEAM_STIRRUP_SPACING",
+    "COL_STIRRUP_BAR_SIZE", "COL_STIRRUP_LEGS", "BEAM_STIRRUP_BAR_SIZE", "BEAM_STIRRUP_LEGS",
+    "SLAB_THICKNESS_IN", "FLOOR_SUPERIMPOSED_DEAD_LOAD_KSF", "SEISMIC_LIVE_LOAD_FRACTION",
+    "BEAM_CLEAR_COVER_IN", "COL_CLEAR_COVER_IN", "AGGREGATE_MAX_SIZE_IN",
+    "REINFORCEMENT_SPECIFICATION", "MATERIAL_EXPOSURE", "FLOOR_TRANSFER",
+    "SLAB_REINFORCEMENT", "SLAB_ACTIONS",
 )
 
 
@@ -111,6 +120,176 @@ def _apply_rung(rung, member_type):
         sp.B_BEAM, sp.H_BEAM, sp.FC_BEAM_KSI = b, h, fc
 
 
+def _slab_geometry():
+    return {"num_bay_x": sp.NUM_BAY_X, "num_bay_y": sp.NUM_BAY_Y,
+            "num_floor": sp.NUM_FLOOR, "bay_x_in": sp.BAY_X,
+            "bay_y_in": sp.BAY_Y, "story_h_in": sp.STORY_H}
+
+
+def _select_slab(cfg):
+    """Recompute one thickness for the current beam rung before any analysis."""
+    from Design.SMRF_Slab import choose_slab
+    slab = choose_slab(
+        _slab_geometry(),
+        {"b_beam_in": sp.B_BEAM, "h_beam_in": sp.H_BEAM, "fc_beam_ksi": sp.FC_BEAM_KSI},
+        {**asdict(cfg.slab), "fy_ksi": sp.FY_KSI,
+         "concrete_unit_weight_kcf": sp.CONCRETE_UNIT_WEIGHT_KCF})
+    _apply_slab(slab)
+    return slab
+
+
+def _apply_slab(slab):
+    sp.SLAB_THICKNESS_IN = slab["thickness_in"]
+    sp.FLOOR_SUPERIMPOSED_DEAD_LOAD_KSF = slab["superimposed_dead_load_ksf"]
+    sp.SEISMIC_LIVE_LOAD_FRACTION = slab["live_load_mass_fraction"]
+
+
+def _fit_slab_and_beam(cfg, beams, preferred):
+    """Bounded coupled retry; never promote a failed slab screen to a pass.
+
+    Only sizing exhaustion is retried. Invalid policy/unsupported system or
+    aspect ratio remains an explicit error. Concrete strength alone cannot
+    improve alpha when slab and beam have the same concrete.
+    """
+    from Design.SMRF_Slab import SlabSizingError
+    attempts, attempted_dimensions = [], set()
+    initial = beams[preferred]
+    for index in range(preferred, len(beams)):
+        rung = beams[index]
+        dimensions = rung[:2]
+        if dimensions in attempted_dimensions:
+            continue
+        if index != preferred and (rung[1] <= initial[1] or rung[0] < initial[0]):
+            continue
+        if _compatible_beam_index(beams, index) != index:
+            continue
+        attempted_dimensions.add(dimensions)
+        _apply_rung(rung, "beam")
+        try:
+            slab = _select_slab(cfg)
+        except SlabSizingError as exc:
+            attempts.append({"beam_section": list(rung), "reason": str(exc)})
+            continue
+        _sync_cfg_to_sp(cfg)
+        return index, slab, attempts
+    raise SlabSizingError(
+        f"No compatible beam/slab combination after {len(attempts)} bounded sizing attempts. "
+        "Revise geometry or the explicit section/thickness bounds; no fallback was assigned.")
+
+
+def _update_floor_transfer(cfg, slab):
+    """Recompute the slab-to-frame transfer for the current slab and sections."""
+    if not cfg.floor_analysis.transfer_to_frame:
+        sp.FLOOR_TRANSFER = None
+        return None
+    from Design.SMRF_Floor_Transfer import build_floor_transfer
+    # The floor model needs an empty domain. Every frame analysis rebuilds
+    # from scratch, so nothing in the current domain is still needed.
+    ops.wipe()
+    from Design.SMRF_Demands import live_load_patterns
+    patterns = live_load_patterns(sp.NUM_BAY_X, sp.NUM_BAY_Y) if cfg.demands.live_load_patterning else ()
+    sp.FLOOR_TRANSFER = build_floor_transfer(
+        slab, _slab_geometry(),
+        {"b_beam_in": sp.B_BEAM, "h_beam_in": sp.H_BEAM, "fc_beam_ksi": sp.FC_BEAM_KSI,
+         "b_col_in": sp.B_COL, "h_col_in": sp.H_COL},
+        sp.FLOOR_LIVE_LOAD_KSF, mesh_per_bay=cfg.floor_analysis.transfer_mesh_per_bay,
+        live_patterns=patterns)
+    return sp.FLOOR_TRANSFER
+
+
+def _slab_strength_inputs_from_state(slab, cfg):
+    """The strip routine's inputs for the current state, via the record builder."""
+    from Design.SMRF_Design_Evidence import slab_strength_inputs
+    return slab_strength_inputs({
+        "slab": slab,
+        "materials": {"fy_ksi": sp.FY_KSI, "aggregate_size_in": sp.AGGREGATE_MAX_SIZE_IN,
+                      "exposure": cfg.materials.exposure,
+                      "reinforcement_specification": cfg.materials.reinforcement_specification},
+        "geometry": {"num_floor": sp.NUM_FLOOR}})
+
+
+def _slab_completion_context(slab, cfg):
+    return {"clear_span_x_in": sp.BAY_X - sp.H_COL, "clear_span_y_in": sp.BAY_Y - sp.B_COL,
+            "beam_width_in": sp.B_BEAM, "alpha_f_min": min(edge["alpha_f"] for panel in slab["panels"]
+                                                           for edge in panel["edges"]),
+            "thickness_screen_passed": slab["thickness_screen_passed"] is True,
+            "column_core_width_in": min(sp.B_COL, sp.H_COL) - 2.0 * sp.longitudinal_cover_in("column"),
+            "two_way_shear_path_assessed": (cfg.slab_actions.all_asserted()
+                                             and cfg.slab_actions.two_way_shear_path_assessed is True)}
+
+
+def _update_slab_reinforcement(cfg, slab):
+    """Slab strip actions and reinforcement for the current slab and sections.
+
+    Runs inside the section loop because the slab mats feed the beam
+    strengths the SCWB screen compares columns against. Without the
+    engineering assertions in cfg.slab_actions the actions are computed but
+    unverified, no reinforcement is selected, and the record says so; the
+    frame is then sized on rectangular beam strengths as a proxy and the
+    qualification keeps the slab contribution and SCWB not_evaluated. A slab
+    whose ladder is exhausted under asserted evidence is a design failure.
+    """
+    if not cfg.floor_analysis.transfer_to_frame:
+        sp.SLAB_REINFORCEMENT = None
+        sp.SLAB_ACTIONS = None
+        return None
+    from Design.SMRF_Slab_Actions import build_slab_action_evidence
+    from Design.SMRF_Slab_Reinforcement import design_slab_reinforcement
+    inputs = _slab_strength_inputs_from_state(slab, cfg)
+    ops.wipe()
+    evidence = build_slab_action_evidence(
+        slab, _slab_geometry(),
+        {"b_beam_in": sp.B_BEAM, "h_beam_in": sp.H_BEAM, "fc_beam_ksi": sp.FC_BEAM_KSI,
+         "b_col_in": sp.B_COL, "h_col_in": sp.H_COL},
+        sp.FLOOR_LIVE_LOAD_KSF, inputs, mesh_per_bay=cfg.floor_analysis.transfer_mesh_per_bay,
+        assertions=asdict(cfg.slab_actions))
+    sp.SLAB_ACTIONS = evidence
+    record = design_slab_reinforcement(inputs, evidence, None, _slab_completion_context(slab, cfg))
+    if record["layout"] is None and cfg.slab_actions.all_asserted():
+        raise RuntimeError("Slab reinforcement ladder exhausted: " + "; ".join(
+            c["details"].get("reason", c["id"]) for c in record["checks"] if c["status"] != "pass"))
+    sp.SLAB_REINFORCEMENT = record
+    return record
+
+
+def _beam_strength_families():
+    """Composite (beam + developed slab) or rectangular Mn per beam family."""
+    from Design.SMRF_Beam_Slab_Strength import composite_beam_strengths
+    layout = (sp.SLAB_REINFORCEMENT or {}).get("layout") if sp.SLAB_THICKNESS_IN is not None else None
+    beam = {"b_in": sp.B_BEAM, "h_in": sp.H_BEAM, "fc_ksi": sp.FC_BEAM_KSI, "fy_ksi": sp.FY_KSI,
+            "bar_size": sp.BEAM_BAR_SIZE, "top_bars": sp.BEAM_TOP_BARS, "bot_bars": sp.BEAM_BOT_BARS,
+            "centroid_offset_in": sp.longitudinal_cover_in("beam")}
+    slab = {"thickness_in": sp.SLAB_THICKNESS_IN if layout is not None else 0.0}
+    geometry = {"bay_x_in": sp.BAY_X, "bay_y_in": sp.BAY_Y, "h_col_in": sp.H_COL, "b_col_in": sp.B_COL}
+    return {f"{axis}_{position}": composite_beam_strengths(beam, slab, layout, geometry, axis, position)
+            for axis in ("x", "y") for position in ("edge", "interior")}
+
+
+def _governing_beam_nominal_moment():
+    """Largest beam Mn over families and signs; slab-inclusive when a layout exists."""
+    from Design.SMRF_Beam_Slab_Strength import governing_beam_nominal_moment
+    return governing_beam_nominal_moment(_beam_strength_families())
+
+
+def _validate_cached_slab(record):
+    """Reject inconsistent slab evidence before mutating the live model."""
+    from Design.SMRF_Slab import evaluate_slab
+    slab = record.get("slab")
+    checks = evaluate_slab(slab)
+    required = {"slab_thickness_evidence", "slab_thickness_screen"}
+    if {c["id"] for c in checks if c["status"] == "pass"} != required:
+        raise ValueError("Cached design lacks reproducible slab thickness evidence.")
+    inputs = slab["inputs"]
+    for group in ("geometry", "sections"):
+        for key, value in inputs[group].items():
+            if record.get(group, {}).get(key) != value:
+                raise ValueError(f"Cached slab {group}.{key} disagrees with its frame design.")
+    if (slab["concrete_unit_weight_kcf"] != sp.CONCRETE_UNIT_WEIGHT_KCF
+            or inputs["policy"]["fy_ksi"] != sp.FY_KSI):
+        raise ValueError("Cached slab material assumptions disagree with the current model.")
+    return slab
+
+
 def _sync_cfg_to_sp(cfg):
     """Mirror the current Structure_Parameters section state into cfg.
 
@@ -136,6 +315,15 @@ def _sync_cfg_to_sp(cfg):
     cfg.sections.h_beam_in = sp.H_BEAM
     cfg.materials.fc_col_ksi = sp.FC_COL_KSI
     cfg.materials.fc_beam_ksi = sp.FC_BEAM_KSI
+    cfg.rebar.stirrup_spacing_col_in = sp.COL_STIRRUP_SPACING
+    cfg.rebar.stirrup_spacing_beam_in = sp.BEAM_STIRRUP_SPACING
+    cfg.rebar.col_stirrup_bar_size = sp.COL_STIRRUP_BAR_SIZE
+    cfg.rebar.beam_stirrup_bar_size = sp.BEAM_STIRRUP_BAR_SIZE
+    cfg.rebar.col_stirrup_legs = sp.COL_STIRRUP_LEGS
+    cfg.rebar.beam_stirrup_legs = sp.BEAM_STIRRUP_LEGS
+    cfg.rebar.beam_clear_cover_in = sp.BEAM_CLEAR_COVER_IN
+    cfg.rebar.col_clear_cover_in = sp.COL_CLEAR_COVER_IN
+    cfg.rebar.aggregate_max_size_in = sp.AGGREGATE_MAX_SIZE_IN
 
 
 def _model_period():
@@ -150,25 +338,112 @@ def _model_period():
     return None
 
 
-def _analyze_combination(direction, model_period_sec):
-    """Build and analyze 1.2D + 0.5L + E in one direction."""
+def _analyze_combination(combination, model_period_sec, torsion=None):
+    """Analyze explicit signed gravity/seismic factors; preserve simultaneous actions.
+
+    ``torsion`` = {"ratio", "amplification"} applies ASCE 7-22 12.8.4.2
+    accidental torsion with each seismic force, signed with that force.
+    """
     with _quiet():
         ops.wipe()
         build_model()
-    apply_gravity_loads(
-        floor_factor=sp.seismic_combination_floor_factor(),
-        self_weight_factor=sp.SEISMIC_COMBINATION_DEAD_FACTOR,
-    )
-    elf = apply_elf_loads(direction, model_period_sec=model_period_sec)
+    dead, live = combination["dead"], combination["live"]
+    floor_dead = sp.floor_dead_load_ksf()
+    total = floor_dead + sp.FLOOR_LIVE_LOAD_KSF
+    if total <= 0:
+        raise ValueError("Floor gravity load must be positive for load factoring.")
+    floor_factor = (dead * floor_dead + live * sp.FLOOR_LIVE_LOAD_KSF) / total
+    pattern = combination.get("live_pattern", "all")
+    if sp.effective_gravity_load_model() != "slab_transfer":
+        pattern = "all"
+    apply_gravity_loads(floor_factor=floor_factor, self_weight_factor=dead,
+                        dead_factor=dead, live_factor=live, live_pattern=pattern)
+    elf = None
+    for direction, factor in (("x", combination["ex"]), ("y", combination["ey"])):
+        if factor:
+            elf = apply_elf_loads(direction, model_period_sec=model_period_sec, load_factor=factor,
+                                  accidental_torsion_ratio=(torsion or {}).get("ratio", 0.0),
+                                  torsion_amplification=(torsion or {}).get("amplification", 1.0),
+                                  torsion_sign=1.0 if factor > 0 else -1.0)
     with _quiet():
         run_gravity_analysis()
     return elf
 
 
-def _governing_dcrs(cfg):
-    """Worst PM/flexure/shear DCR for columns and for beams in the current state."""
+def _torsion_assessment(model_period_sec, cfg):
+    """ASCE 7-22 Table 12.3-1 Type 1a/1b and 12.8.4.3 Ax, from drift runs with torsion.
+
+    Story drift at the two extreme frames of the direction loaded, with the
+    5% accidental eccentricity applied; delta_avg is their average.
+    """
+    from Design.SMRF_Elastic import floor_xy_displacements
+    from Design.SMRF_Demands import story_node_deltas
+    ratio = cfg.demands.accidental_torsion_ratio
+    worst, rows = 0.0, []
+    for axis in ("x", "y"):
+        combination = {"id": f"torsion_{axis}", "dead": 1.0, "live": 1.0,
+                       "ex": float(axis == "x"), "ey": float(axis == "y"), "live_pattern": "all"}
+        _analyze_combination(combination, model_period_sec, {"ratio": ratio, "amplification": 1.0})
+        for k in range(1, sp.NUM_FLOOR + 1):
+            deltas = story_node_deltas(floor_xy_displacements(k), floor_xy_displacements(k - 1))
+            if axis == "x":
+                end_a = max(abs(deltas[f"{i},0"]["x"]) for i in range(sp.NUM_BAY_X + 1))
+                end_b = max(abs(deltas[f"{i},{sp.NUM_BAY_Y}"]["x"]) for i in range(sp.NUM_BAY_X + 1))
+            else:
+                end_a = max(abs(deltas[f"0,{j}"]["y"]) for j in range(sp.NUM_BAY_Y + 1))
+                end_b = max(abs(deltas[f"{sp.NUM_BAY_X},{j}"]["y"]) for j in range(sp.NUM_BAY_Y + 1))
+            average = 0.5 * (end_a + end_b)
+            story_ratio = max(end_a, end_b) / average if average > 0 else 1.0
+            rows.append({"story": k, "direction": axis, "delta_end_a_in": end_a, "delta_end_b_in": end_b,
+                         "delta_max_over_avg": story_ratio})
+            worst = max(worst, story_ratio)
+    irregularity = "none" if worst <= 1.2 else ("1a" if worst <= 1.4 else "1b")
+    amplification = min(3.0, max(1.0, (worst / 1.2) ** 2))
+    return {"ratio": ratio, "amplification": amplification, "max_drift_ratio": worst,
+            "torsional_irregularity": irregularity, "stories": rows,
+            "basis": "ASCE 7-22 Table 12.3-1 (1a > 1.2, 1b > 1.4) with accidental torsion applied; Ax = (dmax/1.2 davg)^2 <= 3"}
+
+
+def _regularity_by_construction():
+    """Horizontal/vertical regularity of the archetype: rectangular grid, uniform stories and sections."""
+    return {"regular": True,
+            "horizontal": "rectangular plan, frames on every grid line, rigid diaphragm without openings: "
+                          "no Type 2-5 horizontal irregularities by construction; Type 1a/1b from the torsion assessment",
+            "vertical": "uniform story height, mass, sections and reinforcement over height: no Type 1-5 vertical "
+                        "irregularities by construction"}
+
+
+def _demand_basis(cfg, torsion, elf, drift_screen):
+    from Design.SMRF_Demands import live_load_patterns
+    ts = sp.ASCE_SD1 / sp.ASCE_SDS if sp.ASCE_SDS > 0 else 0.0
+    return {
+        "policy": asdict(cfg.demands),
+        "verification": asdict(cfg.verification),
+        "torsion": torsion,
+        "regularity": _regularity_by_construction(),
+        "design_period_sec": (elf or {}).get("design_period_sec"),
+        "ts_sec": ts,
+        "period_basis": {"model_period_sec": (elf or {}).get("model_period_sec"),
+                         "asce_ta_sec": (elf or {}).get("asce_ta_sec"),
+                         "capped_at_cu_ta": (elf or {}).get("period_capped_at_cu_ta")},
+        "live_load_patterns": (live_load_patterns(sp.NUM_BAY_X, sp.NUM_BAY_Y)
+                               if cfg.demands.live_load_patterning and sp.FLOOR_TRANSFER is not None else []),
+        "patterns_in_strength_envelope": bool(cfg.demands.live_load_patterning and sp.FLOOR_TRANSFER is not None),
+        "drift": {**drift_screen.get("assumptions", {}),
+                  "beam_stiffness_modifier": sp.section_stiffness_modifier("beam"),
+                  "column_stiffness_modifier": sp.section_stiffness_modifier("column"),
+                  "second_order_included": True},
+    }
+
+
+def _governing_dcrs(cfg, member_actions=None):
+    """Worst PM/flexure/shear DCR for columns and for beams in the current state.
+
+    ``member_actions`` (from _capture_element_actions) lets the checks run on
+    solved actions instead of the live domain; see _steel_pass.
+    """
     col_tags, beam_x_tags, beam_y_tags = get_element_tags()
-    results = run_checks_phase1(col_tags, beam_x_tags + beam_y_tags, cfg)
+    results = run_checks_phase1(col_tags, beam_x_tags + beam_y_tags, cfg, member_actions=member_actions)
 
     column_dcr = 0.0
     beam_dcr = 0.0
@@ -185,59 +460,496 @@ def _governing_dcrs(cfg):
     return column_dcr, beam_dcr, results
 
 
-def _steel_pass(cfg, model_period_sec, max_steel_iter):
+def _capture_element_actions(dead_factor=1.0):
+    """Keep signed concurrent centerline actions, not independent absolute maxima."""
+    from Design.SMRF_Elastic import physical_members
+    from Design.SMRF_Beam_Actions import current_beam_bending
+    physical = list(physical_members())
+    spans = current_beam_bending([tag for tag, ni, nj, kind in physical if kind != "column"])
+    members = {}
+    for tag, ni, _nj, kind in physical:
+        forces = list(ops.eleResponse(tag, "localForce"))
+        if len(forces) != 12 or not all(math.isfinite(value) for value in forces):
+            raise RuntimeError(f"Invalid local force vector for design member {tag}.")
+        offset_i = offset_j = axial_line_load = 0.0
+        if kind == "column":
+            # Column local x is upward. P(x)=P_i-w*x for the uniform axial
+            # dead load actually applied to this centerline model. At a base
+            # support there is no lower beam joint to trim.
+            offset_i = sp.H_BEAM / 2 if ops.nodeCoord(ni, 3) > 0 else 0.0
+            offset_j = sp.H_BEAM / 2
+            axial_line_load = dead_factor * sp.col_self_weight_kip_per_in()
+        members[str(tag)] = {
+            "member_type": kind, "local_force_kip_kipin": forces,
+            "centerline_axial_i_kip": forces[0], "centerline_axial_j_kip": -forces[6],
+            "axial_i_kip": forces[0] - axial_line_load * offset_i,
+            "axial_j_kip": -forces[6] + axial_line_load * offset_j,
+            "joint_face_offsets_in": [offset_i, offset_j],
+            "axial_line_load_kip_per_in": axial_line_load,
+        }
+        if kind != "column":
+            members[str(tag)]["span_bending"] = spans[tag]
+    return members
+
+
+def _column_envelopes(combination_actions):
+    """Per-story column (min, max) joint-face axial and max |V| over every final case."""
+    per_story = (sp.NUM_BAY_X + 1) * (sp.NUM_BAY_Y + 1)
+    axial, shear = {}, {}
+    for action in combination_actions:
+        for tag, member in action["members"].items():
+            if member["member_type"] != "column":
+                continue
+            story = (int(tag) - 1) // per_story + 1
+            forces = member["local_force_kip_kipin"]
+            p_low, p_high = axial.get(story, (math.inf, -math.inf))
+            values = (member["axial_i_kip"], member["axial_j_kip"])
+            axial[story] = (min(p_low, *values), max(p_high, *values))
+            v = max(abs(forces[1]), abs(forces[2]), abs(forces[7]), abs(forces[8]))
+            shear[story] = max(shear.get(story, 0.0), v)
+    return axial, shear
+
+
+def _capacity_state(cfg, combination_actions):
+    axial, shear = _column_envelopes(combination_actions)
+    return {
+        "geometry": _slab_geometry(),
+        "sections": {"b_col_in": sp.B_COL, "h_col_in": sp.H_COL, "fc_col_ksi": sp.FC_COL_KSI,
+                     "b_beam_in": sp.B_BEAM, "h_beam_in": sp.H_BEAM, "fc_beam_ksi": sp.FC_BEAM_KSI},
+        "materials": {"fy_ksi": sp.FY_KSI, "es_ksi": sp.ES_KSI,
+                      "normalweight": sp.CONCRETE_UNIT_WEIGHT_KCF == 0.150},
+        "beam": {"bar_size": sp.BEAM_BAR_SIZE, "top_bars": sp.BEAM_TOP_BARS, "bot_bars": sp.BEAM_BOT_BARS,
+                 "centroid_offset_in": sp.longitudinal_cover_in("beam"), "clear_cover_in": sp.BEAM_CLEAR_COVER_IN,
+                 # The smeared line weight the frame element carries over its full
+                 # centerline length (drop weight spread over L, see
+                 # Structure_Parameters.beam_self_weight_kip_per_in) and the
+                 # physical drop weight per inch that acts between the joint faces.
+                 "self_weight_kip_per_in": {"x": sp.beam_self_weight_kip_per_in("x"),
+                                            "y": sp.beam_self_weight_kip_per_in("y")},
+                 "drop_weight_kip_per_in": sp.beam_drop_weight_kip_per_in()},
+        "column": {"bar_size": sp.COL_BAR_SIZE, "top_bars": sp.COL_TOP_BARS, "bot_bars": sp.COL_BOT_BARS,
+                   "side_bars": sp.COL_SIDE_BARS, "centroid_offset_in": sp.longitudinal_cover_in("column"),
+                   "clear_cover_in": sp.COL_CLEAR_COVER_IN, "stirrup_bar_size": sp.COL_STIRRUP_BAR_SIZE,
+                   "layers": _col_steel_layers()},
+        "slab": {"thickness_in": sp.SLAB_THICKNESS_IN,
+                 "layout": (sp.SLAB_REINFORCEMENT or {}).get("layout") if sp.SLAB_THICKNESS_IN is not None else None},
+        "transfer": sp.FLOOR_TRANSFER, "sds": sp.ASCE_SDS,
+        "column_axial_envelope": axial, "column_shear_demand": shear,
+    }
+
+
+def _capacity_design(cfg, combination_actions):
+    """Probable-strength shear, joint shear and anchorage; installs the hoops it selects.
+
+    The hoops feed the hinge backbones (rho_sh in Model/IMK_Calibration), so
+    they are part of the design state, not a report appended afterwards.
+    """
+    from Design.SMRF_Capacity_Design import build_capacity_design
+    capacity = build_capacity_design(_capacity_state(cfg, combination_actions))
+    for member, prefix in (("beam", "BEAM"), ("column", "COL")):
+        hoops = capacity["transverse"][member]
+        if hoops is not None:
+            setattr(sp, f"{prefix}_STIRRUP_BAR_SIZE", hoops["bar_size"])
+            setattr(sp, f"{prefix}_STIRRUP_LEGS", hoops["legs"])
+            setattr(sp, f"{prefix}_STIRRUP_SPACING", hoops["spacing_in"])
+    _sync_cfg_to_sp(cfg)
+    return capacity
+
+
+def _transverse_geometry(cfg):
+    """Scalar zone/spacing selection, not a complete confinement cage design."""
+    from Design.SMRF_Detailing import select_transverse_geometry
+    inputs = {"material": {"fy_ksi": sp.FY_KSI,
+                           "normalweight": sp.CONCRETE_UNIT_WEIGHT_KCF == .150}}
+    for member, prefix in (("beam", "BEAM"), ("column", "COL")):
+        inputs[member] = {
+            "b_in": getattr(sp, f"B_{prefix}"), "h_in": getattr(sp, f"H_{prefix}"),
+            "clear_cover_in": getattr(sp, f"{prefix}_CLEAR_COVER_IN"),
+            "bar_db_in": sp.rebar_diameter(getattr(sp, f"{prefix}_BAR_SIZE")),
+            "stirrup_db_in": sp.rebar_diameter(getattr(sp, f"{prefix}_STIRRUP_BAR_SIZE")),
+            "hoop_spacing_in": getattr(sp, f"{prefix}_STIRRUP_SPACING"),
+        }
+    inputs["column"]["clear_height_in"] = sp.STORY_H - sp.H_BEAM
+    result = select_transverse_geometry(inputs,
+                                       minimum_spacing_in=cfg.rebar.stirrup_spacing_min_in,
+                                       spacing_step_in=cfg.rebar.stirrup_spacing_step_in)
+    result["analysis_application"] = (
+        "Selected conservative spacing is uniform over each full member; end-zone lengths are "
+        "recorded geometry only. Zoned confinement properties and the hoop/crosstie cage remain unverified.")
+    return result
+
+
+def _apply_transverse_geometry(cfg):
+    # Complete the pure search before mutating either member family.
+    geometry = _transverse_geometry(cfg)
+    sp.BEAM_STIRRUP_SPACING = geometry["beam"]["hoop_spacing_in"]
+    sp.COL_STIRRUP_SPACING = geometry["column"]["hoop_spacing_in"]
+    _sync_cfg_to_sp(cfg)
+    return geometry
+
+
+def _cage_signature():
+    """The installed longitudinal bars, for change detection in the steel pass."""
+    return (sp.COL_BAR_SIZE, sp.COL_TOP_BARS, sp.COL_BOT_BARS, sp.COL_SIDE_BARS,
+            sp.BEAM_BAR_SIZE, sp.BEAM_TOP_BARS, sp.BEAM_BOT_BARS)
+
+
+def _state_record_core():
+    """Geometry, sections, reinforcement and materials of the live state.
+
+    One source for the design record and for the in-loop joint check, so the
+    joint adapter prices exactly the cage, cover and materials that are
+    installed (and later written out).
+    """
+    return {
+        "geometry": {
+            "num_bay_x": sp.NUM_BAY_X,
+            "num_bay_y": sp.NUM_BAY_Y,
+            "num_floor": sp.NUM_FLOOR,
+            "bay_x_in": sp.BAY_X,
+            "bay_y_in": sp.BAY_Y,
+            "story_h_in": sp.STORY_H,
+        },
+        "sections": {
+            "b_col_in": sp.B_COL,
+            "h_col_in": sp.H_COL,
+            "fc_col_ksi": sp.FC_COL_KSI,
+            "b_beam_in": sp.B_BEAM,
+            "h_beam_in": sp.H_BEAM,
+            "fc_beam_ksi": sp.FC_BEAM_KSI,
+        },
+        "reinforcement": {
+            "col_bar_size": sp.COL_BAR_SIZE,
+            "col_top_bars": sp.COL_TOP_BARS,
+            "col_bot_bars": sp.COL_BOT_BARS,
+            "col_side_bars": sp.COL_SIDE_BARS,
+            "beam_bar_size": sp.BEAM_BAR_SIZE,
+            "beam_top_bars": sp.BEAM_TOP_BARS,
+            "beam_bot_bars": sp.BEAM_BOT_BARS,
+            "beam_side_bars": sp.BEAM_SIDE_BARS,
+            "col_stirrup_bar_size": sp.COL_STIRRUP_BAR_SIZE,
+            "col_stirrup_legs": sp.COL_STIRRUP_LEGS,
+            "col_stirrup_spacing_in": sp.COL_STIRRUP_SPACING,
+            "beam_stirrup_bar_size": sp.BEAM_STIRRUP_BAR_SIZE,
+            "beam_stirrup_legs": sp.BEAM_STIRRUP_LEGS,
+            "beam_stirrup_spacing_in": sp.BEAM_STIRRUP_SPACING,
+            "legacy_centroid_offset_in": sp.COVER,
+            "cover_basis": "clear_cover_outside_hoops",
+            "beam_clear_cover_in": sp.BEAM_CLEAR_COVER_IN,
+            "col_clear_cover_in": sp.COL_CLEAR_COVER_IN,
+            "beam_longitudinal_centroid_offset_in": sp.longitudinal_cover_in("beam"),
+            "col_longitudinal_centroid_offset_in": sp.longitudinal_cover_in("column"),
+            "col_bar_diameter_in": sp.rebar_diameter(sp.COL_BAR_SIZE),
+            "beam_bar_diameter_in": sp.rebar_diameter(sp.BEAM_BAR_SIZE),
+            "col_bar_area_in2": sp.COL_BAR_AREA,
+            "beam_bar_area_in2": sp.BEAM_BAR_AREA,
+            "col_stirrup_diameter_in": sp.rebar_diameter(sp.COL_STIRRUP_BAR_SIZE),
+            "beam_stirrup_diameter_in": sp.rebar_diameter(sp.BEAM_STIRRUP_BAR_SIZE),
+        },
+        "materials": {"fy_ksi": sp.FY_KSI, "fyt_ksi": sp.FY_KSI,
+                      "normalweight": sp.CONCRETE_UNIT_WEIGHT_KCF == 0.150,
+                      "aggregate_size_in": sp.AGGREGATE_MAX_SIZE_IN, "es_ksi": sp.ES_KSI},
+    }
+
+
+def _joint_scwb_state(actions, expected_ids):
+    """ACI 318-19 18.7.3.2 at every joint of the live state, from solved actions.
+
+    Runs the same adapter and evaluator qualification runs (SMRF_Joint_Adapter
+    on the installed cage; SMRF_Joints.scwb_check with the factored axial
+    envelope and both compression faces), so the search loop accepts what
+    qualification will accept. Checks that cannot be evaluated (no
+    established slab strength) stay unevaluated here as they do there; only
+    a failed check drives the search.
+
+    Returns a summary plus, under ``_failing`` and ``_state``, the failed
+    checks with their sway states and the priced record for the steel
+    selection; the underscore keys are not written to the history.
+    """
+    from Design.SMRF_Beam_Slab_Strength import beam_slab_strengths
+    from Design.SMRF_Joint_Adapter import build_joint_evidence
+    from Design.SMRF_Joints import scwb_check
+    state = _state_record_core()
+    state["slab"] = {"thickness_in": sp.SLAB_THICKNESS_IN if sp.SLAB_THICKNESS_IN is not None else 0.0}
+    state["slab_reinforcement"] = sp.SLAB_REINFORCEMENT if sp.SLAB_THICKNESS_IN is not None else None
+    state["beam_slab_strengths"] = beam_slab_strengths(state)[0]
+    evidence = build_joint_evidence(state, actions, expected_combination_ids=list(expected_ids))
+    failing, counts, ratios = [], {"pass": 0, "fail": 0, "not_evaluated": 0}, []
+    for joint in evidence["joints"]:
+        for axis in ("x", "y"):
+            for sign in ("positive", "negative"):
+                sway = joint["directions"][axis][sign]
+                check = scwb_check(sway, location=f"{joint['id']}/{axis}/{sign}")
+                counts[check["status"]] += 1
+                if check["status"] == "not_evaluated":
+                    continue
+                ratios.append(check["details"]["ratio_provided"])
+                if check["status"] == "fail":
+                    failing.append((check, sway, axis))
+    return {
+        "evaluated": counts["pass"] + counts["fail"] > 0,
+        "all_pass": counts["fail"] == 0,
+        "counts": counts,
+        "min_ratio_provided": min(ratios) if ratios else None,
+        "ratio_required": sp.SCWB_RATIO_MIN,
+        "basis": ("per-joint nominal joint-face strengths on the installed cage; column Mn enveloped over "
+                  "every factored combination and both compression faces; beam Mn with the developed slab "
+                  "where established; no roof exemption"),
+        "_failing": failing,
+        "_state": state,
+    }
+
+
+def _scwb_column_steel(cfg, joint_scwb):
+    """Least column cage for which every failed joint satisfies 18.7.3.2.
+
+    Candidate cages come from the generator the strength pick uses (bar
+    spacing and the 18.7.5.2(f) hx limit applied), between the ACI minimum
+    and cfg.rebar.rho_col_practical_max; each is priced with the joint
+    adapter's own section capacity at the ends of every failed column's
+    factored axial envelope, both compression faces. The pick is confirmed
+    on the next steel iteration by the full per-joint evaluation. Returns
+    (update or None, exhausted).
+    """
+    from Redesign import _col_candidates
+    from Design.SMRF_Joint_Adapter import record_section_capacity
+    failing = joint_scwb["_failing"]
+    if not failing:
+        return None, False
+    state = joint_scwb["_state"]
+    ag = sp.B_COL * sp.H_COL
+    candidates = sorted(_col_candidates(cfg.rebar.rho_col_min * ag, cfg.rebar.rho_col_practical_max * ag, cfg),
+                        key=lambda c: (c[4], c[0]))
+    ordered = sorted(failing, key=lambda item: item[0]["details"]["ratio_provided"])
+
+    def trial_record(candidate):
+        bar_size, n_top, n_bot, n_side, _ast = candidate
+        rebar = {**state["reinforcement"],
+                 "col_bar_size": bar_size, "col_top_bars": n_top, "col_bot_bars": n_bot, "col_side_bars": n_side,
+                 "col_bar_area_in2": sp.rebar_area(bar_size), "col_bar_diameter_in": sp.rebar_diameter(bar_size),
+                 "col_longitudinal_centroid_offset_in": sp.longitudinal_cover_in("column", bar_size)}
+        return {**state, "reinforcement": rebar}
+
+    def provided(record, sway, axis):
+        total = 0.0
+        for column in sway["column_capacities"]:
+            axials = {column.get("factored_axial_kip"), column.get("axial_min_kip"), column.get("axial_max_kip")}
+            axials.discard(None)
+            if not axials:
+                raise ValueError("Failed SCWB check without a column axial envelope.")
+            total += min(record_section_capacity(record, "column", axis, face, p)["mn_kip_in"]
+                         for p in axials for face in ("positive", "negative"))
+        return total
+
+    def satisfies(candidate):
+        record = trial_record(candidate)
+        return all(provided(record, sway, axis) >= check["demand"] for check, sway, axis in ordered)
+
+    for candidate in candidates:
+        if satisfies(candidate):
+            bar_size, n_top, n_bot, n_side, _ast = candidate
+            return {"bar_size": bar_size, "n_top": n_top, "n_bot": n_bot, "n_side": n_side}, False
+    if not candidates:
+        return None, True
+    # Exhausted within the practical ratio: install the cage that comes closest
+    # on the worst joint so the shortfall is measured, and let the section grow.
+    check, sway, axis = ordered[0]
+    best = max(candidates, key=lambda c: provided(trial_record(c), sway, axis))
+    bar_size, n_top, n_bot, n_side, _ast = best
+    return {"bar_size": bar_size, "n_top": n_top, "n_bot": n_bot, "n_side": n_side}, True
+
+
+def _public(joint_scwb):
+    return {key: value for key, value in joint_scwb.items() if not key.startswith("_")}
+
+
+def _scwb_steel_floor(cfg, actions, expected_ids):
+    """Raise the installed column cage to the strong-column requirement.
+
+    Evaluates the joints on the cage that is installed now and, when any
+    joint fails, replaces the cage with _scwb_column_steel's pick. Returns
+    the history summary with ``steel_raised`` and ``steel_exhausted``.
+    """
+    joint_scwb = _joint_scwb_state(actions, expected_ids)
+    update, exhausted = (None, False)
+    if not joint_scwb["all_pass"]:
+        update, exhausted = _scwb_column_steel(cfg, joint_scwb)
+        if update is not None:
+            apply_updates(update, None, cfg)
+    summary = _public(joint_scwb)
+    summary["steel_raised"] = update is not None
+    summary["steel_exhausted"] = exhausted
+    return summary
+
+
+def _steel_pass(cfg, model_period_sec, max_steel_iter, torsion=None):
     """Resize reinforcement at the current sections until the spec stops changing.
 
-    Both orthogonal ELF cases are analyzed each pass and the worse governs, so
-    an unequal bay count in X and Y cannot leave one direction under-designed.
+    The elastic design frame (gross section properties with constant
+    stiffness modifiers) does not depend on the reinforcement, so every
+    combination is solved once per section and the reinforcement iterations
+    re-run only the checks on the captured actions. Keep every
+    member/combination result: choosing one case by a summed DCR loses other
+    governing actions and can under-design the opposite direction.
+
+    Each iteration selects the bars for strength (Redesign.redesign_steel)
+    and then raises the column cage to the per-joint strong-column
+    requirement (_scwb_steel_floor); the pass ends when the installed bars
+    stop changing. Returns worst DCRs, the ELF record, the actions and the
+    joint SCWB summary for the cage that is installed on return.
     """
-    worst = {"column": 0.0, "beam": 0.0}
+    from Design.SMRF_Demands import strength_load_combinations, live_load_patterns
+    patterns = (live_load_patterns(sp.NUM_BAY_X, sp.NUM_BAY_Y)
+                if cfg.demands.live_load_patterning and sp.FLOOR_TRANSFER is not None else ())
+    combinations = strength_load_combinations(sp.ASCE_SDS, live_patterns=patterns)
+    expected_ids = [combination["id"] for combination in combinations]
+    if max_steel_iter < 1:
+        raise ValueError("max_steel_iter must be positive.")
+
     elf_used = None
+    actions = []
+    for combination in combinations:
+        elf = _analyze_combination(combination, model_period_sec, torsion)
+        if elf is not None:
+            elf_used = elf
+        actions.append({**combination, "analysis_succeeded": True,
+                        "axial_reference": "joint_faces",
+                        "members": _capture_element_actions(combination["dead"])})
 
-    for _ in range(max_steel_iter):
+    worst = {"column": 0.0, "beam": 0.0}
+    joint_scwb = None
+    for steel_iteration in range(max_steel_iter):
+        # Candidate bar diameter and effective depth change these limits.
+        # Apply them before every check, including after a longitudinal update.
+        _apply_transverse_geometry(cfg)
         worst = {"column": 0.0, "beam": 0.0}
-        governing_results = None
-        governing_score = -1.0
-
-        for direction in ("x", "y"):
-            elf_used = _analyze_combination(direction, model_period_sec)
-            column_dcr, beam_dcr, results = _governing_dcrs(cfg)
+        governing_results = {}
+        for action in actions:
+            column_dcr, beam_dcr, results = _governing_dcrs(cfg, member_actions=action["members"])
             worst["column"] = max(worst["column"], column_dcr)
             worst["beam"] = max(worst["beam"], beam_dcr)
-            if column_dcr + beam_dcr > governing_score:
-                governing_score = column_dcr + beam_dcr
-                governing_results = results
+            governing_results.update({(action["id"], tag): result for tag, result in results.items()})
 
-        column_update, beam_update, converged, _penalties = redesign_steel(
-            governing_results, cfg
-        )
-        if converged or (not column_update and not beam_update):
+        # Never return demands from the state before the last steel update.
+        if steel_iteration == max_steel_iter - 1:
             break
-        apply_updates(column_update, beam_update, cfg)
 
-    return worst, elf_used
+        before = _cage_signature()
+        column_update, beam_update, converged, _penalties = redesign_steel(governing_results, cfg)
+        if not converged and (column_update or beam_update):
+            apply_updates(column_update, beam_update, cfg)
+        # The joint rule is priced on bar positions, and those sit inside the
+        # hoops the capacity design selects for this cage (cover + hoop
+        # diameter + db/2). Install those hoops first so the joint check here
+        # sees the same section qualification will see; a #4 -> #5 hoop moves
+        # the bars 1/16 in and is worth ~0.4% of column Mn, enough to turn
+        # 1.204 in the loop into 1.1995 in qualification.
+        _capacity_design(cfg, actions)
+        joint_scwb = _scwb_steel_floor(cfg, actions, expected_ids)
+        if _cage_signature() == before:
+            break
+
+    if joint_scwb is None or joint_scwb["steel_raised"]:
+        # The cage changed after its last evaluation (or was never evaluated):
+        # report the joints on the bars that are actually installed, inside
+        # the hoops designed for them.
+        _capacity_design(cfg, actions)
+        joint_scwb = {**_public(_joint_scwb_state(actions, expected_ids)),
+                      "steel_raised": False, "steel_exhausted": (joint_scwb or {}).get("steel_exhausted", False)}
+    return worst, elf_used, actions, joint_scwb
+
+
+def _compatible_beam_index(beams, preferred):
+    """One shared beam section must fit BOTH directions and the current columns.
+
+    Returns the first feasible rung at or above ``preferred`` (the ladder is
+    ordered by capacity), so an escalation whose target rung the clear span
+    forbids (18.6.2.1(a)) lands on the next rung that fits rather than on a
+    lighter one; only when nothing above fits does the heaviest feasible
+    rung below apply.
+    """
+    feasible = []
+    for index, rung in enumerate(beams):
+        try:
+            for span, column_depth in ((sp.BAY_X, sp.H_COL), (sp.BAY_Y, sp.B_COL)):
+                validate_rung(rung, "beam", span_in=span, story_height_in=sp.STORY_H,
+                              column_depth_in=column_depth,
+                              effective_depth_in=rung[1] - sp.longitudinal_cover_in("beam"))
+        except ValueError:
+            continue
+        feasible.append(index)
+    if not feasible:
+        raise ValueError("No common beam section fits both clear spans with these columns.")
+    above = [index for index in feasible if index >= preferred]
+    return min(above) if above else max(feasible)
+
+
+def _drift_screen(model_period_sec, torsion=None, cfg=None):
+    """Separate rho=1 QEx/QEy runs; envelope all structural floor nodes."""
+    from Design.SMRF_Elastic import floor_xy_displacements, gravity_weight_per_story
+    from Design.SMRF_Demands import story_node_deltas, evaluate_drift_and_stability, seismic_design_category
+    from Design.SMRF_Common import not_evaluated, summarize_checks
+    checks, rows = [], []
+    try:
+        sdc = seismic_design_category(sp.ASCE_SDS, sp.ASCE_SD1, sp.ASCE_S1,
+                                      cfg.demands.risk_category if cfg else "II")
+    except ValueError:
+        sdc = "D"
+    for axis in ("x", "y"):
+        combination = {"id": f"drift_{axis}", "dead": 1.0, "live": 1.0,
+                       "ex": float(axis == "x"), "ey": float(axis == "y"), "live_pattern": "all"}
+        try:
+            elf = _analyze_combination(combination, model_period_sec, torsion)
+            stories = []
+            for k in range(1, sp.NUM_FLOOR + 1):
+                deltas = story_node_deltas(floor_xy_displacements(k), floor_xy_displacements(k - 1))
+                stories.append({"id": f"{k}/Q{axis}", "height_in": sp.STORY_H,
+                                "node_deltas_in": deltas, "expected_node_ids": [
+                                    f"{i},{j}" for j in range(sp.NUM_BAY_Y + 1)
+                                    for i in range(sp.NUM_BAY_X + 1)],
+                                "directions": [axis], "story_shear_kip": {
+                                    axis: sum(elf["story_forces_kip"][k - 1:])},
+                                "gravity_above_kip": (sp.NUM_FLOOR - k + 1) * gravity_weight_per_story()})
+            result = evaluate_drift_and_stability(stories, importance_factor=sp.ASCE_IE,
+                                                  seismic_design_category=sdc if sdc in ("D", "E", "F") else "D",
+                                                  second_order_included=True)
+            checks.extend(result["checks"])
+            rows.extend(result["stories"])
+        except RuntimeError as exc:
+            checks.append(not_evaluated(f"demands.drift_analysis_{axis}", "ASCE 7-22 12.8.6--12.8.7", str(exc)))
+    return {"checks": checks, "stories": rows,
+            "assumptions": {"cd": 5.5, "rho_for_drift_load": 1.0, "rho_for_limit": 1.3,
+                            "limit_scope": "RiskII solely moment frame D/E/F conservative screen",
+                            "seismic_design_category": sdc,
+                            "accidental_torsion_included": bool(torsion),
+                            "gravity": "uniform full D+L plus member weight",
+                            "model": "elastic cracked stiffness; PDelta columns; centerline joints"},
+            **summarize_checks(checks)}
 
 
 def _scwb_required_column_moment():
-    """Column nominal moment needed to satisfy ACI 318-19 18.7.3.
+    """Column nominal moment needed to satisfy ACI 318-19 18.7.3.2 at every joint.
 
-    The code requires sum(Mnc) >= 1.2 * sum(Mnb) at each joint. For an
-    interior joint in one direction the sums are two columns (above and
-    below) against two beams (left and right), so the per-member form is
-    Mnc >= 1.2 * Mnb. Both orthogonal directions use the same sections here,
-    so the governing beam capacity is the larger of the two axes.
+    sum(Mnc) >= 1.2 sum(Mnb) at each joint, with no roof exemption (the
+    joint qualification applies none). Members are uniform over height, so
+    the governing joint is an interior roof joint: one column below against
+    a hogging beam on one side and a sagging beam on the other,
+    Mnc >= 1.2 (Mnb- + Mnb+), evaluated at the low roof axial load. Floor
+    joints, with two columns, need only 0.6 (Mnb- + Mnb+) and never govern.
+    Slab mats within the effective flange count toward Mnb (18.7.3.2); the
+    composite values are the same ones the beam hinges yield at.
     """
-    beam_moment = max(sp.beam_nominal_moment_y(), sp.beam_nominal_moment_z())
-    return sp.SCWB_RATIO_MIN * beam_moment
+    families = _beam_strength_families()
+    return sp.SCWB_RATIO_MIN * max(f["mn_negative_kip_in"] + f["mn_positive_kip_in"]
+                                   for f in families.values())
 
 
 def _scwb_governing_axial():
-    """Factored axial force that minimises column flexural strength.
+    """Legacy top-corner gravity estimate used ONLY as a sizing proxy.
 
-    ACI 318-19 18.7.3.2 wants Mnc "calculated for the factored axial force
-    ... resulting in the lowest flexural strength". Below the balance point
-    Mn falls with axial load, so the governing joint is the lightest-loaded
-    column: the top story at a corner, where tributary area is smallest.
+    This is not the factored axial envelope required at each joint. Both
+    low/tensile and high compression forces can govern the actual PM check.
+    Full SCWB qualification remains open until that envelope is implemented.
     """
     return column_gravity_axial(max(1, sp.NUM_FLOOR), 0, 0)
 
@@ -255,12 +967,23 @@ def _column_nominal_moment(section=None):
     capacity off the P-M surface for exactly this reason; using it here
     makes the design side agree with the model that gets analysed.
 
-    section is (b, h, fc); defaults to the section currently installed.
+    section is (b, h, fc); defaults to the section currently installed. A
+    candidate section is priced with at least the ACI 318-19 18.7.4.1
+    minimum of 1% longitudinal steel (the current cage scaled up in place):
+    pricing a larger rung with the smaller section's bars, which it cannot
+    legally keep, made the ladder overshoot by a rung or two.
     """
-    if section is None:
+    installed = section is None
+    if installed:
         section = (sp.B_COL, sp.H_COL, sp.FC_COL_KSI)
     b, h, fc = section
-    diagram = column_pm_nominal_for(b, h, fc, _col_steel_layers(h=h))
+    layers = _col_steel_layers(h=h)
+    if not installed:
+        total = sum(area for area, _ in layers)
+        minimum = 0.01 * b * h
+        if 0 < total < minimum:
+            layers = [(area * minimum / total, depth) for area, depth in layers]
+    diagram = column_pm_nominal_for(b, h, fc, layers)
     return column_moment_at_axial(_scwb_governing_axial(), diagram)
 
 
@@ -283,6 +1006,127 @@ def _next_larger_column_index(ladder, index):
     return None
 
 
+def _next_deeper_beam_index(ladder, index):
+    """First rung above ladder[index] with a strictly deeper section.
+
+    The beam ladder is ordered by capacity and mixes f'c and width steps
+    with depth steps. Story drift answers to depth, so that escalation takes
+    the next deeper rung. None at the top.
+    """
+    _b, h, _fc = ladder[index]
+    for candidate in range(index + 1, len(ladder)):
+        if ladder[candidate][1] > h:
+            return candidate
+    return None
+
+
+def _next_wider_beam_index(ladder, index):
+    """First rung above ladder[index] with the same depth and a wider web.
+
+    The capacity-shear section limit (22.5.1.2 with 18.6.5.1 Ve) answers to
+    bw d; on short clear spans 18.6.2.1(a) caps d, so width is the lever.
+    None when the depth has no wider variant above the current rung.
+    """
+    b, h, _fc = ladder[index]
+    for candidate in range(index + 1, len(ladder)):
+        if ladder[candidate][1] == h and ladder[candidate][0] > b:
+            return candidate
+    return None
+
+
+def _column_index_for_joint_shear(ladder, index, ratio):
+    """First rung whose joint area covers the worst joint-shear ratio.
+
+    ACI 318-19 18.8.4.1 gives Vn = gamma sqrt(f'c) Aj, so at fixed gamma a
+    joint short by ``ratio`` needs b*h*sqrt(f'c) scaled by it. gamma itself
+    can fall when a wider column loses a confined face (18.8.4.2), so this
+    is the sizing jump; the next evaluation decides.
+    """
+    b, h, fc = ladder[index]
+    required = b * h * math.sqrt(fc) * ratio
+    for candidate in range(index + 1, len(ladder)):
+        cb, ch, cfc = ladder[candidate]
+        if cb * ch * math.sqrt(cfc) >= required:
+            return candidate
+    return len(ladder) - 1
+
+
+def _plan_next_rungs(columns, beams, column_index, beam_index, worst, target, hard_max,
+                     scwb_index, flags):
+    """Decide the next (column, beam) rungs from this iteration's evaluation.
+
+    Pure: the search loop supplies the ladders, the current rungs, the worst
+    DCRs, the strength-screen SCWB rung and the evaluation ``flags``
+    (drift_ok, scwb_ok, joint_scwb_failed, capacity_accepted,
+    beam_section_adequate, beam_hoops_selected, column_section_adequate,
+    column_hoops_selected, joints_all_pass, anchorage_all_pass, and
+    joint_shear_ratio: the worst Vj / phi Vn, or None).
+
+    Strength sizes both members toward their targets; every requirement that
+    the strength screen does not see moves the member it depends on: drift
+    takes the next beam depth, the beam capacity-shear section takes the
+    wider variant of the current depth (then the next depth), a joint
+    that fails 18.7.3.2 after the steel pass exhausted the column cage takes
+    the next column size, joint shear, anchorage and column shear take the
+    next column size. While any requirement is unmet neither member steps
+    down, so the search cannot trade one failure for another and cycle.
+    Returns (next_column, next_beam, reasons).
+    """
+    reasons = []
+    next_beam = suggest_rung_index(beams, beam_index, max(worst["beam"], 1e-6), target)
+    strength_index = suggest_rung_index(columns, column_index, max(worst["column"], 1e-6), hard_max)
+    next_column = max(strength_index, scwb_index)
+    if worst["beam"] > hard_max:
+        reasons.append("beam_strength")
+    if worst["column"] > hard_max:
+        reasons.append("column_strength")
+    if not flags["scwb_ok"] and scwb_index > column_index:
+        reasons.append("scwb_screen")
+    larger_column = _next_larger_column_index(columns, column_index)
+    deeper_beam = _next_deeper_beam_index(beams, beam_index)
+    wider_beam = _next_wider_beam_index(beams, beam_index)
+
+    def grow_beam(prefer_width=False):
+        nonlocal next_beam, next_column
+        step = (wider_beam if prefer_width and wider_beam is not None else deeper_beam)
+        if step is None:
+            step = wider_beam
+        if step is not None:
+            next_beam = max(next_beam, step)
+        elif larger_column is not None:
+            next_column = max(next_column, larger_column)
+
+    def grow_column():
+        nonlocal next_column
+        if larger_column is not None:
+            next_column = max(next_column, larger_column)
+
+    if not flags["drift_ok"]:
+        reasons.append("drift")
+        grow_beam()
+    if not flags["beam_section_adequate"] or not flags["beam_hoops_selected"]:
+        reasons.append("beam_capacity_shear")
+        grow_beam(prefer_width=True)
+    if flags["joint_scwb_failed"]:
+        reasons.append("joint_scwb")
+        grow_column()
+    if not flags["column_section_adequate"] or not flags["column_hoops_selected"]:
+        reasons.append("column_capacity_shear")
+        grow_column()
+    if not flags["joints_all_pass"] or not flags["anchorage_all_pass"]:
+        reasons.append("joint_shear_or_anchorage")
+        grow_column()
+        ratio = flags.get("joint_shear_ratio")
+        if ratio is not None and ratio > 1.0:
+            next_column = max(next_column, _column_index_for_joint_shear(columns, column_index, ratio))
+    unmet = (reasons or not flags["scwb_ok"] or not flags["capacity_accepted"]
+             or not flags["drift_ok"])
+    if unmet:
+        next_column = max(next_column, column_index)
+        next_beam = max(next_beam, beam_index)
+    return next_column, next_beam, reasons
+
+
 def _smallest_scwb_column_index(ladder):
     """First column rung satisfying strong-column/weak-beam.
 
@@ -298,13 +1142,28 @@ def _smallest_scwb_column_index(ladder):
     return len(ladder) - 1, False
 
 
-def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=True):
+def design_structure(cfg=None, max_section_iter=10, max_steel_iter=6, verbose=True):
     """Design the current geometry to the configured DCR band.
 
     Returns a JSON-serializable record of the final sections, reinforcement,
     governing DCRs, and the ELF demand they were designed against.
     """
     cfg = cfg or DesignConfig.from_structure_parameters()
+    if (cfg.materials.reinforcement_specification != "ASTM A706 Grade 60"
+            or cfg.materials.exposure != "sheltered_interior" or sp.FY_KSI != 60.0
+            or cfg.materials.fy_ksi != sp.FY_KSI or cfg.materials.es_ksi != sp.ES_KSI):
+        raise ValueError("The current research design scope requires sheltered interior A706 Grade 60 reinforcement.")
+    for value in (cfg.rebar.beam_clear_cover_in, cfg.rebar.col_clear_cover_in):
+        if isinstance(value, bool) or not math.isfinite(value) or value < 1.5:
+            raise ValueError("Frame clear cover must be finite and at least 1.5 in outside hoops.")
+    aggregate = cfg.rebar.aggregate_max_size_in
+    if isinstance(aggregate, bool) or not math.isfinite(aggregate) or aggregate <= 0:
+        raise ValueError("Maximum aggregate size must be finite and positive.")
+    sp.BEAM_CLEAR_COVER_IN = cfg.rebar.beam_clear_cover_in
+    sp.COL_CLEAR_COVER_IN = cfg.rebar.col_clear_cover_in
+    sp.AGGREGATE_MAX_SIZE_IN = cfg.rebar.aggregate_max_size_in
+    sp.REINFORCEMENT_SPECIFICATION = cfg.materials.reinforcement_specification
+    sp.MATERIAL_EXPOSURE = cfg.materials.exposure
     target = cfg.dcr.dcr_target
     band_lo, band_hi = cfg.dcr.dcr_band_lo, cfg.dcr.dcr_band_hi
 
@@ -327,27 +1186,37 @@ def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=Tru
     # DCR 1.10. The escalation budget is bounded by the ladder itself.
     iteration = 0
     gravity_escalations = 0
+    initial_transverse = {key: getattr(sp, key) for key in (
+        "BEAM_STIRRUP_BAR_SIZE", "BEAM_STIRRUP_LEGS", "BEAM_STIRRUP_SPACING",
+        "COL_STIRRUP_BAR_SIZE", "COL_STIRRUP_LEGS", "COL_STIRRUP_SPACING")}
     while iteration < max_section_iter:
+        # Hoops are selected per section by the capacity design below; the
+        # detailing selector never increases a spacing, so start each rung
+        # from the requested values rather than the previous rung's hoops.
+        for key, value in initial_transverse.items():
+            setattr(sp, key, value)
         _apply_rung(columns[column_index], "column")
+        beam_index = _compatible_beam_index(beams, beam_index)
         _apply_rung(beams[beam_index], "beam")
         _sync_cfg_to_sp(cfg)
         validate_rung(columns[column_index], "column")
         validate_rung(beams[beam_index], "beam", span_in=span, story_height_in=sp.STORY_H)
 
+        beam_index, slab, slab_retries = _fit_slab_and_beam(cfg, beams, beam_index)
+        # The transfer depends on the slab and on the beam/column sections, so
+        # it is rebuilt whenever the ladder moves; the restored best state
+        # carries its own copy (FLOOR_TRANSFER is in _STATE_KEYS).
+        _update_floor_transfer(cfg, slab)
+        _update_slab_reinforcement(cfg, slab)
         period = _model_period()
         try:
-            worst, elf = _steel_pass(cfg, period, max_steel_iter)
+            torsion = _torsion_assessment(period, cfg) if cfg.demands.accidental_torsion_ratio else None
+            worst, elf, combination_actions, joint_scwb = _steel_pass(cfg, period, max_steel_iter, torsion)
         except RuntimeError as error:
             if "gravity analysis failed" not in str(error).lower():
                 raise
-            # This section cannot stand up under its own gravity load. Columns
-            # use a PDelta transform, so that is a stability failure, not a
-            # numerical one: case_0013 (9 stories, 117 ft, 18x18 columns) went
-            # unstable at 85% of applied gravity. Escalating the column is the
-            # correct response. Aborting the case -- the old behaviour -- lost
-            # it entirely, and because only tall slender frames fail this way,
-            # that silently biased the dataset against exactly the buildings
-            # most worth having in it.
+            # Nonconvergence may be numerical or physical; it is NOT proof of
+            # structural instability. A larger section is only a bounded retry.
             gravity_failures.append(
                 {
                     # Escalation order, not design iteration: `iteration` is
@@ -378,12 +1247,21 @@ def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=Tru
             continue
 
         iteration += 1
-        scwb_ok = _column_nominal_moment() >= _scwb_required_column_moment()
+        # The sizing screen (uniform-member proxy) and the per-joint rule the
+        # steel pass closed on; a joint that still fails is a section matter.
+        scwb_screen_ok = _column_nominal_moment() >= _scwb_required_column_moment()
+        joint_scwb_failed = joint_scwb["evaluated"] and not joint_scwb["all_pass"]
+        scwb_ok = scwb_screen_ok and not joint_scwb_failed
+        capacity = _capacity_design(cfg, combination_actions)
+        drift_screen = _drift_screen(period, torsion, cfg)
+        demand_basis = _demand_basis(cfg, torsion, elf, drift_screen)
 
         entry = {
             "iteration": iteration,
             "column_section": list(columns[column_index]),
             "beam_section": list(beams[beam_index]),
+            "slab": slab,
+            "slab_sizing_retries": slab_retries,
             "column_dcr": worst["column"],
             "beam_dcr": worst["beam"],
             "model_period_sec": period,
@@ -391,13 +1269,21 @@ def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=Tru
             "column_bars": [sp.COL_BAR_SIZE, sp.COL_TOP_BARS, sp.COL_BOT_BARS, sp.COL_SIDE_BARS],
             "beam_bars": [sp.BEAM_BAR_SIZE, sp.BEAM_TOP_BARS, sp.BEAM_BOT_BARS],
             "scwb_satisfied": scwb_ok,
+            "scwb_screen_satisfied": scwb_screen_ok,
+            "scwb_joint": joint_scwb,
+            "capacity_design_accepted": capacity["accepted"],
+            "torsional_irregularity": (torsion or {}).get("torsional_irregularity"),
+            "joint_shear_satisfied": capacity["joints"]["all_pass"],
+            "anchorage_satisfied": capacity["anchorage"]["all_pass"],
+            "hoops": {"beam": capacity["transverse"]["beam"], "column": capacity["transverse"]["column"]},
+            "drift_screen": drift_screen,
             # Must come off the same P-M capacity as scwb_ok above. Leaving
             # this on sp.column_nominal_moment_y() recorded the old beam-formula
             # ratio beside the new pass/fail flag, so a history row could read
             # "1.171, satisfied" against a reported 2.971 for the same section.
             "scwb_ratio": (
-                _column_nominal_moment() / sp.beam_nominal_moment_y()
-                if sp.beam_nominal_moment_y() > 0 else None
+                _column_nominal_moment() / (_scwb_required_column_moment() / sp.SCWB_RATIO_MIN)
+                if _scwb_required_column_moment() > 0 else None
             ),
             "beam_at_ladder_floor": beam_index == 0,
             "column_at_ladder_floor": column_index == 0,
@@ -406,13 +1292,14 @@ def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=Tru
         if verbose:
             print(
                 "  [design] iter {}: col {:.0f}x{:.0f} fc{:.0f} DCR={:.3f} | "
-                "beam {:.0f}x{:.0f} fc{:.0f} DCR={:.3f} | T1={:.3f}s".format(
+                "beam {:.0f}x{:.0f} fc{:.0f} DCR={:.3f} | T1={:.3f}s | slab={:.1f}in".format(
                     iteration,
                     columns[column_index][0], columns[column_index][1], columns[column_index][2],
                     worst["column"],
                     beams[beam_index][0], beams[beam_index][1], beams[beam_index][2],
                     worst["beam"],
                     period or 0.0,
+                    slab["thickness_in"],
                 )
             )
 
@@ -427,17 +1314,23 @@ def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=Tru
             deviation += 10.0
         if not scwb_ok:
             deviation += 5.0
+        if not capacity["accepted"]:
+            deviation += 5.0
+        if not drift_screen["accepted"]:
+            deviation += 20.0
         if best is None or deviation < best["deviation"]:
-            best = {"deviation": deviation, "entry": entry, "state": _capture_state()}
+            best = {"deviation": deviation, "entry": entry, "state": _capture_state(),
+                    "combination_actions": combination_actions, "capacity": capacity,
+                    "demand_basis": demand_basis}
 
-        # A design is only finished when the beam is in band, the column is
-        # under its strength ceiling, AND strong column / weak beam holds.
-        # Leaving SCWB out let an early in-band beam terminate the search with
-        # columns weaker than the beams framing into them.
+        # Candidate screening only. The preferred utilization band is not a
+        # code requirement, and this legacy SCWB proxy is not joint acceptance.
         accepted = (
-            band_lo <= worst["beam"] <= band_hi
+            worst["beam"] <= cfg.dcr.dcr_hard_max
             and worst["column"] <= cfg.dcr.dcr_hard_max
             and scwb_ok
+            and capacity["accepted"]
+            and drift_screen["accepted"]
         )
         if accepted:
             break
@@ -447,14 +1340,22 @@ def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=Tru
             break
         visited.add(key)
 
-        next_beam = suggest_rung_index(beams, beam_index, max(worst["beam"], 1e-6), target)
-
-        # Size the column to the larger of what strength and SCWB demand.
-        strength_index = suggest_rung_index(
-            columns, column_index, max(worst["column"], 1e-6), cfg.dcr.dcr_hard_max
-        )
         scwb_index, _scwb_reachable = _smallest_scwb_column_index(columns)
-        next_column = max(strength_index, scwb_index)
+        next_column, next_beam, reasons = _plan_next_rungs(
+            columns, beams, column_index, beam_index, worst, target, cfg.dcr.dcr_hard_max, scwb_index,
+            {"drift_ok": drift_screen["accepted"], "scwb_ok": scwb_ok, "joint_scwb_failed": joint_scwb_failed,
+             "capacity_accepted": capacity["accepted"],
+             "beam_section_adequate": capacity["beams"]["section_adequate"],
+             "beam_hoops_selected": capacity["transverse"]["beam"] is not None,
+             "column_section_adequate": capacity["columns"]["section_adequate"],
+             "column_hoops_selected": capacity["transverse"]["column"] is not None,
+             "joints_all_pass": capacity["joints"]["all_pass"],
+             "anchorage_all_pass": capacity["anchorage"]["all_pass"],
+             "joint_shear_ratio": max((entry["vj_kip"] / entry["phi_vn_kip"]
+                                       for entry in capacity["joints"]["joints"].values()
+                                       if entry.get("phi_vn_kip")), default=None)})
+        entry["step_reasons"] = reasons
+        entry["next_rungs"] = {"column": list(columns[next_column]), "beam": list(beams[next_beam])}
 
         if next_column == column_index and next_beam == beam_index:
             break
@@ -471,40 +1372,57 @@ def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=Tru
     _sync_cfg_to_sp(cfg)
     final = best["entry"]
     governing = max(final["column_dcr"], final["beam_dcr"])
+    # Load-path check of the selected frame: the bare frame with its transfer
+    # against the monolithic coupled model, same slab, sections and loads.
+    coupled_comparison = None
+    if sp.FLOOR_TRANSFER is not None:
+        from Design.SMRF_Coupled_Comparison import compare_transfer_to_coupled
+        coupled_comparison = compare_transfer_to_coupled(final["slab"],
+                                                         combination_actions=best["combination_actions"])
 
     # Evaluated against the restored (final) section, so the reported figures
     # describe the design that is actually written out.
     column_mn = _column_nominal_moment()
-    beam_mn = sp.beam_nominal_moment_y()
-    scwb_satisfied = column_mn >= _scwb_required_column_moment()
+    # Governing joint: one roof column against Mnb- + Mnb+ of the strongest family.
+    beam_mn = _scwb_required_column_moment() / sp.SCWB_RATIO_MIN
+    scwb_screen_satisfied = column_mn >= _scwb_required_column_moment()
+    joint_scwb = final["scwb_joint"]
+    scwb_satisfied = scwb_screen_satisfied and not (joint_scwb["evaluated"] and not joint_scwb["all_pass"])
+    drift_screen = final["drift_screen"]
+    core = _state_record_core()
 
-    return {
+    # What the beam rung answers to. In band it is the DCR target; below the
+    # band it is whichever requirement moved the beam off the strength rung
+    # (recorded in the previous iteration's step reasons) or the ladder floor.
+    final_index = next(i for i, item in enumerate(history) if item is final)
+    previous_reasons = history[final_index - 1].get("step_reasons", []) if final_index > 0 else []
+    if band_lo <= final["beam_dcr"] <= band_hi:
+        governed_by = "demand"
+    elif final.get("beam_at_ladder_floor") and final["beam_dcr"] < band_lo:
+        governed_by = "minimum_section"
+    elif "drift" in previous_reasons:
+        governed_by = "drift"
+    elif "beam_capacity_shear" in previous_reasons:
+        governed_by = "capacity_design"
+    elif any(reason in previous_reasons for reason in ("joint_scwb", "scwb_screen")):
+        governed_by = "scwb"
+    else:
+        governed_by = "search_limit"
+
+    record = {
         "schema_version": DESIGN_SCHEMA_VERSION,
-        "geometry": {
-            "num_bay_x": sp.NUM_BAY_X,
-            "num_bay_y": sp.NUM_BAY_Y,
-            "num_floor": sp.NUM_FLOOR,
-            "bay_x_in": sp.BAY_X,
-            "bay_y_in": sp.BAY_Y,
-            "story_h_in": sp.STORY_H,
-        },
-        "sections": {
-            "b_col_in": sp.B_COL,
-            "h_col_in": sp.H_COL,
-            "fc_col_ksi": sp.FC_COL_KSI,
-            "b_beam_in": sp.B_BEAM,
-            "h_beam_in": sp.H_BEAM,
-            "fc_beam_ksi": sp.FC_BEAM_KSI,
-        },
-        "reinforcement": {
-            "col_bar_size": sp.COL_BAR_SIZE,
-            "col_top_bars": sp.COL_TOP_BARS,
-            "col_bot_bars": sp.COL_BOT_BARS,
-            "col_side_bars": sp.COL_SIDE_BARS,
-            "beam_bar_size": sp.BEAM_BAR_SIZE,
-            "beam_top_bars": sp.BEAM_TOP_BARS,
-            "beam_bot_bars": sp.BEAM_BOT_BARS,
-        },
+        "slab": final["slab"],
+        "floor_loads": sp.floor_load_metadata(),
+        "gravity_load_model": sp.effective_gravity_load_model(),
+        "floor_transfer": sp.FLOOR_TRANSFER,
+        "slab_reinforcement": sp.SLAB_REINFORCEMENT,
+        "slab_actions": sp.SLAB_ACTIONS,
+        "geometry": core["geometry"],
+        "sections": core["sections"],
+        "reinforcement": core["reinforcement"],
+        "materials": {**core["materials"],
+                      "reinforcement_specification": cfg.materials.reinforcement_specification,
+                      "exposure": cfg.materials.exposure},
         "dcr": {
             "column": final["column_dcr"],
             "beam": final["beam_dcr"],
@@ -518,27 +1436,29 @@ def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=Tru
             # that fell back after exhausting the ladder with columns weaker
             # than their beams was still reported as accepted -- and anything
             # downstream filtering on this flag believed it.
-            "accepted": (
-                band_lo <= final["beam_dcr"] <= band_hi
+            "candidate_strength_screen_passed": (
+                final["beam_dcr"] <= cfg.dcr.dcr_hard_max
                 and final["column_dcr"] <= cfg.dcr.dcr_hard_max
                 and scwb_satisfied
             ),
             "exceeds_capacity": governing > cfg.dcr.dcr_hard_max,
-            "target_basis": "beam flexure carries the DCR band; columns are capacity-protected",
-            "governed_by": (
-                "demand"
-                if band_lo <= final["beam_dcr"] <= band_hi
-                else "minimum_section"
-                if final.get("beam_at_ladder_floor") and final["beam_dcr"] < band_lo
-                else "search_limit"
-            ),
+            "target_basis": ("beam flexure carries the DCR band; columns are capacity-protected; drift, "
+                             "capacity shear and the joint rule can hold the beam below the band"),
+            "governed_by": governed_by,
         },
         "scwb": {
             "ratio_min": sp.SCWB_RATIO_MIN,
             "column_nominal_moment_kip_in": column_mn,
             "beam_nominal_moment_kip_in": beam_mn,
             "column_axial_kip": _scwb_governing_axial(),
-            "column_moment_basis": "nominal P-M surface at the governing axial load",
+            "column_moment_basis": "preliminary nominal P-M surface at top-corner service gravity; NOT joint qualification",
+            "screen_satisfied": scwb_screen_satisfied,
+            "joint_check": joint_scwb,
+            "beam_moment_basis": ("Mnb- + Mnb+ of the strongest beam family, composite beam-plus-developed-slab (ACI 18.7.3.2 / 6.3.2); "
+                                  "governing joint is an interior roof joint with a single column"
+                                  if (sp.SLAB_REINFORCEMENT or {}).get("layout") else
+                                  "Mnb- + Mnb+ of the strongest beam family, rectangular beam; governing joint is an interior roof joint"),
+            "qualification_check": False,
             "ratio_provided": (column_mn / beam_mn if beam_mn > 0 else None),
             "satisfied": scwb_satisfied,
         },
@@ -550,20 +1470,90 @@ def design_structure(cfg=None, max_section_iter=6, max_steel_iter=6, verbose=Tru
             "site_label": getattr(sp, "SEISMIC_SITE_LABEL", None),
         },
         "demand": {
-            "basis": "ASCE 7-22 12.8 ELF, combination 1.2D + 0.5L + E",
+            "basis": "Signed gravity/seismic combinations, Ev and 100/30 effects; scope limitations in qualification",
             "model_period_sec": final["model_period_sec"],
             "base_shear_kip": final["base_shear_kip"],
         },
         "iterations": len(history),
+        "design_actions": {
+            "basis": "Signed simultaneous centerline elastic member actions, compression-positive axial forces; joint-face moment transport is separate",
+            "expected_combination_ids": [item["id"] for item in best["combination_actions"]],
+            "combinations": best["combination_actions"],
+        },
+        "drift_screen": drift_screen,
+        "capacity_design": best["capacity"],
+        "demand_basis": best["demand_basis"],
+        "coupled_comparison": coupled_comparison,
         "gravity_failures": gravity_failures,
         "history": history,
+        "detailing": _transverse_geometry(cfg),
     }
+    # The selected frame's forces are now copied into the artifact. Release
+    # that scratch domain before entering the independent floor diagnostic.
+    ops.wipe()
+    from Design.SMRF_Design_Evidence import attach_design_evidence, analysis_input_signature
+    record["design_actions"]["analysis_input_sha256"] = analysis_input_signature(record)
+    record["drift_screen"]["analysis_input_sha256"] = analysis_input_signature(record)
+    if record.get("coupled_comparison"):
+        record["coupled_comparison"]["analysis_input_sha256"] = analysis_input_signature(record)
+    attach_design_evidence(record, cfg)
+    from Design.SMRF_Qualification import qualify_design
+    record["qualification"] = qualify_design(record)
+    record["dcr"]["accepted"] = record["qualification"]["accepted"]
+    return record
 
 
 def apply_design(record):
     """Apply a stored design artifact to Structure_Parameters."""
     sections = record["sections"]
     rebar = record["reinforcement"]
+    required = ("col_stirrup_bar_size", "col_stirrup_legs", "col_stirrup_spacing_in",
+                "beam_stirrup_bar_size", "beam_stirrup_legs", "beam_stirrup_spacing_in",
+                "beam_side_bars", "legacy_centroid_offset_in", "beam_clear_cover_in",
+                "col_clear_cover_in", "beam_longitudinal_centroid_offset_in",
+                "col_longitudinal_centroid_offset_in")
+    missing = [key for key in required if key not in rebar]
+    if missing:
+        raise ValueError(f"Cached design lacks {missing}; cannot reproduce its reinforcement.")
+    # Validate the whole state before the first assignment. A missing field
+    # halfway through restoration must not leave a partially changed model.
+    for key in ("b_col_in", "h_col_in", "fc_col_ksi", "b_beam_in", "h_beam_in", "fc_beam_ksi"):
+        value = sections.get(key)
+        if (not isinstance(value, (float, int)) or isinstance(value, bool)
+                or not math.isfinite(value) or value <= 0):
+            raise ValueError(f"Cached section {key} must be finite and positive.")
+    if any(record.get("geometry", {}).get(key) != value for key, value in _slab_geometry().items()):
+        raise ValueError("Cached design geometry disagrees with the current model.")
+    for prefix in ("beam", "col"):
+        for suffix, lower in (("top_bars", 2), ("bot_bars", 2), ("side_bars", 0), ("stirrup_legs", 2)):
+            value = rebar.get(f"{prefix}_{suffix}")
+            if type(value) is not int or value < lower:
+                raise ValueError(f"Cached {prefix}_{suffix} is not a valid bar count.")
+        spacing = rebar.get(f"{prefix}_stirrup_spacing_in")
+        if (not isinstance(spacing, (float, int)) or isinstance(spacing, bool)
+                or not math.isfinite(spacing) or spacing <= 0):
+            raise ValueError("Cached transverse spacing must be finite and positive.")
+    legacy = rebar["legacy_centroid_offset_in"]
+    if (not isinstance(legacy, (float, int)) or isinstance(legacy, bool)
+            or not math.isfinite(legacy) or legacy <= 0):
+        raise ValueError("Cached legacy cover must be finite and positive.")
+    from Design.SMRF_Qualification import reinforcement_consistency_checks
+    consistency = reinforcement_consistency_checks(record)
+    if any(item["status"] != "pass" for item in consistency):
+        raise ValueError("Cached member cover/bar positions or material metadata are inconsistent.")
+    material = record.get("materials", {})
+    if material.get("fy_ksi") != sp.FY_KSI or material.get("es_ksi") != sp.ES_KSI:
+        raise ValueError("Cached steel material properties disagree with the current model.")
+    slab = _validate_cached_slab(record)
+    aggregate = record.get("materials", {}).get("aggregate_size_in")
+    if aggregate is None or not math.isfinite(aggregate) or aggregate <= 0:
+        raise ValueError("Cached design lacks a valid aggregate size.")
+    for prefix in ("beam", "col"):
+        clear = rebar[f"{prefix}_clear_cover_in"]
+        expected = clear + sp.rebar_diameter(rebar[f"{prefix}_stirrup_bar_size"]) + sp.rebar_diameter(rebar[f"{prefix}_bar_size"]) / 2
+        if (not math.isfinite(clear) or clear < 1.5
+                or not math.isclose(expected, rebar[f"{prefix}_longitudinal_centroid_offset_in"], abs_tol=1e-12)):
+            raise ValueError("Cached member cover/bar positions are inconsistent.")
     sp.B_COL = sections["b_col_in"]
     sp.H_COL = sections["h_col_in"]
     sp.FC_COL_KSI = sections["fc_col_ksi"]
@@ -579,7 +1569,76 @@ def apply_design(record):
     sp.BEAM_TOP_BARS = rebar["beam_top_bars"]
     sp.BEAM_BOT_BARS = rebar["beam_bot_bars"]
     sp.BEAM_BAR_AREA = sp.rebar_area(sp.BEAM_BAR_SIZE)
+    for key, name in (("col_stirrup_bar_size", "COL_STIRRUP_BAR_SIZE"),
+                      ("col_stirrup_legs", "COL_STIRRUP_LEGS"),
+                      ("col_stirrup_spacing_in", "COL_STIRRUP_SPACING"),
+                      ("beam_stirrup_bar_size", "BEAM_STIRRUP_BAR_SIZE"),
+                      ("beam_stirrup_legs", "BEAM_STIRRUP_LEGS"),
+                      ("beam_stirrup_spacing_in", "BEAM_STIRRUP_SPACING"),
+                      ("beam_side_bars", "BEAM_SIDE_BARS"),
+                      ("legacy_centroid_offset_in", "COVER"),
+                      ("beam_clear_cover_in", "BEAM_CLEAR_COVER_IN"),
+                      ("col_clear_cover_in", "COL_CLEAR_COVER_IN")):
+        if key not in rebar:
+            raise ValueError(f"Cached design lacks {key}; cannot reproduce its reinforcement.")
+        setattr(sp, name, rebar[key])
+    _apply_slab(slab)
+    sp.AGGREGATE_MAX_SIZE_IN = aggregate
+    sp.REINFORCEMENT_SPECIFICATION = material["reinforcement_specification"]
+    sp.MATERIAL_EXPOSURE = material["exposure"]
+    transfer = record.get("floor_transfer")
+    if record.get("gravity_load_model") == "slab_transfer":
+        from Design.SMRF_Floor_Transfer import validate_floor_transfer
+        area = sp.BAY_X * sp.NUM_BAY_X * sp.BAY_Y * sp.NUM_BAY_Y / 144.0
+        validate_floor_transfer(
+            transfer, _slab_geometry(),
+            {"b_beam_in": sp.B_BEAM, "h_beam_in": sp.H_BEAM, "fc_beam_ksi": sp.FC_BEAM_KSI,
+             "b_col_in": sp.B_COL, "h_col_in": sp.H_COL},
+            sp.SLAB_THICKNESS_IN, sp.floor_dead_load_ksf() * area, sp.FLOOR_LIVE_LOAD_KSF * area)
+        sp.FLOOR_TRANSFER = transfer
+    else:
+        if transfer is not None:
+            raise ValueError("Cached design carries a floor transfer but does not declare the slab_transfer load model.")
+        sp.FLOOR_TRANSFER = None
+    strength = record.get("slab_reinforcement")
+    if strength is not None and strength.get("inputs"):
+        from Design.SMRF_Slab_Reinforcement import evaluate_slab_reinforcement
+        audit = evaluate_slab_reinforcement(strength)
+        if audit[0]["status"] != "pass":
+            raise ValueError("Cached slab reinforcement does not reproduce.")
+        if strength["inputs"]["slab"]["thickness_in"] != sp.SLAB_THICKNESS_IN:
+            raise ValueError("Cached slab reinforcement belongs to a different slab thickness.")
+    sp.SLAB_REINFORCEMENT = strength
     return record
+
+
+def design_request_identity(cfg=None):
+    """Portable identity of design inputs and source, excluding GM/intensity."""
+    cfg = cfg or DesignConfig.from_structure_parameters()
+    keys = ("NUM_BAY_X", "NUM_BAY_Y", "NUM_FLOOR", "BAY_X", "BAY_Y", "STORY_H",
+            "FLOOR_DEAD_LOAD_KSF", "FLOOR_LIVE_LOAD_KSF", "CONCRETE_UNIT_WEIGHT_KCF",
+            "GRAVITY_LOAD_MODEL", "ASCE_SDS", "ASCE_SD1", "ASCE_S1", "ASCE_R", "ASCE_IE",
+            "ASCE_CU", "ASCE_TL", "FY_KSI", "ES_KSI", "COVER")
+    inputs = {key: getattr(sp, key) for key in keys}
+    policy = asdict(cfg)
+    # Selected sections/reinforcement are outputs, not request parameters.
+    policy.pop("sections", None)
+    for key in ("fc_col_ksi", "fc_beam_ksi"):
+        policy["materials"].pop(key, None)
+    for key in list(policy.get("rebar", {})):
+        if key.startswith("stirrup_spacing_") and key not in ("stirrup_spacing_min_in", "stirrup_spacing_step_in"):
+            policy["rebar"].pop(key)
+    source_root = Path(__file__).resolve().parents[1]
+    files = [source_root / name for name in ("Structure_Parameters.py", "RC_Design_Check.py", "Redesign.py")]
+    for folder in ("Design", "Model", "Loads", "Analysis"):
+        files.extend((source_root / folder).rglob("*.py"))
+    hashes = {path.relative_to(source_root).as_posix(): hashlib.sha256(
+        path.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest()
+        for path in sorted(files)}
+    payload = {"schema": DESIGN_SCHEMA_VERSION, "inputs": inputs, "policy": policy,
+               "source_sha256": hashes}
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return {"sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(), **json.loads(canonical)}
 
 
 def load_or_create_design(design_path, cfg=None, verbose=True):
@@ -589,14 +1648,40 @@ def load_or_create_design(design_path, cfg=None, verbose=True):
     concurrent generation worker never reads a half-written design.
     """
     design_path = Path(design_path)
+    identity = design_request_identity(cfg)
     if design_path.exists():
         record = json.loads(design_path.read_text(encoding="utf-8"))
+        if record.get("schema_version") != DESIGN_SCHEMA_VERSION or record.get("request_identity", {}).get("sha256") != identity["sha256"]:
+            raise RuntimeError("Existing design uses different inputs or methodology. Preserve it and choose a new output root.")
         apply_design(record)
         return record, False
 
-    record = design_structure(cfg=cfg, verbose=verbose)
     design_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = design_path.with_name(f".{design_path.name}.tmp")
-    temporary.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, design_path)
-    return record, True
+    lock_path = design_path.with_name(f".{design_path.name}.lock")
+    try:
+        lock = lock_path.open("x", encoding="utf-8")
+    except FileExistsError as exc:
+        raise RuntimeError(f"Design is already reserved, or an interrupted lock needs review: {lock_path}") from exc
+    temporary = design_path.with_name(f".{design_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with lock:
+            lock.write(json.dumps({"pid": os.getpid(), "request_sha256": identity["sha256"]}))
+        # Another writer may have completed between the initial read and lock.
+        if design_path.exists():
+            record = json.loads(design_path.read_text(encoding="utf-8"))
+            if record.get("request_identity", {}).get("sha256") != identity["sha256"] or record.get("schema_version") != DESIGN_SCHEMA_VERSION:
+                raise RuntimeError("Another writer created a different design; existing artifact preserved.")
+            apply_design(record)
+            return record, False
+        record = design_structure(cfg=cfg, verbose=verbose)
+        record["request_identity"] = identity
+        temporary.write_text(json.dumps(record, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        # No-clobber rename on Windows; writers in this workflow share the lock.
+        if design_path.exists():
+            raise RuntimeError("Design destination appeared during analysis; existing artifact preserved.")
+        temporary.rename(design_path)
+        return record, True
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+        lock_path.unlink()

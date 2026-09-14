@@ -49,12 +49,27 @@ class RebarConfig:
 
     col_n_side_options
         Candidate side-bar counts per face (total side = 2 × value).
+        Face bar counts stay within what the capacity-design hoop ladder can
+        tie with a leg or crosstie on every face bar (six), so the steel the
+        strong-column rule can demand at the top of the section ladder comes
+        from bar size (#10, #11), not from denser faces; the bar-spacing and
+        18.7.5.2(f) filters in Redesign._col_candidates remove what does not
+        fit.
 
     rho_col_min / rho_col_max
-        ACI 318-19 §10.6.1.1 longitudinal steel ratio limits.
+        ACI 318-19 §18.7.4.1 SMRF longitudinal steel ratio limits.
+
+    rho_col_practical_max
+        Proportioning preference, not a code limit: the largest column steel
+        ratio the strong-column/weak-beam escalation may select before the
+        search steps to a larger column section instead. ACI 318-19 18.7.4.1
+        permits 0.06; R18.7.4.1 names congestion, splicing and shear as the
+        reasons practice stays well below it. Ratios above this are never
+        selected automatically.
 
     cover_in
-        Clear cover to longitudinal bar centroid (in).
+        Distance from concrete face to longitudinal bar centroid (in),
+        NOT clear cover to the outside of transverse reinforcement.
 
     stirrup_*
         Transverse reinforcement properties used for shear checks.
@@ -77,9 +92,25 @@ class RebarConfig:
     beam_n_range: Tuple[int, int] = (2, 7)         # inclusive, per layer
 
     rho_col_min: float = 0.01
-    rho_col_max: float = 0.08
+    rho_col_max: float = 0.06
+    rho_col_practical_max: float = 0.04
 
     cover_in: float = field(default_factory=lambda: sp.COVER)
+    beam_clear_cover_in: float = field(default_factory=lambda: sp.BEAM_CLEAR_COVER_IN)
+    col_clear_cover_in: float = field(default_factory=lambda: sp.COL_CLEAR_COVER_IN)
+    aggregate_max_size_in: float = field(default_factory=lambda: sp.AGGREGATE_MAX_SIZE_IN)
+
+    def centroid_cover_in(self, member_type, bar_size=None):
+        """Current/candidate bar offset; explicit clear cover only in new mode."""
+        if sp.SLAB_THICKNESS_IN is None:
+            return self.cover_in
+        if member_type == "beam":
+            clear, hoop, selected = self.beam_clear_cover_in, self.beam_stirrup_bar_size, sp.BEAM_BAR_SIZE
+        elif member_type == "column":
+            clear, hoop, selected = self.col_clear_cover_in, self.col_stirrup_bar_size, sp.COL_BAR_SIZE
+        else:
+            raise ValueError("member_type must be beam or column")
+        return clear + sp.rebar_diameter(hoop) + 0.5 * sp.rebar_diameter(selected if bar_size is None else bar_size)
 
     # Transverse reinforcement
     stirrup_bar_size: int = field(default_factory=lambda: sp.COL_STIRRUP_BAR_SIZE)
@@ -132,6 +163,8 @@ class MaterialConfig:
     fc_beam_ksi: ScalarOrRange = field(default_factory=lambda: sp.FC_BEAM_KSI)
     fy_ksi: ScalarOrRange = field(default_factory=lambda: sp.FY_KSI)
     es_ksi: float = field(default_factory=lambda: sp.ES_KSI)
+    reinforcement_specification: str = field(default_factory=lambda: sp.REINFORCEMENT_SPECIFICATION)
+    exposure: str = field(default_factory=lambda: sp.MATERIAL_EXPOSURE)
 
     def resolve(self, rng=None) -> "MaterialConfig":
         """Return a MaterialConfig with all ScalarOrRange fields as floats.
@@ -153,6 +186,8 @@ class MaterialConfig:
             fc_beam_ksi=_draw(self.fc_beam_ksi),
             fy_ksi=_draw(self.fy_ksi),
             es_ksi=self.es_ksi,
+            reinforcement_specification=self.reinforcement_specification,
+            exposure=self.exposure,
         )
 
     def is_resolved(self) -> bool:
@@ -202,6 +237,107 @@ class LoadConfig:
 
 
 @dataclass
+class SlabConfig:
+    """Uniform building slab policy, not a preselected thickness.
+
+    Normalweight monolithic beam-supported two-way panels, Grade 60, with
+    the same thickness at every level including the roof. Bounds/increment
+    are research search choices, not ACI-prescribed thicknesses. The 50 psf
+    superimposed allowance is provisional; it EXCLUDES concrete self-weight.
+    Zero live-load mass is the provisional ordinary-office assumption, not
+    a completed ASCE effective-seismic-weight inventory.
+    """
+    minimum_thickness_in: float = 5.0
+    maximum_thickness_in: float = 14.0
+    thickness_increment_in: float = 0.5
+    superimposed_dead_load_ksf: float = 0.05
+    live_load_mass_fraction: float = 0.0
+
+
+@dataclass
+class SlabActionAssertions:
+    """Engineering assertions about the slab action evidence. Default: none.
+
+    ``SMRF_Slab_Actions`` computes strip demands from the flexible-beam floor
+    model and records the numerical basis of each item below. Whether that
+    analysis is applicable, enveloped and verified is an engineering
+    judgement made after reviewing it (methodology item 7); it is asserted
+    here, never by the code that produced the numbers. Until every flag is
+    True the strip routine selects no reinforcement, the beam-plus-slab
+    strengths are not established, and the joint SCWB checks stay
+    not_evaluated. These fields are part of the design request identity, so
+    a design made under an assertion records who made it and on what basis.
+    """
+    analysis_applicability_verified: bool = False
+    all_floors_enveloped: bool = False
+    load_pattern_envelope_verified: bool = False
+    spatial_envelope_per_unit_width: bool = False
+    twisting_moment_resolution_verified: bool = False
+    zero_membrane_force_verified: bool = False
+    verified: bool = False
+    two_way_shear_path_assessed: bool = False
+    asserted_by: str = ""
+    assertion_date: str = ""
+    assertion_basis: str = ""
+
+    def all_asserted(self):
+        from Design.SMRF_Common import assertion_provenance_valid
+        return assertion_provenance_valid(vars(self)) and all(getattr(self, name) is True for name in (
+            "analysis_applicability_verified", "all_floors_enveloped", "load_pattern_envelope_verified",
+            "spatial_envelope_per_unit_width", "twisting_moment_resolution_verified",
+            "zero_membrane_force_verified", "verified"))
+
+
+@dataclass
+class DemandPolicy:
+    """Declared demand-scope assumptions (ASCE 7-22 Chapters 2, 4, 11, 12).
+
+    These are the engineer's declarations about the research archetype; the
+    demand checks evaluate the design against them and stay not_evaluated
+    while ``declaration_basis`` is empty. Site class matters for 11.4.8
+    site-specific requirements even though SDS/SD1/S1 are given directly.
+    Occupancy fixes the 12.7.2 effective-weight inventory: an office carries
+    a partition allowance (>= 10 psf where partitions exist) and no storage
+    live-load fraction. Wind, snow and rain are declared not to govern this
+    seismic archetype; the 50 psf floor live load is applied to the roof
+    and envelopes the Table 4.3-1 roof live load.
+    """
+    risk_category: str = "II"
+    site_class: str = "C"
+    occupancy: str = "office"
+    partition_allowance_ksf: float = 0.010
+    storage_live_fraction_in_weight: float = 0.0
+    roof_live_load_ksf: float = 0.020
+    snow_load_ksf: float = 0.0
+    wind_governs: bool = False
+    rain_ponding_excluded: bool = True
+    accidental_torsion_ratio: float = 0.05
+    live_load_patterning: bool = True
+    declared_by: str = ""
+    declaration_date: str = ""
+    declaration_basis: str = ""
+
+
+@dataclass
+class IndependentVerification:
+    """Assertions that a person has done the checks code cannot do about itself.
+
+    Each flag replaces one not_evaluated qualification item with an
+    evaluated one carrying ``asserted_by``/``basis``; all default False.
+    """
+    floor_hand_check_verified: bool = False          # floor.independent_hand_verification
+    strength_model_verified: bool = False            # qualification.strength_model_verification
+    detailing_model_consistency_verified: bool = False   # qualification.detailing_model_consistency
+    slab_column_local_steel_assessed: bool = False   # slab_column_local_minimum_steel (8.6.1.2)
+    fire_resistance_scope_accepted: bool = False     # slab_fire_resistance
+    congestion_and_placement_accepted: bool = False  # detailing.congestion_and_placement
+    floor_frame_compatibility_reviewed: bool = False   # floor.compatibility_idealization_reviewed
+    asserted_by: str = ""
+    assertion_date: str = ""
+    assertion_basis: str = ""
+
+
+@dataclass
 class DCRTargets:
     """Demand/capacity ratio acceptance criteria and optimisation target.
 
@@ -231,11 +367,36 @@ class DCRTargets:
 
     objective: str = "min_deviation"
 
+    # Biaxial column interaction (ACI 318-19 R22.4; Bresler load contour):
+    # (Muy/phiMny)^alpha + (Muz/phiMnz)^alpha <= 1. A stated engineering
+    # parameter, covered by IndependentVerification.strength_model_verified:
+    # 1.0 is the linear contour (conservative for every section), 1.5 the
+    # customary design value; Bresler's measured range is about 1.15-1.55.
+    biaxial_contour_exponent: float = 1.5
+
     def in_band(self, dcr: float) -> bool:
         return self.dcr_band_lo <= dcr <= self.dcr_band_hi
 
     def hard_fail(self, dcr: float) -> bool:
         return dcr > self.dcr_hard_max
+
+
+@dataclass
+class FloorAnalysisConfig:
+    """Rigid-line shell diagnostic, plus the flexible-beam slab-to-frame transfer.
+
+    transfer_to_frame
+        Run the flexible-beam floor model for unit dead and unit live
+        pressure and load the frame beams/columns with its transfer instead
+        of tributary nodal loads (Design/SMRF_Floor_Transfer). The transfer
+        mesh is chosen by SMRF_Floor_Analysis.transfer_mesh_per_bay unless
+        transfer_mesh_per_bay is set.
+    """
+    enabled: bool = True
+    mesh_per_bay: int = 4
+    refinement_mesh_per_bay: int = 8
+    transfer_to_frame: bool = True
+    transfer_mesh_per_bay: Optional[int] = None
 
 
 @dataclass
@@ -285,6 +446,11 @@ class DesignConfig:
     materials: MaterialConfig = field(default_factory=MaterialConfig)
     sections: SectionConfig = field(default_factory=SectionConfig)
     loads: LoadConfig = field(default_factory=LoadConfig)
+    slab_actions: SlabActionAssertions = field(default_factory=SlabActionAssertions)
+    demands: DemandPolicy = field(default_factory=DemandPolicy)
+    verification: IndependentVerification = field(default_factory=IndependentVerification)
+    slab: SlabConfig = field(default_factory=SlabConfig)
+    floor_analysis: FloorAnalysisConfig = field(default_factory=FloorAnalysisConfig)
     dcr: DCRTargets = field(default_factory=DCRTargets)
     iteration: IterationConfig = field(default_factory=IterationConfig)
 

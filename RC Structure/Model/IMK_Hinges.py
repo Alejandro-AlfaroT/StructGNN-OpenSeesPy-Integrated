@@ -75,6 +75,41 @@ def _member_length(n_i, n_j):
     return length
 
 
+def beam_yield_moments(member_type, n_i, n_j):
+    """(hogging, sagging) yield moments for a beam member, kip-in.
+
+    Slab-aware designs use the developed beam-plus-slab strengths from
+    Design.SMRF_Beam_Slab_Strength -- the same numbers the SCWB screen and
+    the joint qualification compare columns against -- for the beam's
+    family (x/y, perimeter/interior line). Without a slab the two signs
+    come from the actual top and bottom bars. The legacy bundled-load model
+    keeps its symmetric max(top, bottom) strength.
+    """
+    if sp.SLAB_THICKNESS_IN is None:
+        symmetric = sp.beam_nominal_moment_y()
+        return symmetric, symmetric, {"basis": "legacy symmetric max(top, bottom) bars", "family": None}
+    from Design.SMRF_Beam_Slab_Strength import composite_beam_strengths, beam_family
+    xi, yi, _ = ops.nodeCoord(n_i)
+    if member_type == "beam_x":
+        line = int(round(yi / sp.BAY_Y)) if sp.BAY_Y > 0 else 0
+    else:
+        line = int(round(xi / sp.BAY_X)) if sp.BAY_X > 0 else 0
+    axis, position = beam_family(member_type, line, sp.NUM_BAY_X, sp.NUM_BAY_Y)
+    layout = (sp.SLAB_REINFORCEMENT or {}).get("layout")
+    beam = {"b_in": sp.B_BEAM, "h_in": sp.H_BEAM, "fc_ksi": sp.FC_BEAM_KSI, "fy_ksi": sp.FY_KSI,
+            "bar_size": sp.BEAM_BAR_SIZE, "top_bars": sp.BEAM_TOP_BARS, "bot_bars": sp.BEAM_BOT_BARS,
+            "centroid_offset_in": sp.longitudinal_cover_in("beam")}
+    slab = {"thickness_in": sp.SLAB_THICKNESS_IN if layout is not None else 0.0}
+    geometry = {"bay_x_in": sp.BAY_X, "bay_y_in": sp.BAY_Y, "h_col_in": sp.H_COL, "b_col_in": sp.B_COL}
+    family = composite_beam_strengths(beam, slab, layout, geometry, axis, position)
+    return family["mn_negative_kip_in"], family["mn_positive_kip_in"], {
+        "basis": "beam plus developed slab mats in the ACI 6.3.2 flange" if layout is not None
+                 else "rectangular beam, actual top and bottom bars; slab reinforcement not established",
+        "family": f"{axis}_{position}",
+        "effective_flange_width_in": family["effective_flange_width_in"],
+        "slab_steel_in_flange_in2": family["slab_steel_in_flange_in2"]}
+
+
 def _member_properties(member_type, axial_kip=0.0):
     """Elastic properties for an IMK member, on effective (cracked) stiffness.
 
@@ -235,7 +270,8 @@ def _orientation(member_type):
     raise ValueError(f"Unknown member_type: {member_type}")
 
 
-def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment, backbone=None):
+def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment, backbone=None,
+                              yield_moment_negative=None):
     """
     Define OpenSees IMKBilin using the current OpenSees argument order:
 
@@ -244,8 +280,12 @@ def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment, backbone
         Lamda_S, Lamda_C, Lamda_K, c_S, c_C, c_K, D_pos, D_neg
 
     All positive/negative-direction backbone parameters are passed as positive
-    values, matching the OpenSees IMKBilin documentation.
+    values, matching the OpenSees IMKBilin documentation. ``yield_moment`` is
+    the positive-deformation strength; ``yield_moment_negative`` (default:
+    the same) the negative-deformation strength.
     """
+    if yield_moment_negative is None:
+        yield_moment_negative = yield_moment
 
     # Rotation capacities come from the per-member backbone when one is
     # supplied. Falling back to the globals keeps the uncalibrated path usable.
@@ -271,7 +311,7 @@ def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment, backbone
         theta_p,
         theta_pc,
         theta_u,
-        yield_moment,
+        yield_moment_negative,
         fmaxfy_neg,
         fresfy_neg,
         sp.IMK_LAMBDA_S,
@@ -301,7 +341,16 @@ def _create_end_hinge(
     ke_y = imk_hinge_stiffness(member_type, "rot_y", length)
     ke_z = imk_hinge_stiffness(member_type, "rot_z", length)
 
-    _define_imk_peak_material(mat_y, ke_y, props["my"], backbone)
+    # Beam hinges are asymmetric. Measured on the zeroLength springs (see
+    # tests/test_beam_hinge_asymmetry.py): hogging is POSITIVE spring
+    # deformation at end i and NEGATIVE at end j, for beam_x and beam_y alike.
+    hogging = props.get("my_hogging", props["my"])
+    sagging = props.get("my_sagging", props["my"])
+    if end_id == 1:
+        positive, negative = hogging, sagging
+    else:
+        positive, negative = sagging, hogging
+    _define_imk_peak_material(mat_y, ke_y, positive, backbone, negative)
     _define_imk_peak_material(mat_z, ke_z, props["mz"], backbone)
 
     ops.element(
@@ -330,6 +379,10 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         axial_kip = column_gravity_axial(story_index, grid_i, grid_j)
 
     props = _member_properties(member_type, axial_kip=axial_kip)
+    strength_basis = None
+    if member_type in ("beam_x", "beam_y"):
+        hogging, sagging, strength_basis = beam_yield_moments(member_type, n_i, n_j)
+        props.update(my_hogging=hogging, my_sagging=sagging, my=max(hogging, sagging))
     backbone = backbone_for_member(member_type, axial_kip=axial_kip)
     length = _member_length(n_i, n_j)
     i_hinge_node = hinge_node_tag(ele_tag, 1)
@@ -350,7 +403,11 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         "node_j": int(n_j),
         "length_in": length,
         "yield_moment_y_kip_in": props["my"],
+        "yield_moment_y_hogging_kip_in": props.get("my_hogging", props["my"]),
+        "yield_moment_y_sagging_kip_in": props.get("my_sagging", props["my"]),
         "yield_moment_z_kip_in": props["mz"],
+        "strength_basis": (strength_basis or {}).get("basis"),
+        "beam_family": (strength_basis or {}).get("family"),
         "theta_y_target": props["theta_y"],
         # The spring's OWN elastic limit. theta_y_target is a member-level
         # nominal (a fixed 0.004 for columns, 0.005 for beams), but the spring
@@ -358,8 +415,16 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         # stiffness, so it yields at My/Ke -- 26x to 65x smaller across the
         # pilot. Recorded hinge rotation is spring rotation, so plastic
         # rotation must be measured from this, not from the member nominal.
+        # With asymmetric beam strengths the spring yields first in the
+        # weaker (sagging) direction; that is the rotation the yielded flag
+        # must be measured against.
         "theta_y_spring_y": (
-            props["my"] / imk_hinge_stiffness(member_type, "rot_y", length)
+            min(props.get("my_hogging", props["my"]), props.get("my_sagging", props["my"]))
+            / imk_hinge_stiffness(member_type, "rot_y", length)
+            if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
+        ),
+        "theta_y_spring_y_hogging": (
+            props.get("my_hogging", props["my"]) / imk_hinge_stiffness(member_type, "rot_y", length)
             if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
         ),
         "theta_y_spring_z": (

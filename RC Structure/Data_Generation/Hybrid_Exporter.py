@@ -630,6 +630,7 @@ def compile_hybrid_sample(
         portable_sample = _portable_path(sample_path, output_dir)
         needs_refresh = (
             not metadata_path.exists()
+            or "reinforcement_geometry" not in metadata
             or metadata.get("run_name") != ntha_dir.name
             or metadata.get("source_ntha_dir") != portable_source
             or metadata.get("sample_npz") != portable_sample
@@ -637,6 +638,10 @@ def compile_hybrid_sample(
         metadata["run_name"] = ntha_dir.name
         metadata["source_ntha_dir"] = portable_source
         metadata["sample_npz"] = portable_sample
+        # Reusing an existing tensor is not evidence that current source files
+        # describe its reinforcement. Keep its recorded sidecar; missing old
+        # provenance stays unknown instead of being inferred from live inputs.
+        metadata.setdefault("reinforcement_geometry", None)
         if needs_refresh:
             _write_json(metadata_path, metadata)
         return metadata
@@ -823,6 +828,10 @@ def compile_hybrid_sample(
         "element_force_index_columns": ["ele_tag", "node_tag", "end_id", "element_type_id"],
         "element_force_envelope_columns": ELEMENT_FORCE_COLUMNS,
         "global_feature_keys": GLOBAL_FEATURE_KEYS,
+        # Preserve the 43-column tensor contract. Explicit slab/load provenance
+        # is a sidecar field; it is not silently appended to trained inputs.
+        "floor_loads": global_parameters.get("floor_loads"),
+        "reinforcement_geometry": global_parameters.get("reinforcement_geometry"),
         "record_feature_keys": RECORD_FEATURE_KEYS,
         "target_peak_columns": TARGET_PEAK_COLUMNS,
         "hinge_feature_columns": HINGE_FEATURE_COLUMNS,

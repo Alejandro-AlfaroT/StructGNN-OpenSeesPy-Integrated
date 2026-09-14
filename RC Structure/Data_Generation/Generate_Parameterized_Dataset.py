@@ -685,13 +685,55 @@ def complete(root, case):
     return bool(runs) and all(complete_run(root, case, run) for run in runs)
 
 
+def design_refusal(root, case):
+    """Why this case's saved design was refused, or None.
+
+    A case whose design.json exists but did not qualify is terminal: the
+    child refuses to analyse it (Ground_Motion_Main.require_accepted_design)
+    and will keep refusing it on every resume, at the full cost of a design.
+    The refusal is reported with the failed and unevaluated check ids so the
+    plan can be amended deliberately (``--retry-refused`` re-designs them).
+    """
+    path = paths_for(root, case)["design"]
+    if not path.exists():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        qualification = record.get("qualification") or {}
+        if qualification.get("accepted") is True:
+            return None
+        checks = qualification.get("checks") or []
+        return {
+            "schema_version": record.get("schema_version"),
+            "counts": qualification.get("counts"),
+            "failed": sorted({c["id"].split(":")[0] for c in checks if c.get("status") == "fail"}),
+            "not_evaluated": sorted({c["id"].split(":")[0] for c in checks if c.get("status") == "not_evaluated"}),
+        }
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        return {"unreadable": repr(exc)}
+
+
 def scan_completed(root, cases):
     """Perform the expensive filesystem scan once when a scheduler starts."""
     return {case["case_id"] for case in cases if complete(root, case)}
 
 
-def select_pending_cases(cases, completed_ids, case_start=1, case_end=None, run_limit=None):
-    """Select unfinished cases from an inclusive, one-based device range."""
+def scan_refused(root, cases):
+    """Cases whose saved design was refused by qualification, with the reasons."""
+    refused = {}
+    for case in cases:
+        reason = design_refusal(root, case)
+        if reason is not None:
+            refused[case["case_id"]] = reason
+    return refused
+
+
+def select_pending_cases(cases, completed_ids, case_start=1, case_end=None, run_limit=None, refused_ids=()):
+    """Select unfinished cases from an inclusive, one-based device range.
+
+    Cases in ``refused_ids`` (design saved but not qualified) are terminal
+    and skipped; the caller passes an empty set to retry them.
+    """
     case_end = len(cases) if case_end is None else case_end
     if case_start < 1 or case_end < case_start or case_end > len(cases):
         raise ValueError(
@@ -699,7 +741,9 @@ def select_pending_cases(cases, completed_ids, case_start=1, case_end=None, run_
             f"received {case_start}..{case_end}."
         )
     scope = cases[case_start - 1:case_end]
-    selected = [case for case in scope if case["case_id"] not in completed_ids]
+    refused_ids = set(refused_ids)
+    selected = [case for case in scope
+                if case["case_id"] not in completed_ids and case["case_id"] not in refused_ids]
     if run_limit is not None:
         selected = selected[:run_limit]
     return scope, selected
@@ -775,16 +819,20 @@ def run_case(args, case, stop_event, active, lock):
         with lock:
             active.pop(case["case_id"], None)
     finished_runs = completed_run_count(root, case)
+    refusal = None if finished_runs == len(case_runs(case)) else design_refusal(root, case)
     status = "completed" if finished_runs == len(case_runs(case)) else (
-        "pending" if stop_event.is_set() else "failed"
+        "pending" if stop_event.is_set() else "design_refused" if refusal else "failed"
     )
-    return {
+    result = {
         "case_id": case["case_id"], "status": status,
         "skipped": False, "returncode": returncode,
         "completed_runs": finished_runs,
         "planned_runs": len(case_runs(case)),
         "elapsed_sec": time.perf_counter() - started, "updated_at": now(),
     }
+    if refusal:
+        result["design_refusal"] = refusal
+    return result
 
 
 def load_results(root):
@@ -805,13 +853,23 @@ def progress(
         if case["case_id"] not in completed_ids
         and results.get(case["case_id"], {}).get("status") == "failed"
     ]
-    remaining = [case["case_id"] for case in cases if case["case_id"] not in completed_ids]
+    refused = [
+        case["case_id"]
+        for case in cases
+        if case["case_id"] not in completed_ids
+        and results.get(case["case_id"], {}).get("status") == "design_refused"
+    ]
+    remaining = [case["case_id"] for case in cases
+                 if case["case_id"] not in completed_ids and case["case_id"] not in refused]
     state = {
         "status": status, "started_at": started, "updated_at": now(),
         "planned_count": len(cases), "completed_count": len(completed),
-        "failed_count": len(failed), "remaining_count": len(remaining),
+        "failed_count": len(failed), "design_refused_count": len(refused),
+        "remaining_count": len(remaining),
         "active_cases": active, "completed_case_ids": completed,
-        "failed_case_ids": failed, "remaining_case_ids": remaining,
+        "failed_case_ids": failed, "design_refused_case_ids": refused,
+        "design_refusals": {case_id: results[case_id].get("design_refusal") for case_id in refused},
+        "remaining_case_ids": remaining,
     }
     if invocation_case_ids is not None:
         invocation_case_ids = list(invocation_case_ids)
@@ -878,6 +936,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--num-cases", type=int, default=2500)
     parser.add_argument("--run-limit", type=int)
+    parser.add_argument("--retry-refused", action="store_true",
+                        help="Re-design cases whose saved design was refused by qualification "
+                             "(normally terminal; use after changing the plan or the design inputs).")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument(
         "--case-start",
@@ -1051,6 +1112,13 @@ def main():
         return
     results = load_results(root)
     completed_ids = scan_completed(root, cases)
+    # A refused design is terminal until the plan or the design inputs change;
+    # record it as such so resumes do not pay for the same refusal again.
+    refused = {} if args.retry_refused else scan_refused(root, cases)
+    for case_id, reason in refused.items():
+        if case_id not in completed_ids and results.get(case_id, {}).get("status") != "design_refused":
+            results[case_id] = {"case_id": case_id, "status": "design_refused", "design_refusal": reason,
+                                "updated_at": now()}
     if args.refresh_status:
         previous_state_path = root / "generation_state.json"
         previous_state = (
@@ -1080,7 +1148,11 @@ def main():
         case_start=args.case_start,
         case_end=args.case_end,
         run_limit=args.run_limit,
+        refused_ids=refused.keys(),
     )
+    if refused:
+        print(f"{len(refused)} case(s) with a refused design are skipped (terminal); "
+              f"see generation_state.json design_refusals, or pass --retry-refused.")
     invocation_case_ids = [case["case_id"] for case in selected]
     resolved_case_end = args.case_end if args.case_end is not None else len(cases)
     started = now()
