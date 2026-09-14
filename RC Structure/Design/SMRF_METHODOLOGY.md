@@ -987,6 +987,18 @@ An old design artifact is rejected, never silently upgraded.
 to bypass qualification for a dataset claimed to consist of designed SMRFs.
 Neither code tests nor a manually edited `accepted: true` clears open checks.
 
+`Design/Evidence_Summary.py` writes the evidence summary the assertion
+review is made from: it designs the representative case (3x3x8, 10-ft bays,
+sdc_d_high by default) under PROBE slab-action and demand assertions with
+`IndependentVerification` empty, or takes a saved `design.json`, and writes
+`evidence_summary.md` beside it. Every quantity in the document is computed
+from the artifact or measured on the model rebuilt from it (IMK period,
+gravity sway, hinge yield moments per family, load ledger, hogging against
+each beam's fixed-end reference) with the hand reference beside it where a
+hand formula exists; the 2026-09-14 review of the document found two
+sentences that had been typed in from an earlier design and removed the
+possibility.
+
 `Design/Verify_Designs.py` is the design-only verification run over the
 generation plan's own cases: it reproduces `build_plan`'s geometry and
 hazard sampling (same seed, shuffle and round-robin; the first N cases are
