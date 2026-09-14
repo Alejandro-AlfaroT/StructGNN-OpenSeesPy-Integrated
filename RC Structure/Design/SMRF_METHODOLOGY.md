@@ -411,8 +411,21 @@ type rather than silently adopting these assumptions for unrelated input data.
    assumptions. Site class, risk category, occupancy, partition allowance,
    roof/snow/wind/rain scope are declarations in
    `Design.Config.DemandPolicy` and stay `not_evaluated` until declared with
-   an author and basis. Still open: independent verification of the biaxial
-   PM approximation, action transformations and force signs (item 7). The
+   an author and basis. Column P-M under biaxial bending (2026-09-14): each
+   axis is checked against its own phi P-M surface -- bending about y with
+   the top and bottom bars in the extreme layers, bending about z with the
+   side faces extreme (`ACI_Checks.build_pm_diagrams`) -- and the two are
+   combined with the Bresler load contour, (Muy/phiMny)^a + (Muz/phiMnz)^a
+   <= 1, a = `DCRTargets.biaxial_contour_exponent` (1.5; 1.0 is the linear
+   contour, conservative for every section). The earlier resultant moment
+   against the y surface alone read a demand about z against the strength
+   about y. The steel search sizes the cage against the equivalent uniaxial
+   moment (DCR x phiMny) so it targets the biaxial ratio; the true
+   components and both capacities are recorded per member. Column DCRs rose
+   5-10% on the sweep cases; sections did not change (columns are
+   capacity-protected and sit at DCR 0.4-0.6). Still open: independent
+   verification of the contour exponent, action transformations and force
+   signs (item 7, `strength_model_verified`). The
    `sdc_c` preset was re-valued to SDS 0.40 / SD1 0.19 / S1 0.19 on
    2026-09-13: its former 0.50 / 0.25 pair sat on the Table 11.6-1/11.6-2
    thresholds and derived as SDC D. The legacy mode retains its old D+100%L
@@ -973,6 +986,25 @@ An old design artifact is rejected, never silently upgraded.
 `--skip-design` remains an explicit legacy-analysis option. It must not be used
 to bypass qualification for a dataset claimed to consist of designed SMRFs.
 Neither code tests nor a manually edited `accepted: true` clears open checks.
+
+`Design/Verify_Designs.py` is the design-only verification run over the
+generation plan's own cases: it reproduces `build_plan`'s geometry and
+hazard sampling (same seed, shuffle and round-robin; the first N cases are
+the first N the dataset run will design), designs each in a fresh
+interpreter with the committed `Design/Config.py` through
+`load_or_create_design`, keeps every `design.json`, resumes, and writes
+`summary.md` / `summary.csv` / `summary.json` with the failed and open item
+histograms. `--probe-assertions` fills the three blocks with PROBE values
+(labelled in every request identity) to exercise the pipeline before the
+real assertions exist; its summary says so and certifies nothing. Three
+plan cases ran at 8 min per case with 100-180 MB each, so 150 cases are
+about 5-6 h on four workers and 20 GB.
+
+In the generation scheduler a case whose saved design was refused by
+qualification is terminal (`design_refused` in `case_results.json` and
+`generation_state.json`, with the failed and unevaluated item ids): the
+child would refuse it again on every resume at the cost of a full design.
+`--retry-refused` re-designs them after the plan or the design inputs change.
 
 After the remaining design work is verified, freeze one new plan and methodology
 version, distribute disjoint case ranges, and compare hashes on all computers.

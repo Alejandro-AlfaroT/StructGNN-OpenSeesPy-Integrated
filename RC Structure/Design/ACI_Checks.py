@@ -118,12 +118,38 @@ def _col_steel_layers(
     return layers
 
 
-def build_pm_diagram(cfg: DesignConfig, n_pts: int = 120) -> List[Tuple[float, float]]:
+def _col_steel_layers_about_z(cfg: DesignConfig) -> List[Tuple[float, float]]:
     """
-    φPn–φMn interaction diagram for the current column section.
+    Column steel layers for bending about the local z axis: the compression
+    face is a side face, the depth is b, and the layers are grouped by their
+    distance from that face. The two bars at each end of the top and bottom
+    faces sit with the side-face bars in the outermost layers; the interior
+    top/bottom bars form one layer per position (two bars each).
+    Returns [(area_in2, dist_from_compression_face_in), ...].
+    """
+    cover = cfg.rebar.centroid_cover_in("column")
+    b     = cfg.sections.b_col_in
+    Ab    = sp.COL_BAR_AREA
+    n_top = max(2, sp.COL_TOP_BARS)
+    outer = (2 + sp.COL_SIDE_BARS) * Ab              # corner bars of both faces + one side face
+    layers = [(outer, cover)]
+    if n_top > 2:
+        positions = [cover + (b - 2 * cover) * k / (n_top - 1) for k in range(1, n_top - 1)]
+        layers += [(2 * Ab, y) for y in positions]    # one top bar and one bottom bar per position
+    layers.append((outer, b - cover))
+    return layers
 
-    Sweeps neutral-axis depth c from near-zero (tension-controlled) to 4h
-    (near pure compression).  All geometry and materials come from cfg and sp.
+
+def build_pm_diagram(cfg: DesignConfig, n_pts: int = 120, axis: str = "y") -> List[Tuple[float, float]]:
+    """
+    φPn–φMn interaction diagram for the current column section, about one axis.
+
+    ``axis="y"`` is bending about the local y axis (depth h, the top and
+    bottom bars in the extreme layers, the section the checks always used);
+    ``axis="z"`` is bending about the local z axis (depth b, the side faces
+    extreme). Sweeps neutral-axis depth c from near-zero (tension-controlled)
+    to 4 times the depth (near pure compression). Geometry and materials come
+    from cfg and sp.
 
     Returns
     -------
@@ -133,9 +159,14 @@ def build_pm_diagram(cfg: DesignConfig, n_pts: int = 120) -> List[Tuple[float, f
     fc     = cfg.materials.fc_col_ksi if isinstance(cfg.materials.fc_col_ksi, float) else sp.FC_COL_KSI
     fy     = cfg.materials.fy_ksi     if isinstance(cfg.materials.fy_ksi,     float) else sp.FY_KSI
     Es     = cfg.materials.es_ksi
-    b      = cfg.sections.b_col_in
-    h      = cfg.sections.h_col_in
-    layers = _col_steel_layers(cfg)
+    if axis == "y":
+        b, h = cfg.sections.b_col_in, cfg.sections.h_col_in
+        layers = _col_steel_layers(cfg)
+    elif axis == "z":
+        b, h = cfg.sections.h_col_in, cfg.sections.b_col_in      # width along the other side, depth b
+        layers = _col_steel_layers_about_z(cfg)
+    else:
+        raise ValueError("axis must be 'y' or 'z'")
 
     ecu = 0.003
     b1  = _beta1(fc)
@@ -170,6 +201,11 @@ def build_pm_diagram(cfg: DesignConfig, n_pts: int = 120) -> List[Tuple[float, f
     return diagram
 
 
+def build_pm_diagrams(cfg: DesignConfig, n_pts: int = 120) -> Dict[str, List[Tuple[float, float]]]:
+    """Both uniaxial φP–φM diagrams, keyed by bending axis."""
+    return {"y": build_pm_diagram(cfg, n_pts, "y"), "z": build_pm_diagram(cfg, n_pts, "z")}
+
+
 def _interpolate_pm_capacity(Pu: float, diagram: List[Tuple[float, float]]) -> Optional[float]:
     """Return the interpolated φMn capacity at the given Pu.  None if out of range."""
     pts = sorted(diagram, key=lambda p: -p[0])
@@ -193,26 +229,45 @@ def check_column_pm(
     Pu: float,
     Muz: float,
     Muy: float,
-    diagram: List[Tuple[float, float]],
+    diagrams,
     cfg: DesignConfig,
 ) -> LimitStateResult:
     """
-    ACI 318-19 §22.4 column P-M interaction.
+    ACI 318-19 §22.4 column P-M interaction under biaxial bending.
 
-    Biaxial bending via resultant moment: Mu = √(Muz² + Muy²).
-    DCR = distance from origin to demand point
-          / distance from origin to capacity surface along the same load angle.
+    ``diagrams`` is {"y": φP–φM about y, "z": φP–φM about z} from
+    build_pm_diagrams (a single list is taken as both, for callers that only
+    have the y diagram). Each axis is checked against its own uniaxial
+    surface at Pu, and the two are combined with the load-contour
+    interaction (Bresler; ACI 318-19 R22.4, PCA Notes):
+
+        (|Muy| / φMny)^α + (|Muz| / φMnz)^α <= 1,   DCR = (...)^(1/α)
+
+    α is cfg.dcr.biaxial_contour_exponent (1.5 by default, a stated
+    parameter: 1.0 is the linear contour, conservative for every section;
+    Bresler's measured range is about 1.15-1.55). The earlier resultant
+    moment against the y surface alone read a demand about z against the
+    strength about y, which is not the same section.
+
+    ``demand`` is reported as the equivalent uniaxial moment about y that
+    gives the same DCR (DCR × φMny), so the steel search, which sizes the
+    cage on the y surface, targets the biaxial ratio; the true components
+    are in the section_info the caller records.
 
     min_controlled: True when Ast ≤ ρ_min × Ag × 1.01.
     """
-    Mu     = math.sqrt(Muz**2 + Muy**2)
+    if isinstance(diagrams, dict):
+        diagram_y, diagram_z = diagrams["y"], diagrams["z"]
+    else:
+        diagram_y = diagram_z = diagrams
+    alpha  = getattr(cfg.dcr, "biaxial_contour_exponent", 1.5)
     Ag     = cfg.sections.b_col_in * cfg.sections.h_col_in
     Ast    = (sp.COL_TOP_BARS + sp.COL_BOT_BARS + sp.COL_SIDE_BARS * 2) * sp.COL_BAR_AREA
     min_controlled = Ast <= cfg.rebar.rho_col_min * Ag * 1.01
 
     # Pure-compression case (zero eccentricity)
-    if Mu < 1e-4:
-        phi_Pmax = diagram[0][0]
+    if abs(Muy) < 1e-4 and abs(Muz) < 1e-4:
+        phi_Pmax = min(diagram_y[0][0], diagram_z[0][0])
         cap      = phi_Pmax if phi_Pmax > 1e-6 else 1e-9
         dcr      = Pu / cap
         return LimitStateResult(
@@ -220,17 +275,17 @@ def check_column_pm(
             dcr=dcr, ok=dcr <= 1.0, min_controlled=min_controlled,
         )
 
-    phi_Mn_cap = _interpolate_pm_capacity(Pu, diagram)
-
-    if phi_Mn_cap is None or phi_Mn_cap < 1e-6:
+    phi_y = _interpolate_pm_capacity(Pu, diagram_y)
+    phi_z = _interpolate_pm_capacity(Pu, diagram_z)
+    if phi_y is None or phi_y < 1e-6 or phi_z is None or phi_z < 1e-6:
         return LimitStateResult(
-            name="PM", demand=Mu, capacity=0.0,
+            name="PM", demand=math.hypot(Muy, Muz), capacity=0.0,
             dcr=999.0, ok=False, min_controlled=min_controlled,
         )
 
-    dcr = Mu / phi_Mn_cap
+    dcr = ((abs(Muy) / phi_y) ** alpha + (abs(Muz) / phi_z) ** alpha) ** (1.0 / alpha)
     return LimitStateResult(
-        name="PM", demand=Mu, capacity=phi_Mn_cap,
+        name="PM", demand=dcr * phi_y, capacity=phi_y,
         dcr=dcr, ok=dcr <= 1.0, min_controlled=min_controlled,
     )
 
@@ -480,7 +535,7 @@ def run_checks_phase1(
     Av_col = cfg.rebar.col_stirrup_area_in2
     Av_beam = cfg.rebar.beam_stirrup_area_in2
 
-    pm_diagram = build_pm_diagram(cfg)
+    pm_diagrams = build_pm_diagrams(cfg)
     results: Dict[int, MemberCheckResult] = {}
 
     def _captured(tag):
@@ -498,7 +553,7 @@ def run_checks_phase1(
             tag, None if captured is None else captured["local_force_kip_kipin"])
         Vu = math.sqrt(Vy**2 + Vz**2)
 
-        ls_pm    = check_column_pm(P, Mz, My, pm_diagram, cfg)
+        ls_pm    = check_column_pm(P, Mz, My, pm_diagrams, cfg)
         ls_shear = check_shear(
             Vu, P,
             bw=cfg.sections.b_col_in, d=_col_d(cfg),
@@ -515,7 +570,9 @@ def run_checks_phase1(
         )
 
         Ast = (sp.COL_TOP_BARS + sp.COL_BOT_BARS + sp.COL_SIDE_BARS * 2) * sp.COL_BAR_AREA
-        Mu = math.sqrt(Mz**2 + My**2)
+        # Equivalent uniaxial demand about y (the biaxial DCR times φMny): what
+        # the steel search sizes the cage against. Components are kept beside it.
+        Mu = ls_pm.demand if ls_pm.capacity > 0 else math.sqrt(Mz**2 + My**2)
         result = MemberCheckResult(
             ele_tag=tag,
             member_type="column",
@@ -535,8 +592,13 @@ def run_checks_phase1(
                 "h_in":        cfg.sections.h_col_in,
                 "Pu_kip":      P,
                 "Mu_kip_in":   Mu,
+                "Mu_basis":    "equivalent uniaxial moment about y with the biaxial load-contour DCR",
+                "Mu_resultant_kip_in": math.sqrt(Mz**2 + My**2),
                 "Muy_kip_in":  My,
                 "Muz_kip_in":  Mz,
+                "phi_mn_y_kip_in": _interpolate_pm_capacity(P, pm_diagrams["y"]),
+                "phi_mn_z_kip_in": _interpolate_pm_capacity(P, pm_diagrams["z"]),
+                "biaxial_contour_exponent": getattr(cfg.dcr, "biaxial_contour_exponent", 1.5),
                 "Vu_kip":      Vu,
                 "stirrup_bar_size": cfg.rebar.col_stirrup_bar_size,
                 "stirrup_legs": cfg.rebar.col_stirrup_legs,

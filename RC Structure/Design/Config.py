@@ -367,6 +367,13 @@ class DCRTargets:
 
     objective: str = "min_deviation"
 
+    # Biaxial column interaction (ACI 318-19 R22.4; Bresler load contour):
+    # (Muy/phiMny)^alpha + (Muz/phiMnz)^alpha <= 1. A stated engineering
+    # parameter, covered by IndependentVerification.strength_model_verified:
+    # 1.0 is the linear contour (conservative for every section), 1.5 the
+    # customary design value; Bresler's measured range is about 1.15-1.55.
+    biaxial_contour_exponent: float = 1.5
+
     def in_band(self, dcr: float) -> bool:
         return self.dcr_band_lo <= dcr <= self.dcr_band_hi
 

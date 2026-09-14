@@ -580,6 +580,36 @@ class GenerationRegressionTests(unittest.TestCase):
                 cases, completed, case_start=0, case_end=5
             )
 
+    def test_refused_designs_are_terminal_and_reported(self):
+        """A saved design that qualification refused is skipped on resume, with its reasons."""
+        cases = [{"case_id": f"case_{index:04d}", "runs": [{"run_name": "r1"}]} for index in range(1, 4)]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            refused_dir = root / "cases" / "case_0002"
+            refused_dir.mkdir(parents=True)
+            (refused_dir / "design.json").write_text(json.dumps({
+                "schema_version": "x", "qualification": {"accepted": False, "counts": {"fail": 1, "not_evaluated": 2},
+                "checks": [{"id": "scwb:joint_1/x/positive", "status": "fail"},
+                           {"id": "floor.independent_hand_verification", "status": "not_evaluated"},
+                           {"id": "slab_fire_resistance", "status": "not_evaluated"}]}}), encoding="utf-8")
+            ok_dir = root / "cases" / "case_0003"
+            ok_dir.mkdir(parents=True)
+            (ok_dir / "design.json").write_text(json.dumps({"qualification": {"accepted": True, "checks": []}}), encoding="utf-8")
+
+            refused = Generate_Parameterized_Dataset.scan_refused(root, cases)
+            self.assertEqual(list(refused), ["case_0002"])
+            self.assertEqual(refused["case_0002"]["failed"], ["scwb"])
+            self.assertEqual(refused["case_0002"]["not_evaluated"], ["floor.independent_hand_verification", "slab_fire_resistance"])
+            _scope, selected = Generate_Parameterized_Dataset.select_pending_cases(cases, set(), refused_ids=refused)
+            self.assertEqual([c["case_id"] for c in selected], ["case_0001", "case_0003"])
+            _scope, retried = Generate_Parameterized_Dataset.select_pending_cases(cases, set(), refused_ids=())
+            self.assertEqual(len(retried), 3)
+            results = {"case_0002": {"case_id": "case_0002", "status": "design_refused", "design_refusal": refused["case_0002"]}}
+            state = Generate_Parameterized_Dataset.progress(root, cases, results, {}, "running", "now", set())
+            self.assertEqual(state["design_refused_case_ids"], ["case_0002"])
+            self.assertEqual(state["remaining_case_ids"], ["case_0001", "case_0003"])
+            self.assertEqual(state["design_refusals"]["case_0002"]["failed"], ["scwb"])
+
     def test_stop_request_is_atomic_and_detectable(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             stop_path = Path(temp_dir) / "STOP_GENERATION.json"
