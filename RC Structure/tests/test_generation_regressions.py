@@ -1,5 +1,6 @@
 import csv
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -1005,6 +1006,44 @@ class CollapseCompletionTests(unittest.TestCase):
             root = Path(temp_dir)
             case, run = self._make_run(root, failed=False, collapse=False)
             self.assertTrue(Generate_Parameterized_Dataset.complete_run(root, case, run))
+
+
+class StaleSampleTests(unittest.TestCase):
+    """A retried NTHA must not be served the previous attempt's sample."""
+
+    def _layout(self, root):
+        ntha = root / "ntha" / "peer_1"
+        dataset = root / "dataset" / "peer_1"
+        ntha.mkdir(parents=True)
+        dataset.mkdir(parents=True)
+        status = ntha / "status.json"
+        sample = dataset / "hybrid_sample.npz"
+        status.write_text("{}", encoding="utf-8")
+        sample.write_bytes(b"")
+        return status, sample, ntha
+
+    def test_sample_newer_than_analysis_is_fresh(self):
+        from Data_Generation import Hybrid_Exporter
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status, sample, ntha = self._layout(Path(temp_dir))
+            os.utime(status, (1_000, 1_000))
+            os.utime(sample, (2_000, 2_000))
+            self.assertFalse(Hybrid_Exporter._sample_is_stale(ntha, sample))
+
+    def test_analysis_newer_than_sample_is_stale(self):
+        from Data_Generation import Hybrid_Exporter
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status, sample, ntha = self._layout(Path(temp_dir))
+            os.utime(sample, (1_000, 1_000))
+            os.utime(status, (2_000, 2_000))
+            self.assertTrue(Hybrid_Exporter._sample_is_stale(ntha, sample))
+
+    def test_missing_status_is_not_stale(self):
+        from Data_Generation import Hybrid_Exporter
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status, sample, ntha = self._layout(Path(temp_dir))
+            status.unlink()
+            self.assertFalse(Hybrid_Exporter._sample_is_stale(ntha, sample))
 
 if __name__ == "__main__":
     unittest.main()
