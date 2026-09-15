@@ -45,18 +45,21 @@ an output root whose `plan.json` carries a different SHA.
 
 ## 3. Case ranges
 
-| machine | case-start | case-end | serial-equivalent | wall at 4 workers |
-|---|---|---|---|---|
-| 1 | 1 | 25 | see launch message | |
-| 2 | 26 | 50 | | |
-| 3 | 51 | 75 | | |
-| 4 | 76 | 100 | | |
-| 5 | 101 | 125 | | |
-| 6 | 126 | 150 | | |
+| machine | case-start | case-end | serial-equivalent | wall at 4 workers | biggest case |
+|---|---|---|---|---|---|
+| 1 | 1 | 25 | 2.5 h | ~0.6 h | case_0015 6x6x9, ~30 min, ~380 MB |
+| 2 | 26 | 50 | 4.5 h | ~1.1 h | case_0041 5x6x9 |
+| 3 | 51 | 75 | 3.4 h | ~0.9 h | case_0058 6x6x9 |
+| 4 | 76 | 100 | 2.4 h | ~0.6 h | case_0096 6x4x9 |
+| 5 | 101 | 125 | 2.6 h | ~0.7 h | case_0123 4x6x9 |
+| 6 | 126 | 150 | 2.5 h | ~0.6 h | case_0145 5x6x9 |
 
-Case size varies 10x (3x2x4 to 6x6x9); the two 6x6x9 cases are `case_0015`
-(machine 1) and `case_0058` (machine 3). A machine is not stuck because one
-case has run for an hour.
+Estimates from three measured cases (3x4x4 84 s / 60 MB, 6x5x4 519 s /
+154 MB, 6x6x9 1039 s / 381 MB, peak 1.2 GB RAM per worker); per-iteration
+cost grows about as members^1.6 and the loop takes 2-4 iterations. Expect
+1.5-2x these on the lab machines. Whole plan: ~18 h serial, ~21 GB.
+Case size varies 10x; a machine is not stuck because one case has run for
+half an hour.
 
 ## 4. Launch
 
@@ -80,9 +83,9 @@ Settings > Power). Lock the screen instead of signing out.
 
 or just `Get-Content "<local>\dv150\run_log.txt" -Tail 8`.
 
-Normal: four `python` processes at 0.7–2 GB each; one line per finished case
-in `run_log.txt`; per-case time from 1.5 min (small 4-story) to about an hour
-(6x6x9); `design.json` 60–500 MB.
+Normal: four `python` processes at up to ~1.2 GB each; one line per finished
+case in `run_log.txt`; per-case time from 1.5 min (small 4-story) to about
+half an hour (6x6x9); `design.json` 30–400 MB.
 
 Not normal: `status: error` in a `result.json` — read its `error` and
 `traceback` and the case's `stderr.txt`. `accepted=False` with `fail>0` is a

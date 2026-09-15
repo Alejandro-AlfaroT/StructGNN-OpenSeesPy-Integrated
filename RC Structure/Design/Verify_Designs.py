@@ -55,6 +55,7 @@ from Generate_Parameterized_Dataset import RANGES, SEED, SEISMIC_SITES  # noqa: 
 
 PROBE = "PROBE -- design verification run, not a certification"
 STOP_NAME = "STOP_VERIFICATION"
+WORKER_TIMEOUT_S = 6 * 3600
 PLAN_KEYS = ("case_id", "num_bay_x", "num_bay_y", "num_floor", "story_height_ft",
              "bay_x_width_ft", "bay_y_width_ft", "seismic_site")
 
@@ -210,13 +211,26 @@ def _launch(python_exe, case, out_dir, probe, probe_date=None, log=print):
     env = dict(os.environ)
     env.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     t0 = time.perf_counter()
-    proc = subprocess.run(command, capture_output=True, text=True, cwd=str(RC_DIR), timeout=6 * 3600, env=env)
-    (out_dir / "stderr.txt").write_text(proc.stderr or "", encoding="utf-8")
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, cwd=str(RC_DIR), timeout=WORKER_TIMEOUT_S, env=env)
+        stderr, outcome = proc.stderr or "", f"worker exited {proc.returncode} without a result"
+    except subprocess.TimeoutExpired as exc:
+        stderr = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        outcome = f"worker killed after {WORKER_TIMEOUT_S / 3600:.0f} h"
+        clear_interrupted_design(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)   # a worker that never started left nothing behind
+    (out_dir / "stderr.txt").write_text(stderr, encoding="utf-8")
     saved = saved_result(out_dir)
     if saved:
         return saved, False
-    return {"case": case, "status": "error", "elapsed_s": time.perf_counter() - t0, "host": socket.gethostname(),
-            "error": f"worker exited {proc.returncode} without a result", "stderr_tail": (proc.stderr or "")[-2000:]}, False
+    # A worker that died without writing (hard crash in the solver, timeout)
+    # still gets a result.json so the merged summary shows the error rather
+    # than "not yet run"; the next launch retries it because it is not "designed".
+    result = {"case": case, "status": "error", "elapsed_s": time.perf_counter() - t0, "host": socket.gethostname(),
+              "probe_assertions": probe, "probe_date": probe_date if probe else None,
+              "error": outcome, "stderr_tail": stderr[-2000:], "finished": time.strftime("%Y-%m-%d %H:%M:%S")}
+    (out_dir / "result.json").write_text(json.dumps(result, indent=1, default=str), encoding="utf-8")
+    return result, False
 
 
 def summarize(results, root, probe):
@@ -416,7 +430,11 @@ def main(argv=None):
                 return saved
             return {"case": case, "status": "missing", "host": socket.gethostname()}
         t0 = time.perf_counter()
-        result, cached = _launch(args.python_exe, case, root / case["case_id"], args.probe_assertions, probe_date, log=log)
+        try:
+            result, cached = _launch(args.python_exe, case, root / case["case_id"], args.probe_assertions, probe_date, log=log)
+        except Exception as exc:                          # noqa: BLE001 -- one case must not take the launcher down
+            result, cached = {"case": case, "status": "error", "host": socket.gethostname(),
+                              "error": f"launcher: {type(exc).__name__}: {exc}", "traceback": traceback.format_exc()}, False
         tag = "cached" if cached else f"{time.perf_counter() - t0:6.0f}s"
         counts = result.get("counts") or {}
         sections = result.get("sections") or {}
