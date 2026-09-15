@@ -998,7 +998,12 @@ histograms. `--probe-assertions` fills the three blocks with PROBE values
 (labelled in every request identity) to exercise the pipeline before the
 real assertions exist; its summary says so and certifies nothing. Three
 plan cases ran at 8 min per case with 100-180 MB each, so 150 cases are
-about 5-6 h on four workers and 20 GB.
+about 5-6 h on four workers and 20 GB. For the multi-machine run see
+`Design/DESIGN_VERIFICATION_RUN.md`: `--plan-only` prints the plan SHA to
+compare across machines, `--case-start/--case-end` take a disjoint slice,
+`--request-stop` stops gracefully, the PROBE stamp date is fixed in
+`plan.json` so the whole run has one request identity, and
+`--summarize-only` rebuilds the summary after the slices are copied together.
 
 In the generation scheduler a case whose saved design was refused by
 qualification is terminal (`design_refused` in `case_results.json` and
