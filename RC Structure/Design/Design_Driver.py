@@ -66,14 +66,15 @@ from Redesign import apply_updates, redesign_steel
 
 
 DESIGN_ARTIFACT_NAME = "design.json"
-DESIGN_SCHEMA_VERSION = "rc_smrf_candidate_v7_loop_closure"
+DESIGN_SCHEMA_VERSION = "rc_smrf_candidate_v8_directional_hoops"
 
 _STATE_KEYS = (
     "B_COL", "H_COL", "FC_COL_KSI", "B_BEAM", "H_BEAM", "FC_BEAM_KSI",
     "COL_BAR_SIZE", "COL_TOP_BARS", "COL_BOT_BARS", "COL_SIDE_BARS", "COL_BAR_AREA",
     "BEAM_BAR_SIZE", "BEAM_TOP_BARS", "BEAM_BOT_BARS", "BEAM_SIDE_BARS", "BEAM_BAR_AREA",
     "COL_STIRRUP_SPACING", "BEAM_STIRRUP_SPACING",
-    "COL_STIRRUP_BAR_SIZE", "COL_STIRRUP_LEGS", "BEAM_STIRRUP_BAR_SIZE", "BEAM_STIRRUP_LEGS",
+    "COL_STIRRUP_BAR_SIZE", "COL_STIRRUP_LEGS", "COL_STIRRUP_LEGS_BY_DIRECTION",
+    "BEAM_STIRRUP_BAR_SIZE", "BEAM_STIRRUP_LEGS",
     "SLAB_THICKNESS_IN", "FLOOR_SUPERIMPOSED_DEAD_LOAD_KSF", "SEISMIC_LIVE_LOAD_FRACTION",
     "BEAM_CLEAR_COVER_IN", "COL_CLEAR_COVER_IN", "AGGREGATE_MAX_SIZE_IN",
     "REINFORCEMENT_SPECIFICATION", "MATERIAL_EXPOSURE", "FLOOR_TRANSFER",
@@ -492,6 +493,25 @@ def _capture_element_actions(dead_factor=1.0):
     return members
 
 
+def _col_steel_layers_about_z():
+    """Column steel layers for bending through b: compression on an h face.
+
+    Mirror of RC_Design_Check._col_steel_layers for the y frame. The corner
+    bars and the side-face bars sit in the two outermost layers; each interior
+    top/bottom bar position holds one top bar and one bottom bar.
+    """
+    cover = sp.longitudinal_cover_in("column")
+    b, ab = sp.B_COL, sp.COL_BAR_AREA
+    n_top, n_bot = max(2, sp.COL_TOP_BARS), max(2, sp.COL_BOT_BARS)
+    outer = (2 + sp.COL_SIDE_BARS) * ab
+    layers = [(outer, cover)]
+    for count in (n_top, n_bot):
+        if count > 2:
+            layers += [(ab, cover + (b - 2.0 * cover) * k / (count - 1)) for k in range(1, count - 1)]
+    layers.append((outer, b - cover))
+    return sorted(layers, key=lambda layer: layer[1])
+
+
 def _column_envelopes(combination_actions):
     """Per-story column (min, max) joint-face axial and max |V| over every final case."""
     per_story = (sp.NUM_BAY_X + 1) * (sp.NUM_BAY_Y + 1)
@@ -530,7 +550,10 @@ def _capacity_state(cfg, combination_actions):
         "column": {"bar_size": sp.COL_BAR_SIZE, "top_bars": sp.COL_TOP_BARS, "bot_bars": sp.COL_BOT_BARS,
                    "side_bars": sp.COL_SIDE_BARS, "centroid_offset_in": sp.longitudinal_cover_in("column"),
                    "clear_cover_in": sp.COL_CLEAR_COVER_IN, "stirrup_bar_size": sp.COL_STIRRUP_BAR_SIZE,
-                   "layers": _col_steel_layers()},
+                   # Bending through h (x frame) and through b (y frame); the
+                   # capacity design takes Mpr, Ve and the hoop legs per direction.
+                   "layers": _col_steel_layers(),
+                   "layers_about_z": _col_steel_layers_about_z()},
         "slab": {"thickness_in": sp.SLAB_THICKNESS_IN,
                  "layout": (sp.SLAB_REINFORCEMENT or {}).get("layout") if sp.SLAB_THICKNESS_IN is not None else None},
         "transfer": sp.FLOOR_TRANSFER, "sds": sp.ASCE_SDS,
@@ -550,8 +573,14 @@ def _capacity_design(cfg, combination_actions):
         hoops = capacity["transverse"][member]
         if hoops is not None:
             setattr(sp, f"{prefix}_STIRRUP_BAR_SIZE", hoops["bar_size"])
-            setattr(sp, f"{prefix}_STIRRUP_LEGS", hoops["legs"])
             setattr(sp, f"{prefix}_STIRRUP_SPACING", hoops["spacing_in"])
+            if member == "column":
+                # Legs are chosen per direction; the scalar the hinge calibration
+                # and legacy shear checks read is the lighter direction.
+                sp.COL_STIRRUP_LEGS = hoops["legs_model"]
+                sp.COL_STIRRUP_LEGS_BY_DIRECTION = dict(hoops["legs"])
+            else:
+                setattr(sp, f"{prefix}_STIRRUP_LEGS", hoops["legs"])
     _sync_cfg_to_sp(cfg)
     return capacity
 
@@ -629,6 +658,9 @@ def _state_record_core():
             "beam_side_bars": sp.BEAM_SIDE_BARS,
             "col_stirrup_bar_size": sp.COL_STIRRUP_BAR_SIZE,
             "col_stirrup_legs": sp.COL_STIRRUP_LEGS,
+            "col_stirrup_legs_by_direction": (dict(sp.COL_STIRRUP_LEGS_BY_DIRECTION)
+                                              if sp.COL_STIRRUP_LEGS_BY_DIRECTION is not None
+                                              else {"across_b_face": sp.COL_STIRRUP_LEGS, "across_h_face": sp.COL_STIRRUP_LEGS}),
             "col_stirrup_spacing_in": sp.COL_STIRRUP_SPACING,
             "beam_stirrup_bar_size": sp.BEAM_STIRRUP_BAR_SIZE,
             "beam_stirrup_legs": sp.BEAM_STIRRUP_LEGS,
@@ -1188,7 +1220,7 @@ def design_structure(cfg=None, max_section_iter=10, max_steel_iter=6, verbose=Tr
     gravity_escalations = 0
     initial_transverse = {key: getattr(sp, key) for key in (
         "BEAM_STIRRUP_BAR_SIZE", "BEAM_STIRRUP_LEGS", "BEAM_STIRRUP_SPACING",
-        "COL_STIRRUP_BAR_SIZE", "COL_STIRRUP_LEGS", "COL_STIRRUP_SPACING")}
+        "COL_STIRRUP_BAR_SIZE", "COL_STIRRUP_LEGS", "COL_STIRRUP_LEGS_BY_DIRECTION", "COL_STIRRUP_SPACING")}
     while iteration < max_section_iter:
         # Hoops are selected per section by the capacity design below; the
         # detailing selector never increases a spacing, so start each rung
@@ -1507,7 +1539,7 @@ def apply_design(record):
     """Apply a stored design artifact to Structure_Parameters."""
     sections = record["sections"]
     rebar = record["reinforcement"]
-    required = ("col_stirrup_bar_size", "col_stirrup_legs", "col_stirrup_spacing_in",
+    required = ("col_stirrup_bar_size", "col_stirrup_legs", "col_stirrup_legs_by_direction", "col_stirrup_spacing_in",
                 "beam_stirrup_bar_size", "beam_stirrup_legs", "beam_stirrup_spacing_in",
                 "beam_side_bars", "legacy_centroid_offset_in", "beam_clear_cover_in",
                 "col_clear_cover_in", "beam_longitudinal_centroid_offset_in",
@@ -1533,6 +1565,12 @@ def apply_design(record):
         if (not isinstance(spacing, (float, int)) or isinstance(spacing, bool)
                 or not math.isfinite(spacing) or spacing <= 0):
             raise ValueError("Cached transverse spacing must be finite and positive.")
+    legs_by_direction = rebar.get("col_stirrup_legs_by_direction")
+    if (not isinstance(legs_by_direction, dict) or set(legs_by_direction) != {"across_b_face", "across_h_face"}
+            or any(type(v) is not int or v < 2 for v in legs_by_direction.values())
+            or min(legs_by_direction.values()) != rebar.get("col_stirrup_legs")):
+        raise ValueError("Cached col_stirrup_legs_by_direction must give both directions, at least 2 legs each, "
+                         "with col_stirrup_legs the lighter of them.")
     legacy = rebar["legacy_centroid_offset_in"]
     if (not isinstance(legacy, (float, int)) or isinstance(legacy, bool)
             or not math.isfinite(legacy) or legacy <= 0):
@@ -1582,6 +1620,7 @@ def apply_design(record):
         if key not in rebar:
             raise ValueError(f"Cached design lacks {key}; cannot reproduce its reinforcement.")
         setattr(sp, name, rebar[key])
+    sp.COL_STIRRUP_LEGS_BY_DIRECTION = dict(rebar["col_stirrup_legs_by_direction"])
     _apply_slab(slab)
     sp.AGGREGATE_MAX_SIZE_IN = aggregate
     sp.REINFORCEMENT_SPECIFICATION = material["reinforcement_specification"]

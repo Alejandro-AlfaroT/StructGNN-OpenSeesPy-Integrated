@@ -29,6 +29,8 @@ def artifact():
                               "beam_bar_size": sp.BEAM_BAR_SIZE, "beam_top_bars": sp.BEAM_TOP_BARS,
                               "beam_bot_bars": sp.BEAM_BOT_BARS, "beam_side_bars": sp.BEAM_SIDE_BARS,
                               "col_stirrup_bar_size": sp.COL_STIRRUP_BAR_SIZE, "col_stirrup_legs": sp.COL_STIRRUP_LEGS,
+                              "col_stirrup_legs_by_direction": {"across_b_face": sp.COL_STIRRUP_LEGS,
+                                                                "across_h_face": sp.COL_STIRRUP_LEGS},
                               "beam_stirrup_bar_size": sp.BEAM_STIRRUP_BAR_SIZE, "beam_stirrup_legs": sp.BEAM_STIRRUP_LEGS,
                               "col_stirrup_spacing_in": sp.COL_STIRRUP_SPACING,
                               "beam_stirrup_spacing_in": sp.BEAM_STIRRUP_SPACING,

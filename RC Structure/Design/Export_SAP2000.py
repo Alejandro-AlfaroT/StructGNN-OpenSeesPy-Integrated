@@ -283,12 +283,16 @@ def build(record, variant):
     # bars per face plus the shared corners along the faces parallel to local 2.
     bars_3 = int(reinf["col_top_bars"])
     bars_2 = int(reinf["col_side_bars"]) + 2
+    # Tie legs per direction: those crossing the b faces run along local 2
+    # (parallel to t3 = h), those crossing the h faces along local 3.
+    legs_by_direction = reinf.get("col_stirrup_legs_by_direction") or {
+        "across_b_face": reinf["col_stirrup_legs"], "across_h_face": reinf["col_stirrup_legs"]}
     s.table("FRAME SECTION PROPERTIES 05 - CONCRETE COLUMN", [dict(
         SectionName="COL", RebarMatL="A706Gr60", RebarMatC="A706Gr60", ReinfConfig="Rectangular",
         LatReinf="Ties", Cover=float(reinf.get("col_clear_cover_in", 1.5)),
         NumBars3Dir=bars_3, NumBars2Dir=bars_2, BarSizeL=f"#{int(reinf['col_bar_size'])}",
         BarSizeC=f"#{int(reinf['col_stirrup_bar_size'])}", SpacingC=float(reinf["col_stirrup_spacing_in"]),
-        NumCBars2=int(reinf["col_stirrup_legs"]), NumCBars3=int(reinf["col_stirrup_legs"]),
+        NumCBars2=int(legs_by_direction["across_b_face"]), NumCBars3=int(legs_by_direction["across_h_face"]),
         ReinfType="Check")])
     beam_top = int(reinf["beam_top_bars"]) * REBAR[int(reinf["beam_bar_size"])][0]
     beam_bot = int(reinf["beam_bot_bars"]) * REBAR[int(reinf["beam_bar_size"])][0]

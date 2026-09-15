@@ -249,6 +249,11 @@ def _max_tied_face_bars():
     return 2 * max(legs for _bar, legs in STIRRUP_LADDER) - 2
 
 
+def column_layout_confinable(*args):
+    from Design.SMRF_Capacity_Design import column_layout_confinable as confinable
+    return confinable(*args)
+
+
 COLUMN_MAX_TIED_FACE_BARS = _max_tied_face_bars()   # ACI 318-19 18.7.5.2(f)
 
 
@@ -297,6 +302,14 @@ def _col_candidates(Ast_lo, Ast_hi, cfg=None):
                 # bar with a leg or a crosstie (SMRF_Cage_Layout); a face with
                 # more bars than the hoop ladder can support is not offered.
                 if max(n_top, n_side_pf + 2) > COLUMN_MAX_TIED_FACE_BARS:
+                    continue
+                # The hoops must be able to confine the layout (18.7.5.4) at
+                # the minimum spacing in each direction: with few bars on a
+                # face there are few legs across it, and at high f'c the Ash
+                # a 3-bar face can carry runs out before the spacing floor.
+                # Such a layout is never detailable, so it is not offered.
+                if sp.SLAB_THICKNESS_IN is not None and not column_layout_confinable(
+                        sp.B_COL, sp.H_COL, sp.FC_COL_KSI, sp.FY_KSI, sp.COL_CLEAR_COVER_IN, n_top, n_side_pf):
                     continue
                 if Ast_lo <= Ast <= Ast_hi:
                     candidates.append((bar_size, n_top, n_bot, n_side_pf, Ast))

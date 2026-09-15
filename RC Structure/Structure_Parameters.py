@@ -86,6 +86,13 @@ BEAM_BAR_AREA = rebar_area(BEAM_BAR_SIZE)
 COL_STIRRUP_BAR_SIZE = 4
 COL_STIRRUP_LEGS = 2
 COL_STIRRUP_SPACING = 6.0
+# Column hoop legs per direction as the capacity design selects them
+# (ACI 318-19 18.7.5.4 defines Ash per direction): legs crossing the b faces
+# run along h, legs crossing the h faces run along b. None means the same
+# count both ways, COL_STIRRUP_LEGS. COL_STIRRUP_LEGS itself stays the
+# scalar the hinge calibration and the legacy shear checks read; the design
+# sets it to the lighter direction.
+COL_STIRRUP_LEGS_BY_DIRECTION = None
 
 BEAM_STIRRUP_BAR_SIZE = 4
 BEAM_STIRRUP_LEGS = 2

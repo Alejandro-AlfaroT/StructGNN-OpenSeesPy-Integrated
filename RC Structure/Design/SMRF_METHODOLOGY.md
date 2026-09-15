@@ -832,14 +832,34 @@ checks; the driver installs the hoops before the state is captured, so
   (18.6.5.2); Vs <= 8 sqrt(fc) bw d or the beam rung grows. Hoops from
   Av fyt d / Vs and min(d/4, 6 db, 6 in) on a 1-in grid from 3 in, uniform
   along the member.
-- Column Ve (18.7.6.1.1): min(2 Mpr,col / ln over the story's factored axial
-  range, the beam probable moments the joints can deliver -- half to each
-  column at a floor joint, all of it at the roof) and never less than the
-  analysis shear. Vc = 0 when the mechanism shear is at least half of Ve and
-  Pu < Ag fc / 20, else 22.5.5.1 with axial load. Hoops from Vs, the
+- Column Ve (18.7.6.1.1), per frame direction: min(2 Mpr,col / ln over the
+  story's factored axial range, the beam probable moments the joints in that
+  direction can deliver -- half to each column at a floor joint, all of it
+  at the roof) and never less than the analysis shear. Mpr,col is the
+  probable strength about that direction's axis (the x frame bends the
+  column through h with the top/bottom bars in the extreme layers; the y
+  frame through b with the corner and side-face bars extreme), the depth d
+  and the width in Vc follow the direction, and Vs <= 8 sqrt(fc) b d is
+  checked in each. Vc = 0 when the mechanism shear is at least half of Ve
+  and Pu < Ag fc / 20, else 22.5.5.1 with axial load. Hoops from Vs, the
   18.7.5.4 confinement area (Ag/Ach and 0.09 fc/fyt; the Pu > 0.3 Ag fc form
   when it applies) and 18.7.5.3 spacing (b/4, 6 db, and the conservative
   4-in cap retained in place of so = 4 + (14 - hx)/3, which is recorded).
+  One hoop bar and one spacing serve both directions; the leg count is
+  chosen per direction, as 18.7.5.4 defines Ash per direction: the legs
+  that cross the b faces (the hoop's two legs parallel to h plus the
+  crossties on the b-face bars) carry Av for shear along h and Ash
+  perpendicular to bc = b - 2 cover, and the legs that cross the h faces
+  the reverse. For a hoop bar every constructible leg pair is priced and
+  the pick is the largest spacing, then the fewest legs; the record stores
+  `col_stirrup_legs_by_direction` beside `col_stirrup_legs`, which is the
+  lighter direction and is what the hinge calibration (rho_sh) and the
+  legacy shear checks read. The 150-case verification run found 12 of 150
+  designs stuck without a column hoop under the earlier single count both
+  ways: 3-top/4-side and 4-top/3-side bar layouts need 3 legs one way and 4
+  or 5 the other, which no common count satisfies, and the section loop
+  escalated to 36x36 with `column_capacity_shear` as the reason every
+  iteration.
   The leg count is one the cage can hold: `SMRF_Cage_Layout.column_cage`
   places the bars on each face from cover, hoop and bar diameters, finds
   the bars 25.7.2.3 (through 18.7.5.2(d)) requires to be supported --
@@ -847,11 +867,11 @@ checks; the driver installs the hoops before the state is captured, so
   a supported one, hx of supported bars at most 14 in (18.7.5.2(e)), every
   bar and 8 in under high axial load (18.7.5.2(f)) -- and bounds the legs
   across each face pair between that minimum and the number of bars a
-  crosstie can engage (18.7.5.2(b)). The hoop ladder is walked over the
-  constructible leg counts only; the selected arrangement (which bars carry
-  crossties, both directions) is saved with the design, hx is its
-  supported-bar spacing, and Av and Ash use the legs it realizes in both
-  directions. The cross-check found the earlier every-face-bar-tied rule
+  crosstie can engage (18.7.5.2(b)), independently per direction. The
+  selected arrangement (which bars carry crossties, both directions) is
+  saved with the design, hx is its supported-bar spacing, and Av and Ash
+  use the legs it realizes across each direction's faces. The cross-check
+  found the earlier every-face-bar-tied rule
   crediting six legs to a column with three top bars; a 3-top-bar column
   now gets a 3-leg set (hoop plus one crosstie) at the spacing that shear
   and confinement then need, or the section grows. `detailing.cage_layout`

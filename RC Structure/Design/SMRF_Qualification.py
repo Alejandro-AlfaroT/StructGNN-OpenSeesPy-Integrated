@@ -166,20 +166,26 @@ def recomputed_evidence(record):
                      "differences": recomputation["differences"]}))
         recomputed = recomputation["recomputed"] or {}
         transverse = recomputed.get("transverse") or {}
+        # Column legs are selected per direction; the scalar the model reads is
+        # the lighter direction (legs_model). Both must match the record.
+        column_hoops = transverse.get("column") or {}
         hoops_match = bool(recomputed) and all(
             rebar.get(key) == (transverse.get(member) or {}).get(field)
             for member, prefix in (("beam", "beam"), ("column", "col"))
             for key, field in ((f"{prefix}_stirrup_bar_size", "bar_size"),
-                               (f"{prefix}_stirrup_legs", "legs"),
-                               (f"{prefix}_stirrup_spacing_in", "spacing_in")))
+                               (f"{prefix}_stirrup_legs", "legs_model" if member == "column" else "legs"),
+                               (f"{prefix}_stirrup_spacing_in", "spacing_in"))
+        ) and rebar.get("col_stirrup_legs_by_direction") == column_hoops.get("legs")
         checks.append(make_check(
             "qualification.hoops_match_design", "Evidence integrity",
             int(hoops_match), 1, "==",
             details={"basis": "the transverse steel the model and IMK calibration read (reinforcement.*_stirrup_*) "
-                              "must be the hoops the recomputed capacity design selects",
+                              "must be the hoops the recomputed capacity design selects; column legs per direction, "
+                              "with col_stirrup_legs the lighter direction",
                      "reinforcement": {k: rebar.get(k) for k in ("beam_stirrup_bar_size", "beam_stirrup_legs",
                                                                   "beam_stirrup_spacing_in", "col_stirrup_bar_size",
-                                                                  "col_stirrup_legs", "col_stirrup_spacing_in")},
+                                                                  "col_stirrup_legs", "col_stirrup_legs_by_direction",
+                                                                  "col_stirrup_spacing_in")},
                      "recomputed_capacity_design": transverse}))
         if recomputation["consistent"] and hoops_match:
             capacity = recomputed
@@ -212,13 +218,26 @@ def _apply_capacity_design_evidence(record, checks, evidence):
         columns, beams = capacity.get("columns", {}), capacity.get("beams", {})
         conf, hoops = columns.get("confinement", {}), columns.get("hoops")
         if hoops and conf:
+            # Ash is per direction (18.7.5.4): the check reports the direction
+            # with the smallest margin and carries both in its details.
+            by_direction = hoops.get("by_direction") or {}
+            if by_direction:
+                tightest = min(by_direction.values(),
+                               key=lambda v: v["ash_provided_per_in"] - v["ash_required_per_in"])
+                demand, provided = tightest["ash_required_per_in"], tightest["ash_provided_per_in"]
+            else:
+                demand, provided = conf["ash_ratio_required"] * conf["bc_in"], hoops["ash_provided_per_in"]
             replaced["column.confinement_area_and_support"] = make_check(
                 "column.confinement_area_and_support", "ACI 318-19 18.7.5.2--18.7.5.4",
-                conf["ash_ratio_required"] * conf["bc_in"], hoops["ash_provided_per_in"], "<=", "in2/in",
+                demand, provided, "<=", "in2/in",
                 details={"legs": hoops["legs"], "bar_size": hoops["bar_size"], "spacing_in": hoops["spacing_in"],
                          "high_axial": conf["high_axial"],
-                         "scope": "confinement steel quantity Ash/s against 18.7.5.4 with the leg count the generated "
-                                  "arrangement realizes in both directions (detailing.cage_layout)"})
+                         "by_direction": {axis: {k: v[k] for k in ("legs_key", "legs", "bc_in", "ash_required_per_in",
+                                                                  "ash_provided_per_in")}
+                                          for axis, v in by_direction.items()},
+                         "scope": "confinement steel quantity Ash/s against 18.7.5.4 in each direction with the leg "
+                                  "count the generated arrangement realizes across that direction's faces "
+                                  "(detailing.cage_layout); the tightest direction is the reported pair"})
             limit = 8.0 if conf["high_axial"] else 14.0
             replaced["column.supported_bar_distance_basic"] = make_check(
                 "column.supported_bar_distance_basic", "ACI 318-19 18.7.5.2(e)/(f)",
