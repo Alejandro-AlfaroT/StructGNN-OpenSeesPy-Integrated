@@ -116,7 +116,7 @@ def probe_config(probe_date=None):
 
 def run_worker(case, out_dir, probe, probe_date=None):
     """Design one case in this interpreter; write result.json; never raise."""
-    out_dir = Path(out_dir)
+    out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {"case": case, "status": "started", "probe_assertions": probe, "probe_date": probe_date if probe else None,
               "host": socket.gethostname(), "started": time.strftime("%Y-%m-%d %H:%M:%S")}
@@ -382,7 +382,9 @@ def main(argv=None):
     print(f"Plan SHA256: {sha}")
     if args.plan_only:
         return 0
-    root = Path(args.output_root or (RC_DIR / "outputs" / f"design_verification_{time.strftime('%Y%m%d')}"))
+    # Absolute: workers run with cwd RC_DIR, so a root given relative to the
+    # launcher's cwd would otherwise be resolved twice, to two different places.
+    root = Path(args.output_root or (RC_DIR / "outputs" / f"design_verification_{time.strftime('%Y%m%d')}")).resolve()
     stop_file = root / STOP_NAME
     if args.request_stop:
         root.mkdir(parents=True, exist_ok=True)
