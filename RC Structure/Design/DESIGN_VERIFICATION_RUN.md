@@ -121,7 +121,7 @@ Read `summary.md` top to bottom:
 
 1. `150 designed, N accepted, 0 errors, 0 not yet run` — anything not yet run
    means a machine's copy is incomplete.
-2. `Request identities among designed cases: 1` — more than one means a
+2. `Methodology identities ... : 1` — more than one means a
    machine designed with different code or config; its cases are not the same
    experiment. Find it in the `host` column.
 3. Failed-check histogram — which qualification items fail and how often.

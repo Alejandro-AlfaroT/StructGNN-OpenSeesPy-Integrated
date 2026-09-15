@@ -98,6 +98,39 @@ def git_head():
         return None
 
 
+def methodology_sha256(identity):
+    """The part of a design's request identity that must agree across machines.
+
+    design_request_identity also hashes the geometry and hazard inputs, so
+    every case has its own sha256. Schema, policy (the DesignConfig with its
+    assertion stamps) and the source file hashes are what a multi-machine run
+    has to hold constant.
+    """
+    if not identity:
+        return None
+    payload = {key: identity.get(key) for key in ("schema", "policy", "source_sha256")}
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def tail_request_identity(design_path, tail_bytes=1 << 20):
+    """request_identity is the last top-level key of design.json; read it without loading the file."""
+    design_path = Path(design_path)
+    size = design_path.stat().st_size
+    with design_path.open("rb") as handle:
+        handle.seek(max(0, size - tail_bytes))
+        text = handle.read().decode("utf-8", "replace")
+    marker = '"request_identity": '
+    start = text.rfind(marker)
+    if start < 0:
+        return None
+    try:
+        value, _ = json.JSONDecoder().raw_decode(text, start + len(marker))
+    except ValueError:
+        return None
+    return value
+
+
 def probe_config(probe_date=None):
     from Design.Config import DesignConfig, SlabActionAssertions, DemandPolicy, IndependentVerification
     slab_flags = ("analysis_applicability_verified", "all_floors_enveloped", "load_pattern_envelope_verified",
@@ -144,6 +177,7 @@ def run_worker(case, out_dir, probe, probe_date=None):
             "status": "designed", "created": created, "elapsed_s": time.perf_counter() - t0,
             "design_json_bytes": (out_dir / "design.json").stat().st_size,
             "request_sha256": (record.get("request_identity") or {}).get("sha256"),
+            "methodology_sha256": methodology_sha256(record.get("request_identity")),
             "accepted": q["accepted"], "counts": q["counts"],
             "fail_ids": sorted(by_status.get("fail", [])), "not_evaluated_ids": sorted(by_status.get("not_evaluated", [])),
             "sections": s, "iterations": record.get("iterations"), "governed_by": record["dcr"]["governed_by"],
@@ -241,7 +275,13 @@ def summarize(results, root, probe):
     missing = [r for r in rows if r.get("status") == "missing"]
     open_items = Counter(i for r in designed for i in r.get("not_evaluated_ids", []))
     fail_items = Counter(i for r in designed for i in r.get("fail_ids", []))
-    identities = Counter(r.get("request_sha256") for r in designed)
+    for r in designed:
+        if not r.get("methodology_sha256"):
+            # Results written before this field existed: read it off the artifact.
+            design = root / r["case"]["case_id"] / "design.json"
+            if design.exists():
+                r["methodology_sha256"] = methodology_sha256(tail_request_identity(design))
+    identities = Counter(r.get("methodology_sha256") for r in designed)
     hosts = Counter(r.get("host") for r in designed)
     total_time = sum(r.get("elapsed_s", 0.0) for r in designed)
     total_bytes = sum(r.get("design_json_bytes", 0) for r in designed)
@@ -251,10 +291,18 @@ def summarize(results, root, probe):
              f"Assertions: {'PROBE values in all three blocks -- exercises the pipeline, certifies nothing' if probe else 'the committed Design/Config.py'}.",
              f"Design time {total_time / 60:.0f} min serial-equivalent ({total_time / max(1, len(designed)) / 60:.1f} min/case); "
              f"design.json total {total_bytes / 1e9:.2f} GB.",
-             f"Request identities among designed cases: {len(identities)}"
-             + (" (one methodology + config for the whole run)" if len(identities) == 1 else
+             f"Methodology identities (schema + config + source hashes) among designed cases: {len(identities)}"
+             + (" -- one code base and config for the whole run" if len(identities) == 1 else
                 " -- ** more than one: not every case was designed with the same code or config **"),
              f"Hosts: " + ", ".join(f"{h} ({n})" for h, n in hosts.most_common()) + "\n"]
+    if len(identities) > 1:
+        lines.append("## Methodology identities\n")
+        for sha, n in identities.most_common():
+            members = [r for r in designed if r.get("methodology_sha256") == sha]
+            by_host = Counter(r.get("host") for r in members)
+            lines.append(f"- `{str(sha)[:12]}`: {n} cases on " + ", ".join(f"{h} ({k})" for h, k in by_host.most_common())
+                         + "; e.g. " + ", ".join(r["case"]["case_id"] for r in members[:4]))
+        lines.append("")
     if fail_items:
         lines.append("## Failed checks (cases with the item)\n")
         lines += [f"- `{k}`: {v}" for k, v in fail_items.most_common()]
@@ -296,7 +344,7 @@ def summarize(results, root, probe):
         writer.writerow(["case_id", "num_bay_x", "num_bay_y", "num_floor", "story_height_ft", "bay_x_width_ft", "bay_y_width_ft",
                          "seismic_site", "status", "accepted", "fail", "not_evaluated", "elapsed_s", "design_json_bytes",
                          "model_period_sec", "b_col_in", "h_col_in", "fc_col_ksi", "b_beam_in", "h_beam_in", "fc_beam_ksi",
-                         "dcr_column", "dcr_beam", "governed_by", "iterations", "host", "request_sha256",
+                         "dcr_column", "dcr_beam", "governed_by", "iterations", "host", "request_sha256", "methodology_sha256",
                          "fail_ids", "not_evaluated_ids"])
         for r in rows:
             c, s, d = r["case"], r.get("sections") or {}, r.get("dcr") or {}
@@ -306,7 +354,7 @@ def summarize(results, root, probe):
                              round(r.get("elapsed_s", 0.0), 1), r.get("design_json_bytes"), r.get("model_period_sec"),
                              s.get("b_col_in"), s.get("h_col_in"), s.get("fc_col_ksi"), s.get("b_beam_in"), s.get("h_beam_in"),
                              s.get("fc_beam_ksi"), d.get("column"), d.get("beam"), r.get("governed_by"), r.get("iterations"),
-                             r.get("host"), r.get("request_sha256"),
+                             r.get("host"), r.get("request_sha256"), r.get("methodology_sha256"),
                              ";".join(r.get("fail_ids", [])), ";".join(r.get("not_evaluated_ids", []))])
     (root / "summary.json").write_text(json.dumps({"probe_assertions": probe, "cases": rows}, indent=1, default=str),
                                        encoding="utf-8")
