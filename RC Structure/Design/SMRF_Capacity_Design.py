@@ -346,6 +346,8 @@ def design_column_shear(state, strengths):
             return max(edge["mpr_negative_kip_in"] + edge["mpr_positive_kip_in"],
                        max(interior["mpr_negative_kip_in"], interior["mpr_positive_kip_in"]))
         return max(edge["mpr_negative_kip_in"], edge["mpr_positive_kip_in"])
+    if b != h and not col.get("layers_about_z"):
+        raise ValueError("Rectangular columns require layers_about_z for orthogonal probable strength.")
     layers_about_z = col.get("layers_about_z") or col["layers"]
     directions = {
         # depth along the shear, width across it, Ash core dimension perpendicular to the legs
@@ -353,7 +355,9 @@ def design_column_shear(state, strengths):
               "diagram": column_probable_pm({**state, "column": {**col, "layers": col["layers"]}}),
               "layers_basis": "column.layers (bending through h, compression on a b face)"},
         "y": {"depth_in": b, "width_in": h, "legs_key": "across_h_face", "bc_in": h - 2.0 * cc,
-              "diagram": column_probable_pm({**state, "column": {**col, "layers": layers_about_z}}),
+              "diagram": column_probable_pm({**state,
+                  "sections": {**sections, "b_col_in": h, "h_col_in": b},
+                  "column": {**col, "layers": layers_about_z}}),
               "layers_basis": ("column.layers_about_z (bending through b, compression on an h face)"
                                if col.get("layers_about_z") else "column.layers reused; layers_about_z not supplied")},
     }

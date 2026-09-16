@@ -12,20 +12,20 @@ Split across machines with disjoint slices of the same plan (the plan and
 its SHA are identical everywhere the code and RANGES are the same):
 
     python Design/Verify_Designs.py --count 150 --plan-only                       # print the plan SHA and stop
-    python Design/Verify_Designs.py --count 150 --case-start 1 --case-end 25 --workers 4 --probe-assertions --output-root <local>\\dv150
+    python Design/Verify_Designs.py --count 150 --case-start 1 --case-end 25 --workers 4 --probe-assertions --probe-date 2026-09-16 --output-root <local>\\dv150
     ...
     python Design/Verify_Designs.py --count 150 --summarize-only --output-root <merged root>   # after copying case_* dirs together
 
-Resumable: a case whose result.json says "designed" is skipped, and a lock
-left by a killed worker is cleared before the case is retried.
+Resumable: completed artifacts are checked against the current request and
+requalified before reuse. Interrupted design locks are preserved for review.
 ``--request-stop`` lets a running launcher finish its in-flight cases and
 start no more; relaunching resumes. Each case
 keeps its full design.json. ``--probe-assertions`` fills the three assertion
 blocks with PROBE values (labelled in every artifact's request identity) so
 the pipeline can be exercised before the real assertions exist; it is not a
-certification and the summary says so. The PROBE stamp date is fixed in
-plan.json at the first launch so every case of the run, on every machine and
-across midnight, carries the same request identity.
+certification and the summary says so. Specify the same --probe-date on all
+devices when creating their roots. The date is fixed in each plan.json;
+geometry/hazard SHA alone does not establish matching code or assertions.
 """
 from __future__ import annotations
 
@@ -42,6 +42,8 @@ import subprocess
 import sys
 import time
 import traceback
+import uuid
+from datetime import date
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product
@@ -52,6 +54,8 @@ sys.path.insert(0, str(RC_DIR))
 sys.path.insert(0, str(RC_DIR / "Data_Generation"))
 
 from Generate_Parameterized_Dataset import RANGES, SEED, SEISMIC_SITES  # noqa: E402
+from Design.Verification_Integrity import (checked_result, exclusive_lease, expected_identity,
+                                           file_sha256)  # noqa: E402
 
 PROBE = "PROBE -- design verification run, not a certification"
 STOP_NAME = "STOP_VERIFICATION"
@@ -62,6 +66,10 @@ PLAN_KEYS = ("case_id", "num_bay_x", "num_bay_y", "num_floor", "story_height_ft"
 
 def plan_cases(num_cases, seed=SEED, geometry_offset=0, seismic_sites=SEISMIC_SITES):
     """The first ``num_cases`` cases of the generation plan, geometry and site only."""
+    if num_cases <= 0 or geometry_offset < 0 or not seismic_sites:
+        raise ValueError("count must be positive, geometry-offset nonnegative, and sites nonempty")
+    if any(site not in SEISMIC_SITES for site in seismic_sites):
+        raise ValueError("Unknown seismic site in verification plan")
     geometries = list(product(*RANGES.values()))
     if geometry_offset + num_cases > len(geometries):
         raise ValueError(f"{geometry_offset + num_cases} exceeds the {len(geometries)} plan geometries.")
@@ -106,7 +114,7 @@ def methodology_sha256(identity):
     assertion stamps) and the source file hashes are what a multi-machine run
     has to hold constant.
     """
-    if not identity:
+    if not identity or any(not identity.get(k) for k in ("schema", "policy", "source_sha256")):
         return None
     payload = {key: identity.get(key) for key in ("schema", "policy", "source_sha256")}
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -139,19 +147,26 @@ def probe_config(probe_date=None):
     verify_flags = ("floor_hand_check_verified", "strength_model_verified", "detailing_model_consistency_verified",
                     "slab_column_local_steel_assessed", "fire_resistance_scope_accepted",
                     "congestion_and_placement_accepted", "floor_frame_compatibility_reviewed")
-    date = probe_date or time.strftime("%Y-%m-%d")
-    stamp = dict(asserted_by=PROBE, assertion_date=date, assertion_basis=PROBE)
+    if not probe_date or date.fromisoformat(probe_date).isoformat() != probe_date:
+        raise ValueError("PROBE runs require a shared --probe-date YYYY-MM-DD")
+    stamp = dict(asserted_by=PROBE, assertion_date=probe_date, assertion_basis=PROBE)
     return DesignConfig(
         slab_actions=SlabActionAssertions(**{k: True for k in slab_flags}, **stamp),
-        demands=DemandPolicy(declared_by=PROBE, declaration_date=date, declaration_basis=PROBE),
+        demands=DemandPolicy(declared_by=PROBE, declaration_date=probe_date, declaration_basis=PROBE),
         verification=IndependentVerification(**{k: True for k in verify_flags}, **stamp))
 
 
-def run_worker(case, out_dir, probe, probe_date=None):
+def run_worker(case, out_dir, probe, probe_date=None, attempt_id=None):
+    with exclusive_lease(Path(out_dir) / ".worker.lease"):
+        return _run_worker(case, out_dir, probe, probe_date, attempt_id)
+
+
+def _run_worker(case, out_dir, probe, probe_date=None, attempt_id=None):
     """Design one case in this interpreter; write result.json; never raise."""
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    result = {"case": case, "status": "started", "probe_assertions": probe, "probe_date": probe_date if probe else None,
+    result = {"case": case, "status": "started", "attempt_id": attempt_id,
+              "probe_assertions": probe, "probe_date": probe_date if probe else None,
               "host": socket.gethostname(), "started": time.strftime("%Y-%m-%d %H:%M:%S")}
     log = io.StringIO()
     t0 = time.perf_counter()
@@ -176,6 +191,7 @@ def run_worker(case, out_dir, probe, probe_date=None):
         result.update({
             "status": "designed", "created": created, "elapsed_s": time.perf_counter() - t0,
             "design_json_bytes": (out_dir / "design.json").stat().st_size,
+            "design_sha256": file_sha256(out_dir / "design.json"),
             "request_sha256": (record.get("request_identity") or {}).get("sha256"),
             "methodology_sha256": methodology_sha256(record.get("request_identity")),
             "accepted": q["accepted"], "counts": q["counts"],
@@ -212,31 +228,32 @@ def saved_result(out_dir):
 
 
 def clear_interrupted_design(out_dir):
-    """Remove the lock and temp files a killed worker leaves behind; return what was removed.
-
-    load_or_create_design refuses to run while its lock exists. Between
-    launches of this script the lock can only be stale: each case is designed
-    by exactly one worker, and that worker has exited before the case is
-    retried. A finished design.json is never touched.
-    """
+    """Historical API name; never remove another process's lock or evidence."""
     out_dir = Path(out_dir)
-    removed = []
-    for path in [out_dir / ".design.json.lock"] + list(out_dir.glob(".design.json.*.tmp")):
-        if path.exists():
-            path.unlink()
-            removed.append(path.name)
-    return removed
+    if (out_dir / ".design.json.lock").exists():
+        raise RuntimeError(f"Design lock exists in {out_dir}; establish worker ownership before manual recovery. Nothing removed.")
+    return []
+
+
+def validate_saved(case, out_dir, probe, probe_date):
+    from Design.Config import DesignConfig
+    saved = saved_result(out_dir)
+    if not saved or saved.get("status") != "designed":
+        return saved
+    cfg = probe_config(probe_date) if probe else DesignConfig.from_structure_parameters()
+    return checked_result(case, out_dir, saved, expected_identity(case, cfg), probe, probe_date)
 
 
 def _launch(python_exe, case, out_dir, probe, probe_date=None, log=print):
     out_dir = Path(out_dir)
-    saved = saved_result(out_dir)
-    if saved and saved.get("status") == "designed":
-        return saved, True
-    removed = clear_interrupted_design(out_dir)
-    if removed:
-        log(f"{case['case_id']}: cleared interrupted design files {removed}")
-    command = [python_exe, "-B", str(Path(__file__).resolve()), "--worker", json.dumps(case), str(out_dir)]
+    with exclusive_lease(out_dir / ".worker.lease"):
+        saved = saved_result(out_dir)
+        if saved and saved.get("status") == "designed":
+            return validate_saved(case, out_dir, probe, probe_date), True
+        clear_interrupted_design(out_dir)
+    attempt_id = uuid.uuid4().hex
+    command = [python_exe, "-B", str(Path(__file__).resolve()), "--worker", json.dumps(case), str(out_dir),
+               "--attempt-id", attempt_id]
     if probe:
         command.append("--probe-assertions")
         if probe_date:
@@ -251,11 +268,10 @@ def _launch(python_exe, case, out_dir, probe, probe_date=None, log=print):
     except subprocess.TimeoutExpired as exc:
         stderr = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
         outcome = f"worker killed after {WORKER_TIMEOUT_S / 3600:.0f} h"
-        clear_interrupted_design(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)   # a worker that never started left nothing behind
     (out_dir / "stderr.txt").write_text(stderr, encoding="utf-8")
     saved = saved_result(out_dir)
-    if saved:
+    if saved and saved.get("attempt_id") == attempt_id:
         return saved, False
     # A worker that died without writing (hard crash in the solver, timeout)
     # still gets a result.json so the merged summary shows the error rather
@@ -267,20 +283,32 @@ def _launch(python_exe, case, out_dir, probe, probe_date=None, log=print):
     return result, False
 
 
-def summarize(results, root, probe):
-    rows = sorted(results, key=lambda r: r["case"]["case_id"])
+def summarize(results, root, probe, cases=None, probe_date=None):
+    root = Path(root)
+    cases = cases if cases is not None else [r["case"] for r in results]
+    expected = {c["case_id"]: c for c in cases}
+    if len(expected) != len(cases):
+        raise ValueError("Duplicate cases in summary plan")
+    supplied = {}
+    for result in results:
+        cid = result["case"]["case_id"]
+        if cid not in expected or cid in supplied or result["case"] != expected[cid]:
+            raise ValueError("Duplicate or mismatched result case in summary")
+        supplied[cid] = result
+    rows = []
+    for cid, case in sorted(expected.items()):
+        result = supplied.get(cid, {"case": case, "status": "missing"})
+        if result.get("status") == "designed":
+            with exclusive_lease(root / cid / ".worker.lease"):
+                result = validate_saved(case, root / cid, probe, probe_date) or {
+                    "case": case, "status": "error", "error": "Saved result is missing"}
+        rows.append(result)
     designed = [r for r in rows if r.get("status") == "designed"]
     accepted = [r for r in designed if r.get("accepted")]
     errors = [r for r in rows if r.get("status") == "error"]
     missing = [r for r in rows if r.get("status") == "missing"]
     open_items = Counter(i for r in designed for i in r.get("not_evaluated_ids", []))
     fail_items = Counter(i for r in designed for i in r.get("fail_ids", []))
-    for r in designed:
-        if not r.get("methodology_sha256"):
-            # Results written before this field existed: read it off the artifact.
-            design = root / r["case"]["case_id"] / "design.json"
-            if design.exists():
-                r["methodology_sha256"] = methodology_sha256(tail_request_identity(design))
     identities = Counter(r.get("methodology_sha256") for r in designed)
     hosts = Counter(r.get("host") for r in designed)
     total_time = sum(r.get("elapsed_s", 0.0) for r in designed)
@@ -293,6 +321,7 @@ def summarize(results, root, probe):
              f"design.json total {total_bytes / 1e9:.2f} GB.",
              f"Methodology identities (schema + config + source hashes) among designed cases: {len(identities)}"
              + (" -- one code base and config for the whole run" if len(identities) == 1 else
+                " -- no verified identity" if not identities else
                 " -- ** more than one: not every case was designed with the same code or config **"),
              f"Hosts: " + ", ".join(f"{h} ({n})" for h, n in hosts.most_common()) + "\n"]
     if len(identities) > 1:
@@ -377,11 +406,19 @@ def load_or_write_plan(root, cases, args):
             raise SystemExit(f"plan SHA mismatch: this launch builds {sha} but {path} holds {plan.get('plan_sha256')}. "
                              "Stop: git pull, check RANGES/SEISMIC_SITES and --count/--seed/--geometry-offset, or use a new root.")
     else:
+        if args.probe_assertions and not args.probe_date:
+            raise SystemExit("New PROBE roots require --probe-date YYYY-MM-DD; use the same date on all devices.")
         plan = {"seed": args.seed, "geometry_offset": args.geometry_offset, "count": args.count, "plan_sha256": sha,
                 "probe_assertions": args.probe_assertions,
-                "probe_date": time.strftime("%Y-%m-%d") if args.probe_assertions else None,
+                "probe_date": args.probe_date if args.probe_assertions else None,
                 "created": time.strftime("%Y-%m-%d %H:%M:%S"), "created_on": socket.gethostname(),
                 "cases": cases, "launches": []}
+    if plan_sha256(plan["cases"]) != sha:
+        raise SystemExit("Stored plan cases do not match its digest; files preserved.")
+    if args.probe_date and args.probe_date != plan.get("probe_date"):
+        raise SystemExit("PROBE date differs from the stored plan; use one shared date.")
+    if args.probe_assertions:
+        probe_config(plan.get("probe_date"))
     if bool(plan.get("probe_assertions")) != bool(args.probe_assertions):
         raise SystemExit(f"{path} was created with probe_assertions={plan.get('probe_assertions')}; "
                          f"this launch asks for {args.probe_assertions}. Use one setting per root.")
@@ -396,7 +433,8 @@ def load_or_write_plan(root, cases, args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--worker", nargs=2, metavar=("CASE_JSON", "OUT_DIR"), help=argparse.SUPPRESS)
-    parser.add_argument("--probe-date", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--probe-date", default=None, help="Shared YYYY-MM-DD assertion date; required for a new PROBE root.")
+    parser.add_argument("--attempt-id", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--count", type=int, default=150, help="Number of plan cases, from the first (default 150).")
     parser.add_argument("--geometry-offset", type=int, default=0, help="Skip this many plan geometries first.")
     parser.add_argument("--seed", type=int, default=SEED, help="Plan seed (default: the generation plan's).")
@@ -419,11 +457,17 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.worker:
         case = json.loads(args.worker[0])
-        result = run_worker(case, args.worker[1], args.probe_assertions, args.probe_date)
+        result = run_worker(case, args.worker[1], args.probe_assertions, args.probe_date, args.attempt_id)
         print(json.dumps({k: result.get(k) for k in ("status", "elapsed_s", "accepted", "counts", "error")}, default=str))
         return 0
+    if args.workers <= 0 or args.sites == [] or args.case_ids == []:
+        parser.error("workers must be positive; explicit sites/case-ids must not be empty")
+    if any(v is not None and v < 1 for v in (args.case_start, args.case_end)):
+        parser.error("case-start and case-end must be positive")
+    if args.case_start is not None and args.case_end is not None and args.case_start > args.case_end:
+        parser.error("case-start must not exceed case-end")
     cases = plan_cases(args.count, seed=args.seed, geometry_offset=args.geometry_offset,
-                       seismic_sites=tuple(args.sites) if args.sites else SEISMIC_SITES)
+                       seismic_sites=tuple(args.sites) if args.sites is not None else SEISMIC_SITES)
     sha = plan_sha256(cases)
     print(f"Plan: {len(cases)} cases (seed {args.seed}, offset {args.geometry_offset}); "
           f"hazards {list(args.sites) if args.sites else list(SEISMIC_SITES)}")
@@ -440,6 +484,15 @@ def main(argv=None):
         print(f"stop requested: {stop_file}")
         return 0
     root.mkdir(parents=True, exist_ok=True)
+    with exclusive_lease(root / ".launcher.lease"):
+        return _run_plan(args, cases, root)
+
+
+def _run_plan(args, cases, root):
+    sha = plan_sha256(cases)
+    stop_file = root / STOP_NAME
+    if args.case_ids and not set(args.case_ids).issubset({c["case_id"] for c in cases}):
+        raise ValueError("Requested case IDs are not in the plan")
     plan = load_or_write_plan(root, cases, args)
     probe_date = plan.get("probe_date")
 
@@ -453,7 +506,7 @@ def main(argv=None):
 
     if args.summarize_only:
         results = [saved_result(root / c["case_id"]) or {"case": c, "status": "missing"} for c in cases]
-        lines = summarize(results, root, bool(plan.get("probe_assertions")))
+        lines = summarize(results, root, bool(plan.get("probe_assertions")), cases, probe_date)
         print("\n".join(lines[:14]))
         print(f"summary: {root / 'summary.md'}")
         return 0
@@ -463,8 +516,10 @@ def main(argv=None):
         cases = [c for c in cases if c["case_id"] in wanted]
     if args.case_start is not None or args.case_end is not None:
         lo = args.case_start or 1
-        hi = args.case_end or args.count
+        hi = args.case_end if args.case_end is not None else args.geometry_offset + args.count
         cases = [c for c in cases if lo <= case_index(c) <= hi]
+    if not cases:
+        raise ValueError("Requested case range selects no cases")
     if stop_file.exists():
         stop_file.unlink()
         log(f"cleared {STOP_NAME} left by an earlier stop request")
@@ -496,7 +551,7 @@ def main(argv=None):
 
     with ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(run, cases))
-    lines = summarize(results, root, args.probe_assertions)
+    lines = summarize(results, root, args.probe_assertions, cases, probe_date)
     status = Counter(r.get("status") for r in results)
     log(f"{'stopped on request' if stop_file.exists() else 'finished slice'}: {dict(status)}; summary {root / 'summary.md'}")
     print("\n".join(lines[:14]))

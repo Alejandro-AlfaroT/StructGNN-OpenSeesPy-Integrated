@@ -64,12 +64,18 @@ half an hour.
 ## 4. Launch
 
 ```
-& "<python>" -B "<repo>\RC Structure\Design\Verify_Designs.py" --count 150 --case-start 1 --case-end 25 --workers 4 --probe-assertions --output-root "<local>\dv150"
+& "<python>" -B "<repo>\RC Structure\Design\Verify_Designs.py" --count 150 --case-start 1 --case-end 25 --workers 4 --probe-assertions --probe-date 2026-09-16 --output-root "<local>\dv150"
 ```
 
 Change only `--case-start` / `--case-end`. Everything else identical on every
 machine. Leave the terminal open; the launcher writes `<local>\dv150\run_log.txt`
 and `<local>\dv150\case_XXXX\{design.json, result.json, log.txt, stderr.txt}`.
+
+Choose one shared `--probe-date` for the experiment (the date above is an
+example). It is required when creating a new PROBE root and must match on
+every device. An existing root retains its recorded date; it must not be
+silently changed on a later launch. Plan SHA covers geometry/hazard only,
+not the assertion date or source/config identity.
 
 Before walking away: the process dies with the Windows session, so no
 sign-out, and sleep must be off (`powercfg /change standby-timeout-ac 0`, or
@@ -93,8 +99,18 @@ result, not a malfunction — that case is telling you something about the
 methodology; leave it and read `summary.md` at the end.
 
 Interrupted (power, killed terminal, reboot): re-run the same launch line.
-Designed cases are skipped, an interrupted case is retried from scratch (the
-launcher clears its lock). Nothing to clean up by hand.
+Completed designs are reused only after checking the actual artifact against
+the current geometry, hazard, code, configuration and PROBE date, then
+recomputing qualification. New results also bind the artifact's SHA256.
+Old-code or tampered artifacts are reported as errors, not overwritten; use
+a new output root for the changed methodology and preserve the old evidence.
+
+Local OS leases exclude simultaneous launchers and surviving workers. Never
+share a live output root over a network or sync tool. A leftover
+`.design.json.lock` is **not automatically deleted**: establish that its owner
+has exited before manual recovery. Partial design files are preserved too.
+Persistent `.launcher.lease` / `.worker.lease` files are normal; their presence
+does not mean they are held, and they should not be deleted.
 
 Graceful stop (in-flight cases finish, no new ones start; relaunching resumes):
 
@@ -107,14 +123,17 @@ Graceful stop (in-flight cases finish, no new ones start; relaunching resumes):
 From each machine, copy the case directories to one place (about 25 GB total):
 
 ```
-robocopy "<local>\dv150" "E:\StructGNN_outputs\dv150" /E /MT:16 /R:2 /W:2 /XF summary.* run_log.txt
+robocopy "<local>\dv150" "E:\StructGNN_outputs\dv150" /E /MT:16 /R:2 /W:2 /XF summary.* run_log.txt plan.json *.lease
 ```
 
-`plan.json` is the same on every machine (same SHA), so copying it over itself
-is fine. Then, on the machine holding the merged root:
+Copy only from stopped runs and merge disjoint case folders without
+overwriting another device's cases. Plans share a geometry digest but contain
+different host/launch histories: do not overwrite them. Keep a copy of each
+device's plan outside the merged root for provenance. Then create the merged
+root's own plan using the same count, seed, geometry offset and PROBE date:
 
 ```
-& "<python>" -B "<repo>\RC Structure\Design\Verify_Designs.py" --count 150 --probe-assertions --summarize-only --output-root "E:\StructGNN_outputs\dv150"
+& "<python>" -B "<repo>\RC Structure\Design\Verify_Designs.py" --count 150 --probe-assertions --probe-date 2026-09-16 --summarize-only --output-root "E:\StructGNN_outputs\dv150"
 ```
 
 Read `summary.md` top to bottom:
@@ -130,6 +149,14 @@ Read `summary.md` top to bottom:
 
 Then pick 3–5 cases across sites and heights for SAP2000
 (`Design/Export_SAP2000.py <case dir>` → import → `Design/Compare_SAP2000.py`).
+
+The SAP exporter is not yet validated by a live SAP import/analysis. Inspect
+the imported point-moment directions, per-edge slab mesh, member weight
+modifiers and every listed strength combination; select those combinations
+for concrete design explicitly. SAP's beam steel area is not a utilization
+ratio. Missing comparison tables/ratios produce `incomplete` (exit code 2),
+not a pass. P-Delta and spatial mass mapping remain comparison limitations.
+A numerical pass alone does not establish the engineering assertions.
 
 ## Current configuration
 

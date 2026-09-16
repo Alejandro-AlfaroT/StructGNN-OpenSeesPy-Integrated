@@ -115,6 +115,7 @@ class ReinforcementExportTests(unittest.TestCase):
                 mock.patch.object(hybrid, "_read_json", side_effect=lambda p, default=None: json_data.get(Path(p).name, default)), \
                 mock.patch.object(hybrid.np, "load", return_value={}), \
                 mock.patch.object(hybrid.np, "savez_compressed") as save:
+            (Path(directory) / "status.json").write_text(json.dumps(json_data["status.json"]))
             metadata = hybrid.compile_hybrid_sample(directory)
             self.assertEqual(metadata["reinforcement_geometry"], saved_sidecar)
             self.assertEqual(save.call_args.kwargs["global_features"].shape, (43,))
@@ -124,6 +125,7 @@ class ReinforcementExportTests(unittest.TestCase):
         for existing in ({}, {"reinforcement_geometry": {"recorded": "original"}}):
             with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory)
+                (path / "status.json").write_text("{}")
                 (path / "hybrid_sample.npz").write_bytes(b"existing tensor bytes")
                 (path / "hybrid_metadata.json").write_text(json.dumps(existing), encoding="utf-8")
                 (path / "global_parameters.json").write_text(json.dumps(collect_global_parameters()), encoding="utf-8")

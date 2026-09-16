@@ -20,8 +20,8 @@ Two variants are written, because the OpenSees design model is two things:
 
   frame   Frame + rigid diaphragm, gravity applied as the exact per-member
           loads the shell floor transfer produced (stored in the record).
-          This IS the OpenSees design model. Drift, member forces and design
-          DCRs should agree closely.
+          This is a comparison model, not a validated solver-equivalent copy:
+          see the exported limitations, particularly P-Delta and mass mapping.
 
   slab    Frame + shell slab + area pressures. SAP performs its own floor
           transfer. Column axials and beam moments against the record's
@@ -57,6 +57,7 @@ if str(RC_DIR) not in sys.path:
 import Structure_Parameters as sp  # noqa: E402
 from Geometry_Overrides import apply_geometry_overrides  # noqa: E402
 from Loads.Seismic_ELF import elf_story_forces  # noqa: E402
+from Design.SMRF_Floor_Transfer import global_couple  # noqa: E402
 
 SAP_VERSION = "26.3.0"
 G_IN_PER_SEC2 = 386.4
@@ -187,6 +188,8 @@ class S2K:
 # ---------------------------------------------------------------------------
 
 def build(record, variant):
+    if variant not in ("frame", "slab"):
+        raise ValueError("variant must be frame or slab")
     frame = Frame(record)
     sec = record["sections"]
     reinf = record["reinforcement"]
@@ -197,25 +200,38 @@ def build(record, variant):
     torsion = (record.get("demand_basis") or {}).get("torsion") or {}
     transfer = record.get("floor_transfer") or {}
     demand = record.get("demand") or {}
-    drift_assumptions = (record.get("drift_screen") or {}).get("assumptions") or {}
+    drift_assumptions = {**((record.get("drift_screen") or {}).get("assumptions") or {}),
+                         **((record.get("demand_basis") or {}).get("drift") or {})}
 
     fy = float(mat.get("fy_ksi", 60.0))
     fc_col, fc_beam = float(sec["fc_col_ksi"]), float(sec["fc_beam_ksi"])
     fc_slab = float(slab.get("concrete_fc_ksi") or fc_beam)
     b_col, h_col = float(sec["b_col_in"]), float(sec["h_col_in"])
     b_beam, h_beam = float(sec["b_beam_in"]), float(sec["h_beam_in"])
-    col_mod = float(sp.COLUMN_STIFFNESS_MODIFIER) if sp.CRACKED_SECTION_ANALYSIS else 1.0
-    beam_mod = float(sp.BEAM_STIFFNESS_MODIFIER) if sp.CRACKED_SECTION_ANALYSIS else 1.0
+    col_mod = float(drift_assumptions["column_stiffness_modifier"])
+    beam_mod = float(drift_assumptions["beam_stiffness_modifier"])
+    combinations = (record.get("design_actions") or {}).get("combinations") or []
+    if not combinations:
+        raise ValueError("Saved design load combinations are required; no guessed combinations are exported.")
+    patterns = {p["id"]: p for p in record["demand_basis"]["live_load_patterns"]}
+    live_patterns = {"all": "LIVE", **{pid: "LIVE_" + pid for pid in patterns}}
+    for combo in combinations:
+        if combo.get("live_pattern", "all") not in live_patterns:
+            raise ValueError("Saved combination refers to a missing live-load pattern.")
 
     # --- ELF story forces, recomputed on the record's period and hazard -----
     apply_geometry_overrides({"NUM_BAY_X": frame.nx, "NUM_BAY_Y": frame.ny, "NUM_FLOOR": frame.nf,
                               "BAY_X": frame.bx, "BAY_Y": frame.by, "STORY_H": frame.sh}, emit=False)
     if seismic.get("site_label"):
         sp.apply_seismic_site(seismic["site_label"])
+    for key, value in (record.get("request_identity") or {}).get("inputs", {}).items():
+        if hasattr(sp, key):
+            setattr(sp, key, value)
     # The seismic weight depends on the sections (member self-weight) and on
     # the slab state the design selected. Mirror Design_Driver exactly, or the
     # ELF is computed on the legacy load model and comes out ~2% high.
     sp.B_COL, sp.H_COL, sp.B_BEAM, sp.H_BEAM = b_col, h_col, b_beam, h_beam
+    sp.SLAB_THICKNESS_IN = None
     if floor.get("slab_thickness_in") is not None:
         sp.SLAB_THICKNESS_IN = float(floor["slab_thickness_in"])
         sp.FLOOR_SUPERIMPOSED_DEAD_LOAD_KSF = float(floor.get("floor_superimposed_dead_load_ksf",
@@ -230,6 +246,13 @@ def build(record, variant):
             f"{record_weight:.2f} kip. The load model was not reproduced; refusing to emit "
             "an ELF that differs from the one the design was checked against.")
     ecc_ratio = float(torsion.get("ratio", 0.05)) * float(torsion.get("amplification", 1.0))
+    # Keep section stiffness intact, but account for concrete only once.
+    gamma = float(slab["concrete_unit_weight_kcf"]) / 1728.0
+    weight_mod = {
+        "column": sp.col_self_weight_kip_per_in() / (gamma * b_col * h_col),
+        "x": sp.beam_self_weight_kip_per_in("x") / (gamma * b_beam * h_beam),
+        "y": sp.beam_self_weight_kip_per_in("y") / (gamma * b_beam * h_beam),
+    }
 
     s = S2K()
     s.table("PROGRAM CONTROL", [dict(
@@ -247,8 +270,8 @@ def build(record, variant):
              for name, _ in materials]
             + [dict(Material="A706Gr60", Type="Rebar", SymType="Uniaxial", TempDepend=False, Color="Gray8Dark")])
     s.table("MATERIAL PROPERTIES 02 - BASIC MECHANICAL PROPERTIES",
-            [dict(Material=name, UnitWeight=CONCRETE_UNIT_WEIGHT_KCI,
-                  UnitMass=CONCRETE_UNIT_WEIGHT_KCI / G_IN_PER_SEC2,
+            [dict(Material=name, UnitWeight=gamma,
+                  UnitMass=gamma / G_IN_PER_SEC2,
                   E1=concrete_e_ksi(fc), G12=0.4 * concrete_e_ksi(fc), U12=0.2, A1=5.5e-6)
              for name, fc in materials]
             + [dict(Material="A706Gr60", UnitWeight=STEEL_UNIT_WEIGHT_KCI,
@@ -328,10 +351,10 @@ def build(record, variant):
             + [dict(Frame=tag, AutoSelect="N.A.", AnalSect="BEAM", MatProp="Default")
                for tag, *_ in frame.beams_x + frame.beams_y])
     s.table("FRAME PROPERTY MODIFIERS",
-            [dict(Frame=tag, AMod=1, AS2Mod=1, AS3Mod=1, JMod=col_mod, I22Mod=col_mod, I33Mod=col_mod, MMod=1, WMod=1)
+            [dict(Frame=tag, AMod=1, AS2Mod=1, AS3Mod=1, JMod=col_mod, I22Mod=col_mod, I33Mod=col_mod, MMod=1, WMod=weight_mod["column"])
              for tag, *_ in frame.columns]
-            + [dict(Frame=tag, AMod=1, AS2Mod=1, AS3Mod=1, JMod=beam_mod, I22Mod=beam_mod, I33Mod=beam_mod, MMod=1, WMod=1)
-               for tag, *_ in frame.beams_x + frame.beams_y])
+            + [dict(Frame=tag, AMod=1, AS2Mod=1, AS3Mod=1, JMod=beam_mod, I22Mod=beam_mod, I33Mod=beam_mod, MMod=1, WMod=weight_mod[axis])
+               for axis, beams in (("x", frame.beams_x), ("y", frame.beams_y)) for tag, *_ in beams])
     s.table("FRAME DESIGN PROCEDURES",
             [dict(Frame=tag, DesignProc="From Material") for tag, *_ in frame.columns + frame.beams_x + frame.beams_y])
 
@@ -349,7 +372,9 @@ def build(record, variant):
                     areas.append(dict(Area=aid, NumJoints=4, Joint1=frame.node(k, i, j), Joint2=frame.node(k, i + 1, j),
                                       Joint3=frame.node(k, i + 1, j + 1), Joint4=frame.node(k, i, j + 1)))
                     area_assign.append(dict(Area=aid, Section="SLAB", MatProp="Default"))
-                    n = int(round(math.sqrt(float(transfer.get("mesh_per_bay", 16)))))
+                    n = int(transfer["mesh_per_bay"])
+                    if n < 1 or n != transfer["mesh_per_bay"]:
+                        raise ValueError("mesh_per_bay must be a positive integer subdivision count")
                     mesh.append(dict(Area=aid, MeshOption="Mesh N x N", N1=n, N2=n, RestraintsOnEdge=False,
                                      RestraintsOnFace=False, LocalAxesOnEdge=False, LocalAxesOnFace=False, SubMesh=False))
                     aid += 1
@@ -364,7 +389,8 @@ def build(record, variant):
         dict(LoadPat="LIVE", DesignType="Live", SelfWtMult=0),
         dict(LoadPat="EQX", DesignType="Quake", SelfWtMult=0),
         dict(LoadPat="EQY", DesignType="Quake", SelfWtMult=0),
-    ])
+    ] + [dict(LoadPat=name, DesignType="Live", SelfWtMult=0)
+         for pid, name in live_patterns.items() if pid != "all"])
 
     joint_loads, frame_point_loads, area_loads = [], [], []
 
@@ -375,8 +401,12 @@ def build(record, variant):
             beams_by_key[("x", k, j, i)] = tag
         for tag, ni, nj, k, i, j in frame.beams_y:
             beams_by_key[("y", k, i, j)] = tag
-        for pattern, case_key in (("DEAD_FLOOR", "dead"), ("LIVE", "live")):
-            unit = (transfer.get("unit_cases") or {}).get(case_key) or {}
+        unit_patterns = [("DEAD_FLOOR", "dead"), ("LIVE", "live")]
+        unit_patterns += [(live_patterns[pid], "live_pattern_" + pid) for pid in patterns]
+        for pattern, case_key in unit_patterns:
+            unit = transfer["unit_cases"].get(case_key)
+            if not unit:
+                raise ValueError(f"Missing floor-transfer case {case_key}")
             for k in range(1, frame.nf + 1):
                 for beam in unit.get("beams", []):
                     axis, line, span = beam["axis"], int(beam["line_index"]), int(beam["span_index"])
@@ -387,7 +417,8 @@ def build(record, variant):
                         frame_point_loads.append(dict(Frame=tag, LoadPat=pattern, CoordSys="GLOBAL", Type="Force",
                                                       Dir="Gravity", DistType="RelDist", RelDist=float(rel),
                                                       AbsDist=0, Force=float(force)))
-                    for rel, mx, my in beam.get("node_couples", []):
+                    for rel, local_x, local_y in beam.get("node_couples", []):
+                        mx, my = global_couple(axis, local_x, local_y)
                         if abs(mx) > 1e-12:
                             frame_point_loads.append(dict(Frame=tag, LoadPat=pattern, CoordSys="GLOBAL", Type="Moment",
                                                           Dir="X", DistType="RelDist", RelDist=float(rel), AbsDist=0,
@@ -408,6 +439,12 @@ def build(record, variant):
         for aid in range(1, frame.nf * frame.nx * frame.ny + 1):
             area_loads.append(dict(Area=aid, LoadPat="DEAD_FLOOR", CoordSys="GLOBAL", Dir="Gravity", UnifLoad=sdl))
             area_loads.append(dict(Area=aid, LoadPat="LIVE", CoordSys="GLOBAL", Dir="Gravity", UnifLoad=live))
+            panel = (aid - 1) % (frame.nx * frame.ny)
+            ij = [panel % frame.nx, panel // frame.nx]
+            for pid, pattern in patterns.items():
+                if ij in pattern["panels"]:
+                    area_loads.append(dict(Area=aid, LoadPat=live_patterns[pid], CoordSys="GLOBAL",
+                                           Dir="Gravity", UnifLoad=live))
 
     # ELF: mass-proportional distribution to every floor joint (resultant at the
     # centre of mass under a rigid diaphragm), plus one torsional couple for the
@@ -434,10 +471,11 @@ def build(record, variant):
         s.table("AREA LOADS - UNIFORM", area_loads)
 
     # --- cases, combinations, mass -----------------------------------------
-    static = ["DEAD_FLOOR", "SELF_WT", "LIVE", "EQX", "EQY"]
+    static = ["DEAD_FLOOR", "SELF_WT", "LIVE", "EQX", "EQY"] + [live_patterns[pid] for pid in patterns]
     s.table("LOAD CASE DEFINITIONS",
             [dict(Case=c, Type="LinStatic", InitialCond="Zero", DesTypeOpt="Prog Det",
-                  DesignType={"DEAD_FLOOR": "Dead", "SELF_WT": "Dead", "LIVE": "Live"}.get(c, "Quake"),
+                  DesignType=("Live" if c.startswith("LIVE") else
+                              {"DEAD_FLOOR": "Dead", "SELF_WT": "Dead"}.get(c, "Quake")),
                   DesActOpt="Prog Det", DesignAct="Non-Composite", AutoType="None", RunCase=True) for c in static]
             + [dict(Case="MODAL", Type="LinModal", InitialCond="Zero", DesTypeOpt="Prog Det", DesignType="Other",
                     DesActOpt="Prog Det", DesignAct="Other", AutoType="None", RunCase=True)])
@@ -454,23 +492,19 @@ def build(record, variant):
             + ([dict(MassSource="MSSSRC1", LoadPat="LIVE", Multiplier=live_seismic)] if live_seismic > 0 else []))
 
     rho_strength = 1.3 if str(drift_assumptions.get("seismic_design_category", "D")) in ("D", "E", "F") else 1.0
-    combos = []
-
     def combo(name, terms):
-        combos.append(dict(ComboName=name, ComboType="Linear Additive", AutoDesign=False))
         return [dict(ComboName=name, CaseType="Linear Static", CaseName=case, ScaleFactor=sf) for case, sf in terms]
 
     combo_cases = []
     combo_cases += combo("DRIFT_X", [("DEAD_FLOOR", 1), ("SELF_WT", 1), ("LIVE", 1), ("EQX", 1)])
     combo_cases += combo("DRIFT_Y", [("DEAD_FLOOR", 1), ("SELF_WT", 1), ("LIVE", 1), ("EQY", 1)])
-    for sign, label in ((1, "P"), (-1, "N")):
-        combo_cases += combo(f"STR_X{label}", [("DEAD_FLOOR", 1.2), ("SELF_WT", 1.2), ("LIVE", 0.5),
-                                               ("EQX", sign * rho_strength), ("EQY", sign * 0.3 * rho_strength)])
-        combo_cases += combo(f"STR_Y{label}", [("DEAD_FLOOR", 1.2), ("SELF_WT", 1.2), ("LIVE", 0.5),
-                                               ("EQY", sign * rho_strength), ("EQX", sign * 0.3 * rho_strength)])
-        combo_cases += combo(f"UPL_X{label}", [("DEAD_FLOOR", 0.9), ("SELF_WT", 0.9), ("EQX", sign * rho_strength)])
-        combo_cases += combo(f"UPL_Y{label}", [("DEAD_FLOOR", 0.9), ("SELF_WT", 0.9), ("EQY", sign * rho_strength)])
-    combo_cases += combo("GRAVITY", [("DEAD_FLOOR", 1.2), ("SELF_WT", 1.2), ("LIVE", 1.6)])
+    for saved_combo in combinations:
+        terms = [("DEAD_FLOOR", saved_combo["dead"]), ("SELF_WT", saved_combo["dead"]),
+                 (live_patterns[saved_combo.get("live_pattern", "all")], saved_combo["live"]),
+                 ("EQX", saved_combo["ex"]), ("EQY", saved_combo["ey"])]
+        combo_cases += combo(saved_combo["id"], [(name, sf) for name, sf in terms if sf != 0])
+    for row in combo_cases:
+        row.update(ComboType="Linear Additive", AutoDesign=False)
     s.table("COMBINATION DEFINITIONS", combo_cases)
 
     # --- concrete design set-up --------------------------------------------
@@ -489,6 +523,9 @@ def build(record, variant):
         "case": record.get("request_identity", {}).get("case_id") or Path(".").name,
         "schema_version": record.get("schema_version"),
         "variant": variant,
+        "validation_status": "export-only; live SAP import and selected design combinations require verification",
+        "required_strength_combinations": [c["id"] for c in combinations],
+        "member_weight_modifiers": weight_mod,
         "geometry": {"num_bay_x": frame.nx, "num_bay_y": frame.ny, "num_floor": frame.nf,
                      "bay_x_in": frame.bx, "bay_y_in": frame.by, "story_h_in": frame.sh},
         "period_T1_sec": demand.get("model_period_sec"),
@@ -499,7 +536,7 @@ def build(record, variant):
         "torsion": {"eccentricity_ratio": ecc_ratio, "moment_x_case_kip_in": [f * ecc_ratio * frame.plan_y for f in elf["story_forces_kip"]],
                     "moment_y_case_kip_in": [f * ecc_ratio * frame.plan_x for f in elf["story_forces_kip"]]},
         "drift_screen": {"assumptions": drift_assumptions, "cd": drift_assumptions.get("cd", 5.5),
-                         "stories": stories},
+                         "ie": float(sp.ASCE_IE), "stories": stories},
         "dcr": record.get("dcr"),
         "scwb": record.get("scwb"),
         "floor_transfer_totals": {key: {k2: v for k2, v in (unit or {}).items() if k2 in ("applied_kip", "beam_kip", "column_direct_kip", "column_direct_fraction")}
@@ -513,7 +550,10 @@ def build(record, variant):
                    "diaphragm": "DIAPH<k>, one per elevated floor"},
         "known_differences": [
             "SAP linear static has no P-Delta unless you enable it; the OpenSees drift screen includes it (theta ~0.02 -> ~2% drift).",
-            "Member self-weight: SAP uses full centerline lengths; the record uses clear spans and story minus slab (a few percent).",
+            "Member WMod reproduces clear-span beam drops and story-minus-slab column weights; confirm SAP imports these modifiers.",
+            "SAP load-derived mass distribution must be checked against OpenSees joint masses; matching total weight alone does not validate modal mass distribution.",
+            "Select the listed required_strength_combinations for SAP concrete design; do not substitute automatic combinations.",
+            "SAP beam required steel area is not a beam DCR; no direct utilization comparison is made without a true ratio field.",
             "ELF is recomputed here from the record's period and hazard; SAP's own auto-seismic case is an additional check, not the same forces.",
         ],
     }

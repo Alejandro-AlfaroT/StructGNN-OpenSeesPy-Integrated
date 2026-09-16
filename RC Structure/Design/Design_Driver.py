@@ -209,14 +209,28 @@ def _slab_strength_inputs_from_state(slab, cfg):
         "geometry": {"num_floor": sp.NUM_FLOOR}})
 
 
+def _beam_shear_share_criterion(edge):
+    """ACI 318-14 Table 8.10.8.1: alpha_f1 times transverse/beam span."""
+    span = sp.BAY_X if edge["beam_axis"] == "x" else sp.BAY_Y
+    return edge["alpha_f"] * edge["slab_strip_width_in"] / span
+
+
 def _slab_completion_context(slab, cfg):
     return {"clear_span_x_in": sp.BAY_X - sp.H_COL, "clear_span_y_in": sp.BAY_Y - sp.B_COL,
             "beam_width_in": sp.B_BEAM, "alpha_f_min": min(edge["alpha_f"] for panel in slab["panels"]
                                                            for edge in panel["edges"]),
+            "alpha_f_l2_l1_min": min(_beam_shear_share_criterion(edge) for panel in slab["panels"]
+                                     for edge in panel["edges"]),
             "thickness_screen_passed": slab["thickness_screen_passed"] is True,
             "column_core_width_in": min(sp.B_COL, sp.H_COL) - 2.0 * sp.longitudinal_cover_in("column"),
             "two_way_shear_path_assessed": (cfg.slab_actions.all_asserted()
-                                             and cfg.slab_actions.two_way_shear_path_assessed is True)}
+                                             and cfg.slab_actions.two_way_shear_path_assessed is True),
+            # This builder places beams in both directions at each column.
+            # Acceptance of the local shear path remains a separate assertion.
+            "columns_at_beam_intersections": True,
+            "beam_clear_cover_in": sp.BEAM_CLEAR_COVER_IN,
+            "beam_hoop_diameter_in": sp.rebar_diameter(sp.BEAM_STIRRUP_BAR_SIZE),
+            "fc_beam_ksi": sp.FC_BEAM_KSI}
 
 
 def _update_slab_reinforcement(cfg, slab):
@@ -1188,6 +1202,11 @@ def design_structure(cfg=None, max_section_iter=10, max_steel_iter=6, verbose=Tr
     for value in (cfg.rebar.beam_clear_cover_in, cfg.rebar.col_clear_cover_in):
         if isinstance(value, bool) or not math.isfinite(value) or value < 1.5:
             raise ValueError("Frame clear cover must be finite and at least 1.5 in outside hoops.")
+    problems = cfg.demands.problems()
+    provenance = (cfg.demands.declared_by, cfg.demands.declaration_date, cfg.demands.declaration_basis)
+    blank_fields = {"declared_by is blank", "declaration_date is blank", "declaration_basis is blank"}
+    if problems and (any(str(v).strip() for v in provenance) or set(problems) - blank_fields):
+        raise ValueError("DemandPolicy is not a valid declaration: " + "; ".join(problems))
     aggregate = cfg.rebar.aggregate_max_size_in
     if isinstance(aggregate, bool) or not math.isfinite(aggregate) or aggregate <= 0:
         raise ValueError("Maximum aggregate size must be finite and positive.")

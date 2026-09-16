@@ -7,6 +7,7 @@ column, what the hoops are chosen from, how joint confinement is read).
 import math
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -58,6 +59,28 @@ def single_load_transfer(load_kip=10.0, x_fraction=0.5):
 
 
 class ProbableStrengthTests(unittest.TestCase):
+    def test_rectangular_column_y_bending_rotates_concrete_and_steel(self):
+        from Design import SMRF_Capacity_Design as capacity
+        st = state(sections={"b_col_in": 20., "h_col_in": 26.},
+                   column={"layers_about_z": [(2.64, 2.375), (1.76, 10.), (2.64, 17.625)]})
+        strengths = {f"{axis}_{position}": capacity.probable_beam_strengths(st, position, axis)
+                     for axis in ("x", "y") for position in ("interior", "edge")}
+        with patch.object(capacity, "column_probable_pm", wraps=capacity.column_probable_pm) as pm:
+            columns = capacity.design_column_shear(st, strengths)
+        x, y = [call.args[0] for call in pm.call_args_list]
+        self.assertEqual((x["sections"]["b_col_in"], x["sections"]["h_col_in"]), (20., 26.))
+        self.assertEqual((y["sections"]["b_col_in"], y["sections"]["h_col_in"]), (26., 20.))
+        self.assertEqual(y["column"]["layers"], st["column"]["layers_about_z"])
+        p_min, p_max = st["column_axial_envelope"][1]
+        diagram = capacity.column_probable_pm(y)
+        expected = max(capacity._moment_at(diagram, p_min + (p_max - p_min) * k / 8) for k in range(9))
+        self.assertAlmostEqual(columns["stories"]["y"][1]["mpr_column_kip_in"], expected)
+
+    def test_rectangular_column_without_orthogonal_layers_fails_closed(self):
+        from Design import SMRF_Capacity_Design as capacity
+        with self.assertRaisesRegex(ValueError, "layers_about_z"):
+            capacity.design_column_shear(state(sections={"b_col_in": 20.}), {})
+
     def test_mpr_uses_1_25_fy_on_the_composite_section(self):
         s = probable_beam_strengths(state(), "interior", "x")
         self.assertGreater(s["mpr_negative_kip_in"], 1.15 * s["mn_negative_kip_in"])

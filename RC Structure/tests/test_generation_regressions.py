@@ -978,7 +978,8 @@ class CollapseCompletionTests(unittest.TestCase):
             paths["sample"].parent.mkdir(parents=True, exist_ok=True)
             paths["sample"].write_bytes(b"")
             paths["sample"].with_name("hybrid_metadata.json").write_text(
-                json.dumps({"collapse": collapse}), encoding="utf-8"
+                json.dumps({"collapse": collapse, "npts_requested": 6000,
+                            "completed_steps": 4588 if failed else 6000}), encoding="utf-8"
             )
         return case, run
 
@@ -1006,6 +1007,36 @@ class CollapseCompletionTests(unittest.TestCase):
             root = Path(temp_dir)
             case, run = self._make_run(root, failed=False, collapse=False)
             self.assertTrue(Generate_Parameterized_Dataset.complete_run(root, case, run))
+
+    def test_previous_collapse_does_not_finish_a_new_failed_attempt(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            case, run = self._make_run(root, failed=True, collapse=True)
+            paths = Generate_Parameterized_Dataset.run_paths_for(root, case, run)
+            metadata_path = paths["sample"].with_name("hybrid_metadata.json")
+            metadata = json.loads(metadata_path.read_text())
+            metadata["analysis_status_sha256"] = hashlib.sha256(paths["status"].read_bytes()).hexdigest()
+            metadata_path.write_text(json.dumps(metadata))
+            old = paths["status"].stat()
+            status = json.loads(paths["status"].read_text())
+            # Same counts and timestamps: only the content binding catches it.
+            status["retry_reason"] = "new failed attempt"
+            paths["status"].write_text(json.dumps(status))
+            os.utime(paths["status"], ns=(old.st_atime_ns, old.st_mtime_ns))
+            self.assertFalse(Generate_Parameterized_Dataset.complete_run(root, case, run))
+
+    def test_legacy_collapse_with_different_step_count_is_not_complete(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            case, run = self._make_run(root, failed=True, collapse=True)
+            paths = Generate_Parameterized_Dataset.run_paths_for(root, case, run)
+            old = paths["status"].stat()
+            status = json.loads(paths["status"].read_text())
+            status["completed_steps"] = 3
+            paths["status"].write_text(json.dumps(status))
+            os.utime(paths["status"], ns=(old.st_atime_ns, old.st_mtime_ns))
+            self.assertFalse(Generate_Parameterized_Dataset.complete_run(root, case, run))
 
 
 class StaleSampleTests(unittest.TestCase):
@@ -1038,12 +1069,24 @@ class StaleSampleTests(unittest.TestCase):
             os.utime(status, (2_000, 2_000))
             self.assertTrue(Hybrid_Exporter._sample_is_stale(ntha, sample))
 
-    def test_missing_status_is_not_stale(self):
+    def test_missing_status_is_not_reusable(self):
         from Data_Generation import Hybrid_Exporter
         with tempfile.TemporaryDirectory() as temp_dir:
             status, sample, ntha = self._layout(Path(temp_dir))
             status.unlink()
-            self.assertFalse(Hybrid_Exporter._sample_is_stale(ntha, sample))
+            self.assertTrue(Hybrid_Exporter._sample_is_stale(ntha, sample))
+
+    def test_status_digest_detects_retry_even_with_preserved_timestamps(self):
+        import hashlib
+        from Data_Generation import Hybrid_Exporter
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status, sample, ntha = self._layout(Path(temp_dir))
+            digest = hashlib.sha256(status.read_bytes()).hexdigest()
+            sample.with_name("hybrid_metadata.json").write_text(json.dumps({"analysis_status_sha256": digest}))
+            status.write_text('{"failed":true}')
+            os.utime(status, (1000, 1000))
+            os.utime(sample, (2000, 2000))
+            self.assertTrue(Hybrid_Exporter._sample_is_stale(ntha, sample))
 
 if __name__ == "__main__":
     unittest.main()

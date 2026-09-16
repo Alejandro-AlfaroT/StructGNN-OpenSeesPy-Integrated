@@ -672,7 +672,19 @@ def complete_run(root, case, run):
     paths = run_paths_for(root, case, run)
     if not paths["sample"].exists():
         return False
-    return successful_status(paths["status"]) or collapse_labelled(paths["sample"])
+    from Hybrid_Exporter import _sample_is_stale
+    try:
+        if _sample_is_stale(paths["status"].parent, paths["sample"]):
+            return False
+        if successful_status(paths["status"]):
+            return True
+        status = json.loads(paths["status"].read_text(encoding="utf-8"))
+        metadata = json.loads(paths["sample"].with_name("hybrid_metadata.json").read_text(encoding="utf-8"))
+        # Legacy sidecars need matching step counts as well as freshness.
+        return (metadata.get("collapse") is True and int(status.get("completed_steps") or 0) > 0
+                and all(metadata.get(k) == status.get(k) for k in ("completed_steps", "npts_requested")))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
 
 
 def completed_run_count(root, case):

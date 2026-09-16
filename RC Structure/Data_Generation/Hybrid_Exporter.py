@@ -31,6 +31,7 @@ dataset class without depending on pandas.
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -578,7 +579,7 @@ def _completed_ok(status):
 
 
 def _sample_is_stale(ntha_dir, sample_path):
-    """True when the analysis outputs are newer than the compiled sample.
+    """True when current analysis evidence no longer matches the sample.
 
     A retried run re-executes the NTHA but, with overwrite off, the existing
     sample was returned untouched -- so the sample described a previous
@@ -586,13 +587,20 @@ def _sample_is_stale(ntha_dir, sample_path):
     from four days before its NTHA, with a different step count. Comparing
     against status.json, which every completed analysis rewrites last, makes
     the sample follow the analysis without the caller having to know that a
-    retry happened.
+    retry happened. New sidecars bind the exact status bytes by SHA256;
+    legacy samples fall back to timestamps. A missing status is not reusable.
     """
     status_path = Path(ntha_dir) / "status.json"
     sample_path = Path(sample_path)
-    if not status_path.exists() or not sample_path.exists():
+    if not sample_path.exists():
         return False
-    return status_path.stat().st_mtime > sample_path.stat().st_mtime
+    if not status_path.exists():
+        return True
+    metadata = _read_json(sample_path.with_name("hybrid_metadata.json"), default={}) or {}
+    digest = metadata.get("analysis_status_sha256")
+    if digest:
+        return digest != hashlib.sha256(status_path.read_bytes()).hexdigest()
+    return status_path.stat().st_mtime_ns > sample_path.stat().st_mtime_ns
 
 
 def required_files_present(ntha_dir):
@@ -668,6 +676,7 @@ def compile_hybrid_sample(
     if missing:
         raise FileNotFoundError(f"{ntha_dir} is missing required NTHA files: {missing}")
 
+    status_digest = hashlib.sha256((ntha_dir / "status.json").read_bytes()).hexdigest()
     nodes = _read_csv(ntha_dir / "nodes.csv")
     edges = _read_csv(ntha_dir / "edges.csv")
     elements = _read_csv(ntha_dir / "elements.csv")
@@ -773,6 +782,8 @@ def compile_hybrid_sample(
     )
     target_peak = _target_peak_array(summary, status)
 
+    if hashlib.sha256((ntha_dir / "status.json").read_bytes()).hexdigest() != status_digest:
+        raise RuntimeError("Analysis status changed while compiling the sample; retry after the analysis finishes.")
     np.savez_compressed(
         sample_path,
         x=x,
@@ -816,6 +827,7 @@ def compile_hybrid_sample(
 
     metadata = {
         "schema_version": "hybrid_gnn_lstm_v3",
+        "analysis_status_sha256": status_digest,
         "run_name": ntha_dir.name,
         "source_ntha_dir": _portable_path(ntha_dir, output_dir),
         "sample_npz": _portable_path(sample_path, output_dir),
