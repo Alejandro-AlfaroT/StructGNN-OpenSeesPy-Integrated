@@ -86,6 +86,13 @@ BEAM_BAR_AREA = rebar_area(BEAM_BAR_SIZE)
 COL_STIRRUP_BAR_SIZE = 4
 COL_STIRRUP_LEGS = 2
 COL_STIRRUP_SPACING = 6.0
+# Column hoop legs per direction as the capacity design selects them
+# (ACI 318-19 18.7.5.4 defines Ash per direction): legs crossing the b faces
+# run along h, legs crossing the h faces run along b. None means the same
+# count both ways, COL_STIRRUP_LEGS. COL_STIRRUP_LEGS itself stays the
+# scalar the hinge calibration and the legacy shear checks read; the design
+# sets it to the lighter direction.
+COL_STIRRUP_LEGS_BY_DIRECTION = None
 
 BEAM_STIRRUP_BAR_SIZE = 4
 BEAM_STIRRUP_LEGS = 2
@@ -158,7 +165,12 @@ def longitudinal_clear_spacing_in(member_type, bar_size=None):
 
 # Design DCR target band (iterative steel redesign)
 DESIGN_DCR_MIN = 0.60   # lower bound — avoid over-design
-DESIGN_DCR_MAX = 0.90   # upper bound — demand must be met
+DESIGN_DCR_MAX = 0.95   # upper bound — demand must be met
+# 0.95 rather than 0.90: the discrete section and bar ladders cannot land
+# every geometry inside a narrow window, and a design that misses by a
+# percent is safe, not wrong. pilot30 case_0027 converged on a beam DCR of
+# 0.910 with the column at 0.478 and SCWB at 2.32, then spent five
+# iterations failing to do better because the ladder has no rung between.
 
 # Loading / mass
 G = 386.4

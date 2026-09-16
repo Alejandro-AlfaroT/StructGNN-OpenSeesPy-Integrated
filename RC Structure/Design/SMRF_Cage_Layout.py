@@ -26,6 +26,10 @@ drawn here):
 
 A leg count is *constructible* for a direction when it lies between the
 minimum the support rules require and the maximum the bars can engage.
+The two directions of a column are independent: the legs that cross the b
+faces (the perimeter hoop's two legs parallel to h plus the crossties on
+the b-face bars) and the legs that cross the h faces are counted, tied and
+used for Av and Ash separately, as 18.7.5.4 defines Ash per direction.
 """
 from __future__ import annotations
 
@@ -34,6 +38,17 @@ import math
 HX_MAX_IN = 14.0
 HX_MAX_HIGH_AXIAL_IN = 8.0
 UNSUPPORTED_CLEAR_MAX_IN = 6.0
+COLUMN_DIRECTIONS = ("across_b_face", "across_h_face")
+
+
+def legs_by_direction(legs):
+    """Column leg count as {direction: legs}; an int means the same count both ways."""
+    if isinstance(legs, dict):
+        missing = [d for d in COLUMN_DIRECTIONS if d not in legs]
+        if missing:
+            raise ValueError(f"Column legs need both directions; missing {missing}.")
+        return {d: int(legs[d]) for d in COLUMN_DIRECTIONS}
+    return {d: int(legs) for d in COLUMN_DIRECTIONS}
 
 
 def face_bar_positions(width_in, clear_cover_in, hoop_db_in, bar_db_in, count):
@@ -130,8 +145,10 @@ def column_cage(b_in, h_in, clear_cover_in, hoop_db_in, bar_db_in, top_bars, sid
     Faces: two faces of width ``b_in`` with ``top_bars`` bars each (the
     legs across them run in the h direction), two faces of depth ``h_in``
     with ``side_bars`` interior bars each plus the corners. With ``legs``
-    given, the arrangement realizes that many legs in both directions
-    (perimeter hoop + legs - 2 crossties per face pair) when constructible.
+    given -- an int for the same count both ways, or
+    {"across_b_face": n, "across_h_face": m} -- the arrangement realizes
+    that many legs in each direction (perimeter hoop + legs - 2 crossties
+    on the face pair the legs cross) when constructible in both.
     """
     hx_max = HX_MAX_HIGH_AXIAL_IN if high_axial else HX_MAX_IN
     faces = {
@@ -144,14 +161,21 @@ def column_cage(b_in, h_in, clear_cover_in, hoop_db_in, bar_db_in, top_bars, sid
     legs_max = {"across_b_face": top_bars, "across_h_face": side_bars + 2}
     result = {"faces": faces, "minimal_support": minimal, "legs_min": legs_min, "legs_max": legs_max,
               "hx_max_in": hx_max, "high_axial": high_axial,
+              # Per direction, every count from the minimum the support rules
+              # need to the bars the face can engage is constructible; the
+              # common list is what a single count both ways could use.
+              "constructible_legs_by_direction": {d: list(range(legs_min[d], legs_max[d] + 1)) for d in COLUMN_DIRECTIONS},
               "constructible_legs": [n for n in range(2, max(legs_max.values()) + 1)
                                      if all(legs_min[d] <= n <= legs_max[d] for d in legs_min)]}
     if legs is not None:
-        feasible = all(legs_min[d] <= legs <= legs_max[d] for d in legs_min)
+        legs = legs_by_direction(legs)
+        feasible = all(legs_min[d] <= legs[d] <= legs_max[d] for d in COLUMN_DIRECTIONS)
         result["legs"] = legs
         result["constructible"] = feasible
         if feasible:
-            realized = {name: arrangement_with_crossties(pos, bar_db_in, legs - 2, hx_max, every_bar=high_axial)
+            # Legs across the b faces are the crossties on the b-face bars (plus the hoop's two).
+            crossties = {"b_face": legs["across_b_face"] - 2, "h_face": legs["across_h_face"] - 2}
+            realized = {name: arrangement_with_crossties(pos, bar_db_in, crossties[name], hx_max, every_bar=high_axial)
                         for name, pos in faces.items()}
             result["arrangement"] = realized
             result["hx_in"] = max(r["hx_in"] for r in realized.values())

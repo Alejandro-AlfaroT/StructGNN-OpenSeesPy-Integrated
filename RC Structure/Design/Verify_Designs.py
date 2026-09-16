@@ -8,20 +8,36 @@ found. No ground motions are selected and no time-history analysis runs.
 
     python Design/Verify_Designs.py --count 150 --workers 4 --output-root outputs/design_verification_20260914
 
-Resumable: a case whose result.json says "designed" is skipped. Each case
+Split across machines with disjoint slices of the same plan (the plan and
+its SHA are identical everywhere the code and RANGES are the same):
+
+    python Design/Verify_Designs.py --count 150 --plan-only                       # print the plan SHA and stop
+    python Design/Verify_Designs.py --count 150 --case-start 1 --case-end 25 --workers 4 --probe-assertions --output-root <local>\\dv150
+    ...
+    python Design/Verify_Designs.py --count 150 --summarize-only --output-root <merged root>   # after copying case_* dirs together
+
+Resumable: a case whose result.json says "designed" is skipped, and a lock
+left by a killed worker is cleared before the case is retried.
+``--request-stop`` lets a running launcher finish its in-flight cases and
+start no more; relaunching resumes. Each case
 keeps its full design.json. ``--probe-assertions`` fills the three assertion
 blocks with PROBE values (labelled in every artifact's request identity) so
 the pipeline can be exercised before the real assertions exist; it is not a
-certification and the summary says so.
+certification and the summary says so. The PROBE stamp date is fixed in
+plan.json at the first launch so every case of the run, on every machine and
+across midnight, carries the same request identity.
 """
 from __future__ import annotations
 
 import argparse
 import contextlib
 import csv
+import hashlib
 import io
 import json
+import os
 import random
+import socket
 import subprocess
 import sys
 import time
@@ -38,6 +54,10 @@ sys.path.insert(0, str(RC_DIR / "Data_Generation"))
 from Generate_Parameterized_Dataset import RANGES, SEED, SEISMIC_SITES  # noqa: E402
 
 PROBE = "PROBE -- design verification run, not a certification"
+STOP_NAME = "STOP_VERIFICATION"
+WORKER_TIMEOUT_S = 6 * 3600
+PLAN_KEYS = ("case_id", "num_bay_x", "num_bay_y", "num_floor", "story_height_ft",
+             "bay_x_width_ft", "bay_y_width_ft", "seismic_site")
 
 
 def plan_cases(num_cases, seed=SEED, geometry_offset=0, seismic_sites=SEISMIC_SITES):
@@ -60,7 +80,58 @@ def plan_cases(num_cases, seed=SEED, geometry_offset=0, seismic_sites=SEISMIC_SI
     return cases
 
 
-def probe_config():
+def plan_sha256(cases):
+    """SHA of the plan's geometry and hazard per case; the same on every machine that builds the same plan."""
+    canonical = json.dumps([{k: c[k] for k in PLAN_KEYS} for c in cases], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest().upper()
+
+
+def case_index(case):
+    return int(case["case_id"].split("_")[1])
+
+
+def git_head():
+    try:
+        return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=str(RC_DIR),
+                              timeout=30).stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def methodology_sha256(identity):
+    """The part of a design's request identity that must agree across machines.
+
+    design_request_identity also hashes the geometry and hazard inputs, so
+    every case has its own sha256. Schema, policy (the DesignConfig with its
+    assertion stamps) and the source file hashes are what a multi-machine run
+    has to hold constant.
+    """
+    if not identity:
+        return None
+    payload = {key: identity.get(key) for key in ("schema", "policy", "source_sha256")}
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def tail_request_identity(design_path, tail_bytes=1 << 20):
+    """request_identity is the last top-level key of design.json; read it without loading the file."""
+    design_path = Path(design_path)
+    size = design_path.stat().st_size
+    with design_path.open("rb") as handle:
+        handle.seek(max(0, size - tail_bytes))
+        text = handle.read().decode("utf-8", "replace")
+    marker = '"request_identity": '
+    start = text.rfind(marker)
+    if start < 0:
+        return None
+    try:
+        value, _ = json.JSONDecoder().raw_decode(text, start + len(marker))
+    except ValueError:
+        return None
+    return value
+
+
+def probe_config(probe_date=None):
     from Design.Config import DesignConfig, SlabActionAssertions, DemandPolicy, IndependentVerification
     slab_flags = ("analysis_applicability_verified", "all_floors_enveloped", "load_pattern_envelope_verified",
                   "spatial_envelope_per_unit_width", "twisting_moment_resolution_verified",
@@ -68,18 +139,20 @@ def probe_config():
     verify_flags = ("floor_hand_check_verified", "strength_model_verified", "detailing_model_consistency_verified",
                     "slab_column_local_steel_assessed", "fire_resistance_scope_accepted",
                     "congestion_and_placement_accepted", "floor_frame_compatibility_reviewed")
-    stamp = dict(asserted_by=PROBE, assertion_date=time.strftime("%Y-%m-%d"), assertion_basis=PROBE)
+    date = probe_date or time.strftime("%Y-%m-%d")
+    stamp = dict(asserted_by=PROBE, assertion_date=date, assertion_basis=PROBE)
     return DesignConfig(
         slab_actions=SlabActionAssertions(**{k: True for k in slab_flags}, **stamp),
-        demands=DemandPolicy(declared_by=PROBE, declaration_date=time.strftime("%Y-%m-%d"), declaration_basis=PROBE),
+        demands=DemandPolicy(declared_by=PROBE, declaration_date=date, declaration_basis=PROBE),
         verification=IndependentVerification(**{k: True for k in verify_flags}, **stamp))
 
 
-def run_worker(case, out_dir, probe):
+def run_worker(case, out_dir, probe, probe_date=None):
     """Design one case in this interpreter; write result.json; never raise."""
-    out_dir = Path(out_dir)
+    out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    result = {"case": case, "status": "started", "probe_assertions": probe, "started": time.strftime("%Y-%m-%d %H:%M:%S")}
+    result = {"case": case, "status": "started", "probe_assertions": probe, "probe_date": probe_date if probe else None,
+              "host": socket.gethostname(), "started": time.strftime("%Y-%m-%d %H:%M:%S")}
     log = io.StringIO()
     t0 = time.perf_counter()
     try:
@@ -93,7 +166,7 @@ def run_worker(case, out_dir, probe):
         with contextlib.redirect_stdout(log):
             go.apply_geometry_overrides(overrides, variant_name=case["geometry_name"], emit=True)
             sp.apply_seismic_site(case["seismic_site"])
-            cfg = probe_config() if probe else DesignConfig.from_structure_parameters()
+            cfg = probe_config(probe_date) if probe else DesignConfig.from_structure_parameters()
             record, created = load_or_create_design(out_dir / "design.json", cfg=cfg, verbose=True)
         q = record["qualification"]
         by_status = {}
@@ -103,10 +176,13 @@ def run_worker(case, out_dir, probe):
         result.update({
             "status": "designed", "created": created, "elapsed_s": time.perf_counter() - t0,
             "design_json_bytes": (out_dir / "design.json").stat().st_size,
+            "request_sha256": (record.get("request_identity") or {}).get("sha256"),
+            "methodology_sha256": methodology_sha256(record.get("request_identity")),
             "accepted": q["accepted"], "counts": q["counts"],
             "fail_ids": sorted(by_status.get("fail", [])), "not_evaluated_ids": sorted(by_status.get("not_evaluated", [])),
             "sections": s, "iterations": record.get("iterations"), "governed_by": record["dcr"]["governed_by"],
             "dcr": {"beam": record["dcr"]["beam"], "column": record["dcr"]["column"]},
+            "model_period_sec": (record.get("demand") or {}).get("model_period_sec"),
             "column_bars": [reb["col_bar_size"], reb["col_top_bars"], reb["col_side_bars"]],
             "beam_bars": [reb["beam_bar_size"], reb["beam_top_bars"], reb["beam_bot_bars"]],
             "column_hoops": [reb["col_stirrup_bar_size"], reb["col_stirrup_legs"], reb["col_stirrup_spacing_in"]],
@@ -124,29 +200,71 @@ def run_worker(case, out_dir, probe):
     return result
 
 
-def _launch(python_exe, case, out_dir, probe):
+def saved_result(out_dir):
+    """The case's result.json as a dict, or None."""
+    existing = Path(out_dir) / "result.json"
+    if not existing.exists():
+        return None
+    try:
+        return json.loads(existing.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def clear_interrupted_design(out_dir):
+    """Remove the lock and temp files a killed worker leaves behind; return what was removed.
+
+    load_or_create_design refuses to run while its lock exists. Between
+    launches of this script the lock can only be stale: each case is designed
+    by exactly one worker, and that worker has exited before the case is
+    retried. A finished design.json is never touched.
+    """
     out_dir = Path(out_dir)
-    existing = out_dir / "result.json"
-    if existing.exists():
-        try:
-            saved = json.loads(existing.read_text(encoding="utf-8"))
-            if saved.get("status") == "designed":
-                return saved, True
-        except (OSError, ValueError):
-            pass
+    removed = []
+    for path in [out_dir / ".design.json.lock"] + list(out_dir.glob(".design.json.*.tmp")):
+        if path.exists():
+            path.unlink()
+            removed.append(path.name)
+    return removed
+
+
+def _launch(python_exe, case, out_dir, probe, probe_date=None, log=print):
+    out_dir = Path(out_dir)
+    saved = saved_result(out_dir)
+    if saved and saved.get("status") == "designed":
+        return saved, True
+    removed = clear_interrupted_design(out_dir)
+    if removed:
+        log(f"{case['case_id']}: cleared interrupted design files {removed}")
     command = [python_exe, "-B", str(Path(__file__).resolve()), "--worker", json.dumps(case), str(out_dir)]
     if probe:
         command.append("--probe-assertions")
+        if probe_date:
+            command += ["--probe-date", probe_date]
+    # Same child environment the generation scheduler gives its workers.
+    env = dict(os.environ)
+    env.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     t0 = time.perf_counter()
-    proc = subprocess.run(command, capture_output=True, text=True, cwd=str(RC_DIR), timeout=6 * 3600)
-    (out_dir / "stderr.txt").write_text(proc.stderr or "", encoding="utf-8")
-    if existing.exists():
-        try:
-            return json.loads(existing.read_text(encoding="utf-8")), False
-        except (OSError, ValueError):
-            pass
-    return {"case": case, "status": "error", "elapsed_s": time.perf_counter() - t0,
-            "error": f"worker exited {proc.returncode} without a result", "stderr_tail": (proc.stderr or "")[-2000:]}, False
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, cwd=str(RC_DIR), timeout=WORKER_TIMEOUT_S, env=env)
+        stderr, outcome = proc.stderr or "", f"worker exited {proc.returncode} without a result"
+    except subprocess.TimeoutExpired as exc:
+        stderr = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        outcome = f"worker killed after {WORKER_TIMEOUT_S / 3600:.0f} h"
+        clear_interrupted_design(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)   # a worker that never started left nothing behind
+    (out_dir / "stderr.txt").write_text(stderr, encoding="utf-8")
+    saved = saved_result(out_dir)
+    if saved:
+        return saved, False
+    # A worker that died without writing (hard crash in the solver, timeout)
+    # still gets a result.json so the merged summary shows the error rather
+    # than "not yet run"; the next launch retries it because it is not "designed".
+    result = {"case": case, "status": "error", "elapsed_s": time.perf_counter() - t0, "host": socket.gethostname(),
+              "probe_assertions": probe, "probe_date": probe_date if probe else None,
+              "error": outcome, "stderr_tail": stderr[-2000:], "finished": time.strftime("%Y-%m-%d %H:%M:%S")}
+    (out_dir / "result.json").write_text(json.dumps(result, indent=1, default=str), encoding="utf-8")
+    return result, False
 
 
 def summarize(results, root, probe):
@@ -154,16 +272,37 @@ def summarize(results, root, probe):
     designed = [r for r in rows if r.get("status") == "designed"]
     accepted = [r for r in designed if r.get("accepted")]
     errors = [r for r in rows if r.get("status") == "error"]
+    missing = [r for r in rows if r.get("status") == "missing"]
     open_items = Counter(i for r in designed for i in r.get("not_evaluated_ids", []))
     fail_items = Counter(i for r in designed for i in r.get("fail_ids", []))
+    for r in designed:
+        if not r.get("methodology_sha256"):
+            # Results written before this field existed: read it off the artifact.
+            design = root / r["case"]["case_id"] / "design.json"
+            if design.exists():
+                r["methodology_sha256"] = methodology_sha256(tail_request_identity(design))
+    identities = Counter(r.get("methodology_sha256") for r in designed)
+    hosts = Counter(r.get("host") for r in designed)
     total_time = sum(r.get("elapsed_s", 0.0) for r in designed)
     total_bytes = sum(r.get("design_json_bytes", 0) for r in designed)
     lines = [f"# Design verification run -- {time.strftime('%Y-%m-%d %H:%M')}\n",
              f"{len(rows)} plan cases; {len(designed)} designed, {len(accepted)} accepted, "
-             f"{len(designed) - len(accepted)} not accepted, {len(errors)} errors.",
+             f"{len(designed) - len(accepted)} not accepted, {len(errors)} errors, {len(missing)} not yet run.",
              f"Assertions: {'PROBE values in all three blocks -- exercises the pipeline, certifies nothing' if probe else 'the committed Design/Config.py'}.",
              f"Design time {total_time / 60:.0f} min serial-equivalent ({total_time / max(1, len(designed)) / 60:.1f} min/case); "
-             f"design.json total {total_bytes / 1e9:.2f} GB.\n"]
+             f"design.json total {total_bytes / 1e9:.2f} GB.",
+             f"Methodology identities (schema + config + source hashes) among designed cases: {len(identities)}"
+             + (" -- one code base and config for the whole run" if len(identities) == 1 else
+                " -- ** more than one: not every case was designed with the same code or config **"),
+             f"Hosts: " + ", ".join(f"{h} ({n})" for h, n in hosts.most_common()) + "\n"]
+    if len(identities) > 1:
+        lines.append("## Methodology identities\n")
+        for sha, n in identities.most_common():
+            members = [r for r in designed if r.get("methodology_sha256") == sha]
+            by_host = Counter(r.get("host") for r in members)
+            lines.append(f"- `{str(sha)[:12]}`: {n} cases on " + ", ".join(f"{h} ({k})" for h, k in by_host.most_common())
+                         + "; e.g. " + ", ".join(r["case"]["case_id"] for r in members[:4]))
+        lines.append("")
     if fail_items:
         lines.append("## Failed checks (cases with the item)\n")
         lines += [f"- `{k}`: {v}" for k, v in fail_items.most_common()]
@@ -174,92 +313,193 @@ def summarize(results, root, probe):
         lines.append("")
     if errors:
         lines.append("## Errors\n")
-        lines += [f"- {r['case']['case_id']}: {r.get('error')}" for r in errors]
+        lines += [f"- {r['case']['case_id']} ({r.get('host', '?')}): {r.get('error')}" for r in errors]
+        lines.append("")
+    if missing:
+        lines.append("## Not yet run\n")
+        lines.append(", ".join(r["case"]["case_id"] for r in missing))
         lines.append("")
     lines.append("## Cases\n")
-    lines.append("| case | plan | site | result | fail | open | min | MB | sections | col bars | beam bars | col hoops | beam hoops | governed | coupled max |")
-    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    lines.append("| case | plan | site | result | fail | open | min | MB | T1 s | sections | col bars | beam bars | col hoops | beam hoops | governed | coupled max | host |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in rows:
         c = r["case"]
         plan = f"{c['num_bay_x']}x{c['num_bay_y']}x{c['num_floor']} {c['bay_x_width_ft']}x{c['bay_y_width_ft']} ft / {c['story_height_ft']} ft"
         if r.get("status") != "designed":
-            lines.append(f"| {c['case_id']} | {plan} | {c['seismic_site']} | ERROR | | | | | {str(r.get('error', ''))[:80]} | | | | | | |")
+            lines.append(f"| {c['case_id']} | {plan} | {c['seismic_site']} | {str(r.get('status', '')).upper()} | | | | | | "
+                         f"{str(r.get('error', ''))[:80]} | | | | | | | {r.get('host', '')} |")
             continue
         s = r["sections"]
+        period = r.get("model_period_sec")
         lines.append(f"| {c['case_id']} | {plan} | {c['seismic_site']} | {'accepted' if r['accepted'] else 'open'} | "
                      f"{r['counts']['fail']} | {r['counts']['not_evaluated']} | {r['elapsed_s'] / 60:.1f} | {r['design_json_bytes'] / 1e6:.0f} | "
+                     f"{period if period is None else '%.2f' % period} | "
                      f"{s['b_col_in']:g}x{s['h_col_in']:g} fc{s['fc_col_ksi']:g} / {s['b_beam_in']:g}x{s['h_beam_in']:g} fc{s['fc_beam_ksi']:g} | "
                      f"#{r['column_bars'][0]} {r['column_bars'][1]}T/{r['column_bars'][2]}S | #{r['beam_bars'][0]} {r['beam_bars'][1]}T/{r['beam_bars'][2]}B | "
                      f"#{r['column_hoops'][0]}-{r['column_hoops'][1]}L@{r['column_hoops'][2]:g} | #{r['beam_hoops'][0]}-{r['beam_hoops'][1]}L@{r['beam_hoops'][2]:g} | "
-                     f"{r['governed_by']} | {100 * (r.get('coupled_max_vertical_difference') or 0):.1f}% |")
+                     f"{r['governed_by']} | {100 * (r.get('coupled_max_vertical_difference') or 0):.1f}% | {r.get('host', '')} |")
     (root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
     with (root / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["case_id", "num_bay_x", "num_bay_y", "num_floor", "story_height_ft", "bay_x_width_ft", "bay_y_width_ft",
                          "seismic_site", "status", "accepted", "fail", "not_evaluated", "elapsed_s", "design_json_bytes",
-                         "b_col_in", "h_col_in", "fc_col_ksi", "b_beam_in", "h_beam_in", "fc_beam_ksi", "governed_by",
+                         "model_period_sec", "b_col_in", "h_col_in", "fc_col_ksi", "b_beam_in", "h_beam_in", "fc_beam_ksi",
+                         "dcr_column", "dcr_beam", "governed_by", "iterations", "host", "request_sha256", "methodology_sha256",
                          "fail_ids", "not_evaluated_ids"])
         for r in rows:
-            c, s = r["case"], r.get("sections") or {}
+            c, s, d = r["case"], r.get("sections") or {}, r.get("dcr") or {}
             writer.writerow([c["case_id"], c["num_bay_x"], c["num_bay_y"], c["num_floor"], c["story_height_ft"],
                              c["bay_x_width_ft"], c["bay_y_width_ft"], c["seismic_site"], r.get("status"), r.get("accepted"),
                              (r.get("counts") or {}).get("fail"), (r.get("counts") or {}).get("not_evaluated"),
-                             round(r.get("elapsed_s", 0.0), 1), r.get("design_json_bytes"),
+                             round(r.get("elapsed_s", 0.0), 1), r.get("design_json_bytes"), r.get("model_period_sec"),
                              s.get("b_col_in"), s.get("h_col_in"), s.get("fc_col_ksi"), s.get("b_beam_in"), s.get("h_beam_in"),
-                             s.get("fc_beam_ksi"), r.get("governed_by"),
+                             s.get("fc_beam_ksi"), d.get("column"), d.get("beam"), r.get("governed_by"), r.get("iterations"),
+                             r.get("host"), r.get("request_sha256"), r.get("methodology_sha256"),
                              ";".join(r.get("fail_ids", [])), ";".join(r.get("not_evaluated_ids", []))])
     (root / "summary.json").write_text(json.dumps({"probe_assertions": probe, "cases": rows}, indent=1, default=str),
                                        encoding="utf-8")
     return lines
 
 
+def load_or_write_plan(root, cases, args):
+    """plan.json is written once per root; later launches must build the same plan.
+
+    A different SHA means this machine has different code, RANGES or
+    arguments from whoever created the root -- its case_0007 would be a
+    different building. The PROBE stamp date is fixed here so every case of
+    the run carries one request identity.
+    """
+    sha = plan_sha256(cases)
+    path = root / "plan.json"
+    if path.exists():
+        plan = json.loads(path.read_text(encoding="utf-8"))
+        if plan.get("plan_sha256") != sha:
+            raise SystemExit(f"plan SHA mismatch: this launch builds {sha} but {path} holds {plan.get('plan_sha256')}. "
+                             "Stop: git pull, check RANGES/SEISMIC_SITES and --count/--seed/--geometry-offset, or use a new root.")
+    else:
+        plan = {"seed": args.seed, "geometry_offset": args.geometry_offset, "count": args.count, "plan_sha256": sha,
+                "probe_assertions": args.probe_assertions,
+                "probe_date": time.strftime("%Y-%m-%d") if args.probe_assertions else None,
+                "created": time.strftime("%Y-%m-%d %H:%M:%S"), "created_on": socket.gethostname(),
+                "cases": cases, "launches": []}
+    if bool(plan.get("probe_assertions")) != bool(args.probe_assertions):
+        raise SystemExit(f"{path} was created with probe_assertions={plan.get('probe_assertions')}; "
+                         f"this launch asks for {args.probe_assertions}. Use one setting per root.")
+    plan.setdefault("launches", []).append({
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"), "host": socket.gethostname(), "git_head": git_head(),
+        "python": args.python_exe, "case_start": args.case_start, "case_end": args.case_end,
+        "case_ids": args.case_ids, "workers": args.workers, "summarize_only": args.summarize_only})
+    path.write_text(json.dumps(plan, indent=1), encoding="utf-8")
+    return plan
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--worker", nargs=2, metavar=("CASE_JSON", "OUT_DIR"), help=argparse.SUPPRESS)
+    parser.add_argument("--probe-date", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--count", type=int, default=150, help="Number of plan cases, from the first (default 150).")
     parser.add_argument("--geometry-offset", type=int, default=0, help="Skip this many plan geometries first.")
     parser.add_argument("--seed", type=int, default=SEED, help="Plan seed (default: the generation plan's).")
     parser.add_argument("--sites", nargs="*", default=None, help="Hazard labels to round-robin over (default: the plan's).")
     parser.add_argument("--case-ids", nargs="*", default=None, help="Only these plan case ids.")
+    parser.add_argument("--case-start", type=int, default=None, help="First plan case index to run on this machine (1-based, inclusive).")
+    parser.add_argument("--case-end", type=int, default=None, help="Last plan case index to run on this machine (inclusive).")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--output-root", default=None, help="Default: outputs/design_verification_<date>.")
     parser.add_argument("--python-exe", default=sys.executable)
     parser.add_argument("--probe-assertions", action="store_true",
                         help="Fill the three assertion blocks with PROBE values (labelled); exercises the pipeline only.")
+    parser.add_argument("--plan-only", action="store_true", help="Print the plan and its SHA, write nothing, and stop.")
+    parser.add_argument("--request-stop", action="store_true",
+                        help=f"Write <root>/{STOP_NAME} and exit; the running launcher finishes its in-flight cases and "
+                             "starts no more. The next launch clears the file and resumes.")
+    parser.add_argument("--summarize-only", action="store_true",
+                        help="Design nothing; rebuild summary.* from the result.json files already under the root "
+                             "(after copying every machine's case_* directories into one root).")
     args = parser.parse_args(argv)
     if args.worker:
         case = json.loads(args.worker[0])
-        result = run_worker(case, args.worker[1], args.probe_assertions)
+        result = run_worker(case, args.worker[1], args.probe_assertions, args.probe_date)
         print(json.dumps({k: result.get(k) for k in ("status", "elapsed_s", "accepted", "counts", "error")}, default=str))
         return 0
-    root = Path(args.output_root or (RC_DIR / "outputs" / f"design_verification_{time.strftime('%Y%m%d')}"))
-    root.mkdir(parents=True, exist_ok=True)
     cases = plan_cases(args.count, seed=args.seed, geometry_offset=args.geometry_offset,
                        seismic_sites=tuple(args.sites) if args.sites else SEISMIC_SITES)
+    sha = plan_sha256(cases)
+    print(f"Plan: {len(cases)} cases (seed {args.seed}, offset {args.geometry_offset}); "
+          f"hazards {list(args.sites) if args.sites else list(SEISMIC_SITES)}")
+    print(f"Plan SHA256: {sha}")
+    if args.plan_only:
+        return 0
+    # Absolute: workers run with cwd RC_DIR, so a root given relative to the
+    # launcher's cwd would otherwise be resolved twice, to two different places.
+    root = Path(args.output_root or (RC_DIR / "outputs" / f"design_verification_{time.strftime('%Y%m%d')}")).resolve()
+    stop_file = root / STOP_NAME
+    if args.request_stop:
+        root.mkdir(parents=True, exist_ok=True)
+        stop_file.write_text(f"{socket.gethostname()} {time.strftime('%Y-%m-%d %H:%M:%S')}{chr(10)}", encoding="utf-8")
+        print(f"stop requested: {stop_file}")
+        return 0
+    root.mkdir(parents=True, exist_ok=True)
+    plan = load_or_write_plan(root, cases, args)
+    probe_date = plan.get("probe_date")
+
+    run_log = root / "run_log.txt"
+
+    def log(message):
+        line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}"
+        print(line, flush=True)
+        with run_log.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+
+    if args.summarize_only:
+        results = [saved_result(root / c["case_id"]) or {"case": c, "status": "missing"} for c in cases]
+        lines = summarize(results, root, bool(plan.get("probe_assertions")))
+        print("\n".join(lines[:14]))
+        print(f"summary: {root / 'summary.md'}")
+        return 0
+
     if args.case_ids:
         wanted = set(args.case_ids)
         cases = [c for c in cases if c["case_id"] in wanted]
-    (root / "plan.json").write_text(json.dumps({"seed": args.seed, "geometry_offset": args.geometry_offset,
-                                                 "count": args.count, "cases": cases}, indent=1), encoding="utf-8")
-    print(f"{len(cases)} cases, {args.workers} workers, root {root}, "
-          f"{'PROBE assertions' if args.probe_assertions else 'committed Design/Config.py'}", flush=True)
-    results = []
+    if args.case_start is not None or args.case_end is not None:
+        lo = args.case_start or 1
+        hi = args.case_end or args.count
+        cases = [c for c in cases if lo <= case_index(c) <= hi]
+    if stop_file.exists():
+        stop_file.unlink()
+        log(f"cleared {STOP_NAME} left by an earlier stop request")
+    log(f"launch on {socket.gethostname()} git {git_head() or '?'}: {len(cases)} cases "
+        f"({cases[0]['case_id']}..{cases[-1]['case_id']}), {args.workers} workers, root {root}, "
+        f"{'PROBE assertions dated ' + str(probe_date) if args.probe_assertions else 'committed Design/Config.py'}, "
+        f"plan SHA {sha}")
 
     def run(case):
+        if stop_file.exists():
+            saved = saved_result(root / case["case_id"])
+            if saved and saved.get("status") == "designed":
+                return saved
+            return {"case": case, "status": "missing", "host": socket.gethostname()}
         t0 = time.perf_counter()
-        result, cached = _launch(args.python_exe, case, root / case["case_id"], args.probe_assertions)
+        try:
+            result, cached = _launch(args.python_exe, case, root / case["case_id"], args.probe_assertions, probe_date, log=log)
+        except Exception as exc:                          # noqa: BLE001 -- one case must not take the launcher down
+            result, cached = {"case": case, "status": "error", "host": socket.gethostname(),
+                              "error": f"launcher: {type(exc).__name__}: {exc}", "traceback": traceback.format_exc()}, False
         tag = "cached" if cached else f"{time.perf_counter() - t0:6.0f}s"
         counts = result.get("counts") or {}
-        print(f"[{time.strftime('%H:%M:%S')}] {case['case_id']} {tag:>8}  {result.get('status')}  "
-              f"accepted={result.get('accepted')}  fail={counts.get('fail')} open={counts.get('not_evaluated')}  "
-              f"{result.get('error', '') or ''}", flush=True)
+        sections = result.get("sections") or {}
+        section_text = (f"{sections['b_col_in']:g}x{sections['h_col_in']:g}/{sections['b_beam_in']:g}x{sections['h_beam_in']:g}"
+                        if sections else "")
+        log(f"{case['case_id']} {tag:>8}  {result.get('status')}  accepted={result.get('accepted')}  "
+            f"fail={counts.get('fail')} open={counts.get('not_evaluated')}  {section_text}  {result.get('error', '') or ''}")
         return result
 
     with ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(run, cases))
     lines = summarize(results, root, args.probe_assertions)
-    print("\n".join(lines[:12]))
-    print(f"summary: {root / 'summary.md'}")
+    status = Counter(r.get("status") for r in results)
+    log(f"{'stopped on request' if stop_file.exists() else 'finished slice'}: {dict(status)}; summary {root / 'summary.md'}")
+    print("\n".join(lines[:14]))
     return 0
 
 

@@ -209,15 +209,20 @@ class ColumnAndJointTests(unittest.TestCase):
         st = state()
         result = build_capacity_design(st)
         columns = result["columns"]
-        top = columns["stories"][8]
+        top = columns["stories"]["x"][8]
         self.assertTrue(top["roof_story"])
         self.assertLessEqual(top["ve_kip"], max(top["ve_own_kip"], top["vu_analysis_kip"]))
         self.assertGreaterEqual(top["ve_kip"], top["vu_analysis_kip"])
         self.assertTrue(top["vc_zero"])                       # P_min = 10 kip << Ag fc / 20
         hoops, cage = columns["hoops"], columns["cage"]
         # 4 top bars: at most 4 legs across that face (hoop + 2 crossties); the
-        # 6-bar side face needs alternate support (2 crossties) -> exactly 4 legs.
-        self.assertEqual(hoops["legs"], 4)
+        # 6-bar side face needs alternate support (2 crossties) -> 4 legs is the
+        # least in both directions, and the legs are chosen per direction.
+        self.assertEqual(hoops["legs"], {"across_b_face": 4, "across_h_face": 4})
+        self.assertEqual(hoops["legs_model"], 4)
+        self.assertEqual({axis: v["legs_key"] for axis, v in hoops["by_direction"].items()},
+                         {"x": "across_b_face", "y": "across_h_face"})
+        self.assertEqual(columns["stories"]["y"][8]["axis"], "y")
         self.assertEqual(cage["legs_max"], {"across_b_face": 4, "across_h_face": 6})
         self.assertEqual(cage["legs_min"], {"across_b_face": 4, "across_h_face": 4})
         self.assertEqual(cage["constructible_legs"], [4])
@@ -229,6 +234,45 @@ class ColumnAndJointTests(unittest.TestCase):
         self.assertAlmostEqual(conf["ash_ratio_required"], max(0.3 * (26 * 26 / (23 * 23) - 1) * 4 / 60, 0.09 * 4 / 60))
         self.assertGreaterEqual(hoops["ash_provided_per_in"], conf["ash_ratio_required"] * conf["bc_in"])
         self.assertLessEqual(hoops["spacing_in"], min(26 / 4.0, 6 * 0.75, conf["so_in"]))
+
+    def test_column_legs_are_chosen_per_direction(self):
+        """The dv150 case: 28x28 with #10 bars, 3 top and 4 side per face.
+
+        3 top bars allow at most 3 legs across the b faces; the 6-bar side
+        faces need 4. No single count fits both, so a common-count hoop was
+        never constructible. Per direction (18.7.5.4 Ash is per direction) the
+        cage is 3 legs one way and 4 the other, and Av, Ash and phi Vn are
+        evaluated with each direction's own legs and depth.
+        """
+        st = state(sections={"b_col_in": 28.0, "h_col_in": 28.0, "fc_col_ksi": 8.0},
+                   column={"bar_size": 10, "top_bars": 3, "bot_bars": 3, "side_bars": 4, "centroid_offset_in": 2.76,
+                           "layers": [(3.81, 2.76), (2.54, 7.26), (2.54, 11.75), (2.54, 16.25), (2.54, 20.74), (3.81, 25.24)],
+                           "layers_about_z": [(7.62, 2.76), (2.54, 14.0), (7.62, 25.24)]})
+        columns = build_capacity_design(st)["columns"]
+        hoops, cage = columns["hoops"], columns["cage"]
+        self.assertIsNotNone(hoops)
+        self.assertEqual(cage["constructible_legs"], [])
+        self.assertEqual(cage["constructible_legs_by_direction"], {"across_b_face": [3], "across_h_face": [4, 5, 6]})
+        self.assertEqual(hoops["legs"]["across_b_face"], 3)
+        self.assertGreaterEqual(hoops["legs"]["across_h_face"], 4)
+        self.assertEqual(hoops["legs_model"], 3)
+        self.assertTrue(cage["constructible"] and all(c["passes"] for c in cage["checks"]))
+        self.assertEqual(cage["arrangement"]["b_face"]["crossties"], 1)
+        self.assertEqual(cage["arrangement"]["h_face"]["crossties"], hoops["legs"]["across_h_face"] - 2)
+        ab = {4: 0.20, 5: 0.31}[hoops["bar_size"]]
+        x, y = hoops["by_direction"]["x"], hoops["by_direction"]["y"]
+        self.assertEqual((x["legs_key"], y["legs_key"]), ("across_b_face", "across_h_face"))
+        self.assertAlmostEqual(x["av_in2"], 3 * ab)
+        self.assertAlmostEqual(y["av_in2"], hoops["legs"]["across_h_face"] * ab)
+        for v in (x, y):
+            self.assertGreaterEqual(v["ash_provided_per_in"], v["ash_required_per_in"] - 1e-9)
+            self.assertAlmostEqual(v["ash_provided_per_in"], v["av_in2"] / hoops["spacing_in"])
+        self.assertAlmostEqual(hoops["ash_provided_per_in"], min(x["ash_provided_per_in"], y["ash_provided_per_in"]))
+        # The y frame bends the column through b with its own probable moment.
+        self.assertIn("y", columns["stories"])
+        self.assertEqual(columns["stories"]["y"][1]["axis"], "y")
+        self.assertNotAlmostEqual(columns["stories"]["x"][1]["mpr_column_kip_in"],
+                                  columns["stories"]["y"][1]["mpr_column_kip_in"])
 
     def test_joint_shear_confinement_categories_and_roof_penalty(self):
         st = state()

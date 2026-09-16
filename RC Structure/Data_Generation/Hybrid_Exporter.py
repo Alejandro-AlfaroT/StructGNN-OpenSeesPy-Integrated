@@ -577,6 +577,24 @@ def _completed_ok(status):
     return not bool(status.get("failed")) and requested > 0 and completed == requested
 
 
+def _sample_is_stale(ntha_dir, sample_path):
+    """True when the analysis outputs are newer than the compiled sample.
+
+    A retried run re-executes the NTHA but, with overwrite off, the existing
+    sample was returned untouched -- so the sample described a previous
+    attempt, not the analysis on disk. r150_s275 case_0003 carried a sample
+    from four days before its NTHA, with a different step count. Comparing
+    against status.json, which every completed analysis rewrites last, makes
+    the sample follow the analysis without the caller having to know that a
+    retry happened.
+    """
+    status_path = Path(ntha_dir) / "status.json"
+    sample_path = Path(sample_path)
+    if not status_path.exists() or not sample_path.exists():
+        return False
+    return status_path.stat().st_mtime > sample_path.stat().st_mtime
+
+
 def required_files_present(ntha_dir):
     ntha_dir = Path(ntha_dir)
     required = [
@@ -624,7 +642,7 @@ def compile_hybrid_sample(
 
     sample_path = output_dir / "hybrid_sample.npz"
     metadata_path = output_dir / "hybrid_metadata.json"
-    if sample_path.exists() and not overwrite:
+    if sample_path.exists() and not overwrite and not _sample_is_stale(ntha_dir, sample_path):
         metadata = _read_json(metadata_path, default={}) or {}
         portable_source = _portable_path(ntha_dir, output_dir)
         portable_sample = _portable_path(sample_path, output_dir)

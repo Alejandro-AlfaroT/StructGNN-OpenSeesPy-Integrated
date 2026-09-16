@@ -55,6 +55,24 @@ class ColumnCageTests(unittest.TestCase):
         self.assertFalse(six["constructible"])
         self.assertFalse(cage_passes(six))
 
+    def test_legs_per_direction_for_an_asymmetric_layout(self):
+        """28x28 with #10 bars, 3 top and 4 side per face: 3 legs across b, 4 to 6 across h."""
+        cage = column_cage(28.0, 28.0, 1.5, 0.625, 1.27, top_bars=3, side_bars=4)
+        self.assertEqual(cage["legs_min"], {"across_b_face": 3, "across_h_face": 4})
+        self.assertEqual(cage["legs_max"], {"across_b_face": 3, "across_h_face": 6})
+        self.assertEqual(cage["constructible_legs"], [])
+        self.assertEqual(cage["constructible_legs_by_direction"], {"across_b_face": [3], "across_h_face": [4, 5, 6]})
+        realized = column_cage(28.0, 28.0, 1.5, 0.625, 1.27, 3, 4, legs={"across_b_face": 3, "across_h_face": 4})
+        self.assertTrue(cage_passes(realized))
+        self.assertEqual(realized["legs"], {"across_b_face": 3, "across_h_face": 4})
+        self.assertEqual(realized["arrangement"]["b_face"]["crossties"], 1)
+        self.assertEqual(realized["arrangement"]["h_face"]["crossties"], 2)
+        self.assertEqual(realized["arrangement"]["h_face"]["supported"], [True, False, True, False, True, True])
+        same_both_ways = column_cage(28.0, 28.0, 1.5, 0.625, 1.27, 3, 4, legs=4)
+        self.assertFalse(same_both_ways["constructible"])
+        with self.assertRaises(ValueError):
+            column_cage(28.0, 28.0, 1.5, 0.625, 1.27, 3, 4, legs={"across_b_face": 3})
+
     def test_high_axial_requires_every_bar_and_hx_within_8(self):
         cage = column_cage(24.0, 24.0, 1.5, 0.5, 1.0, 4, 3, high_axial=True)
         self.assertEqual(cage["legs_min"], {"across_b_face": 4, "across_h_face": 5})

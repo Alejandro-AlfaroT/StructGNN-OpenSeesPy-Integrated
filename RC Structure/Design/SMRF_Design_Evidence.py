@@ -40,6 +40,16 @@ def capacity_state_from_record(record):
     layers = [(rebar["col_top_bars"] * ab, cover)]
     layers += [(2 * ab, cover + (h_col - 2 * cover) * k / (side + 1)) for k in range(1, side + 1)]
     layers += [(rebar["col_bot_bars"] * ab, h_col - cover)]
+    # Bending through b (the y frame): corners plus side-face bars in the outer
+    # layers, one top and one bottom bar at each interior top/bottom position
+    # (Design_Driver._col_steel_layers_about_z).
+    b_col = sections["b_col_in"]
+    outer = (2 + side) * ab
+    layers_about_z = [(outer, cover)]
+    for count in (max(2, int(rebar["col_top_bars"])), max(2, int(rebar["col_bot_bars"]))):
+        layers_about_z += [(ab, cover + (b_col - 2 * cover) * k / (count - 1)) for k in range(1, count - 1)]
+    layers_about_z.append((outer, b_col - cover))
+    layers_about_z.sort(key=lambda layer: layer[1])
     per_story = (geometry["num_bay_x"] + 1) * (geometry["num_bay_y"] + 1)
     axial, shear = {}, {}
     for action in (record.get("design_actions") or {}).get("combinations", []):
@@ -63,7 +73,7 @@ def capacity_state_from_record(record):
         "column": {"bar_size": rebar["col_bar_size"], "top_bars": rebar["col_top_bars"], "bot_bars": rebar["col_bot_bars"],
                    "side_bars": rebar["col_side_bars"], "centroid_offset_in": cover,
                    "clear_cover_in": rebar["col_clear_cover_in"], "stirrup_bar_size": rebar["col_stirrup_bar_size"],
-                   "layers": layers},
+                   "layers": layers, "layers_about_z": layers_about_z},
         "slab": {"thickness_in": thickness, "layout": (record.get("slab_reinforcement") or {}).get("layout")},
         "transfer": record.get("floor_transfer"), "sds": record["seismic"]["sds"],
         "column_axial_envelope": axial, "column_shear_demand": shear,

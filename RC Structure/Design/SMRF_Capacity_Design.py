@@ -46,9 +46,35 @@ PHI_SHEAR = 0.75
 PHI_JOINT = 0.85
 SPACING_GRID_IN = 1.0
 SPACING_MIN_IN = 3.0
-STIRRUP_LADDER = ((4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 6))   # (bar, legs)
+STIRRUP_LADDER = ((4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 6))   # (bar, legs): beam hoops
+COLUMN_HOOP_BARS = (4, 5)   # column hoop bars; legs per direction come from the cage (SMRF_Cage_Layout)
 GAMMA = {"continuous": {4: 20.0, 3: 15.0, 2: 15.0, 0: 12.0},
          "terminating": {4: 15.0, 3: 12.0, 2: 12.0, 0: 8.0}}
+
+
+def column_confinement_ratio(b, h, fc, fy, clear_cover):
+    """18.7.5.4 Ash/(s bc) without the high-axial form (Pu is not known before analysis)."""
+    ag = b * h
+    ach = (b - 2.0 * clear_cover) * (h - 2.0 * clear_cover)
+    return max(0.3 * (ag / ach - 1.0) * fc / fy, 0.09 * fc / fy)
+
+
+def column_layout_confinable(b, h, fc, fy, clear_cover, top_bars, side_bars):
+    """Can the hoop bars offered confine this bar layout at the minimum spacing?
+
+    Per direction (18.7.5.4), the most legs the face can engage -- one per
+    bar, 18.7.5.2(b) -- with the largest hoop bar in COLUMN_HOOP_BARS must
+    give Ash/s >= ratio * bc at SPACING_MIN_IN. A layout that fails this can
+    never be detailed, whatever the shear, so the steel pick does not offer
+    it; the high-axial form of the ratio is applied later by the capacity
+    design and can still reject a layout that passes here.
+    """
+    ratio = column_confinement_ratio(b, h, fc, fy, clear_cover)
+    ab = _BAR[COLUMN_HOOP_BARS[-1]][1]
+    for legs_max, bc in ((top_bars, b - 2.0 * clear_cover), (side_bars + 2, h - 2.0 * clear_cover)):
+        if legs_max * ab / (ratio * bc) < SPACING_MIN_IN - 1e-9:
+            return False
+    return True
 
 
 def _grid_down(value):
@@ -293,14 +319,23 @@ def _moment_at(diagram, axial):
 
 
 def design_column_shear(state, strengths):
-    """Column Ve per story, its hoops from shear, confinement and spacing limits."""
+    """Column Ve per story and direction; hoops from shear, confinement and spacing limits.
+
+    The two frame directions are designed separately (18.7.6.1.1 Ve, 18.7.5.4
+    Ash and 22.5 Vs are all per direction): the x frame bends the column
+    through h (compression on a b face; ``column.layers``) and its shear runs
+    along h, resisted by the legs that cross the b faces; the y frame bends it
+    through b (``column.layers_about_z``) with shear along b, resisted by the
+    legs that cross the h faces. One hoop bar and one spacing serve both
+    directions; the leg count is chosen per direction.
+    """
     sections, col, mats, geometry = state["sections"], state["column"], state["materials"], state["geometry"]
     b, h, fc = sections["b_col_in"], sections["h_col_in"], sections["fc_col_ksi"]
     fy = mats["fy_ksi"]
     ln = geometry["story_h_in"] - sections["h_beam_in"]
-    d = h - col["centroid_offset_in"]
+    offset = col["centroid_offset_in"]
+    cc = col["clear_cover_in"]
     ag = b * h
-    diagram = column_probable_pm(state)
     # Beam probable moments a joint can deliver to its columns, per direction.
     def beams_at(kind, axis):
         interior = strengths[f"{axis}_interior"]
@@ -311,39 +346,55 @@ def design_column_shear(state, strengths):
             return max(edge["mpr_negative_kip_in"] + edge["mpr_positive_kip_in"],
                        max(interior["mpr_negative_kip_in"], interior["mpr_positive_kip_in"]))
         return max(edge["mpr_negative_kip_in"], edge["mpr_positive_kip_in"])
-    joint_delivery = {kind: max(beams_at(kind, "x"), beams_at(kind, "y")) for kind in ("interior", "edge", "corner")}
-    stories = {}
-    worst = None
-    for story in range(1, geometry["num_floor"] + 1):
-        p_min, p_max = state["column_axial_envelope"].get(story, (0.0, 0.0))
-        samples = [p_min + (p_max - p_min) * k / 8.0 for k in range(9)]
-        mpr_col = max(_moment_at(diagram, p) for p in samples)
-        ve_own = 2.0 * mpr_col / ln
-        top_is_roof = story == geometry["num_floor"]
-        # Interior column: floor joint below gives half the beam sum, joint above
-        # gives half (or all of it at the roof).
-        m_bottom = joint_delivery["interior"] / 2.0 if story > 1 else mpr_col
-        m_top = joint_delivery["interior"] if top_is_roof else joint_delivery["interior"] / 2.0
-        ve_joint_limited = (m_top + m_bottom) / ln
-        vu = state["column_shear_demand"].get(story, 0.0)
-        ve = max(min(ve_own, ve_joint_limited), vu)
-        mechanism = min(ve_own, ve_joint_limited)
-        vc_zero = mechanism >= 0.5 * ve and p_min < ag * fc / 20.0
-        nu_psi = max(0.0, p_min) * 1000.0 / ag
-        vc = 0.0 if vc_zero else (2.0 * math.sqrt(fc * 1000.0) + min(nu_psi / 6.0, 0.05 * fc * 1000.0)) * b * d / 1000.0
-        vs_required = max(0.0, ve / PHI_SHEAR - vc)
-        stories[story] = {"axial_min_kip": p_min, "axial_max_kip": p_max, "mpr_column_kip_in": mpr_col,
-                          "ve_own_kip": ve_own, "ve_joint_limited_kip": ve_joint_limited, "vu_analysis_kip": vu,
-                          "ve_kip": ve, "vc_zero": vc_zero, "vc_kip": vc, "vs_required_kip": vs_required,
-                          "roof_story": top_is_roof}
-        if worst is None or vs_required > worst["vs_required_kip"]:
-            worst = stories[story]
-    vs_limit = 8.0 * math.sqrt(fc * 1000.0) * b * d / 1000.0
-    # Confinement (18.7.5.4) with every face bar tied by a leg or crosstie.
-    cc = col["clear_cover_in"]
+    layers_about_z = col.get("layers_about_z") or col["layers"]
+    directions = {
+        # depth along the shear, width across it, Ash core dimension perpendicular to the legs
+        "x": {"depth_in": h, "width_in": b, "legs_key": "across_b_face", "bc_in": b - 2.0 * cc,
+              "diagram": column_probable_pm({**state, "column": {**col, "layers": col["layers"]}}),
+              "layers_basis": "column.layers (bending through h, compression on a b face)"},
+        "y": {"depth_in": b, "width_in": h, "legs_key": "across_h_face", "bc_in": h - 2.0 * cc,
+              "diagram": column_probable_pm({**state, "column": {**col, "layers": layers_about_z}}),
+              "layers_basis": ("column.layers_about_z (bending through b, compression on an h face)"
+                               if col.get("layers_about_z") else "column.layers reused; layers_about_z not supplied")},
+    }
+    joint_delivery = {axis: {kind: beams_at(kind, axis) for kind in ("interior", "edge", "corner")} for axis in directions}
+    stories, worst = {}, {}
+    for axis, spec in directions.items():
+        d = spec["depth_in"] - offset
+        width = spec["width_in"]
+        for story in range(1, geometry["num_floor"] + 1):
+            p_min, p_max = state["column_axial_envelope"].get(story, (0.0, 0.0))
+            samples = [p_min + (p_max - p_min) * k / 8.0 for k in range(9)]
+            mpr_col = max(_moment_at(spec["diagram"], p) for p in samples)
+            ve_own = 2.0 * mpr_col / ln
+            top_is_roof = story == geometry["num_floor"]
+            # Interior column: floor joint below gives half the beam sum, joint above
+            # gives half (or all of it at the roof).
+            delivery = joint_delivery[axis]["interior"]
+            m_bottom = delivery / 2.0 if story > 1 else mpr_col
+            m_top = delivery if top_is_roof else delivery / 2.0
+            ve_joint_limited = (m_top + m_bottom) / ln
+            vu = state["column_shear_demand"].get(story, 0.0)
+            ve = max(min(ve_own, ve_joint_limited), vu)
+            mechanism = min(ve_own, ve_joint_limited)
+            vc_zero = mechanism >= 0.5 * ve and p_min < ag * fc / 20.0
+            nu_psi = max(0.0, p_min) * 1000.0 / ag
+            vc = 0.0 if vc_zero else (2.0 * math.sqrt(fc * 1000.0) + min(nu_psi / 6.0, 0.05 * fc * 1000.0)) * width * d / 1000.0
+            vs_required = max(0.0, ve / PHI_SHEAR - vc)
+            entry = {"axis": axis, "story": story, "axial_min_kip": p_min, "axial_max_kip": p_max,
+                     "mpr_column_kip_in": mpr_col, "ve_own_kip": ve_own, "ve_joint_limited_kip": ve_joint_limited,
+                     "vu_analysis_kip": vu, "ve_kip": ve, "vc_zero": vc_zero, "vc_kip": vc,
+                     "vs_required_kip": vs_required, "roof_story": top_is_roof}
+            stories.setdefault(axis, {})[story] = entry
+            if axis not in worst or vs_required > worst[axis]["vs_required_kip"]:
+                worst[axis] = entry
+    vs_limit = {axis: 8.0 * math.sqrt(fc * 1000.0) * spec["width_in"] * (spec["depth_in"] - offset) / 1000.0
+                for axis, spec in directions.items()}
+    governing = max(worst.values(), key=lambda w: w["vs_required_kip"]) if worst else None
+    section_adequate = all(worst[axis]["vs_required_kip"] <= vs_limit[axis] for axis in worst)
+    # Confinement (18.7.5.4) per direction, with every face bar tied by a leg or crosstie.
     ach = (b - 2.0 * cc) * (h - 2.0 * cc)
-    bc = max(b, h) - 2.0 * cc
-    p_max_all = max(v["axial_max_kip"] for v in stories.values()) if stories else 0.0
+    p_max_all = max(v["axial_max_kip"] for axis in stories for v in stories[axis].values()) if stories else 0.0
     ratio = max(0.3 * (ag / ach - 1.0) * fc / fy, 0.09 * fc / fy)
     high_axial = p_max_all > 0.3 * ag * fc
     if high_axial:
@@ -354,61 +405,104 @@ def design_column_shear(state, strengths):
     # The cage: a perimeter hoop plus crossties, each engaging a bar. Which
     # bars need support (25.7.2.3 through 18.7.5.2(d), hx per 18.7.5.2(e)/(f))
     # and which can carry a crosstie (18.7.5.2(b)) bound the leg count in
-    # each direction; the leg count used for Av and Ash below is realized in
-    # both directions by the arrangement, and hx is the arrangement's
-    # supported-bar spacing, not an assumption (SMRF_Cage_Layout).
+    # each direction independently; Av and Ash below use each direction's
+    # own realized legs, and hx is the arrangement's supported-bar spacing,
+    # not an assumption (SMRF_Cage_Layout).
     from Design.SMRF_Cage_Layout import column_cage, cage_passes
     db = _BAR[col["bar_size"]][0]
-    cages = {}
-    for bar, _legs in STIRRUP_LADDER:
-        if bar not in cages:
-            cages[bar] = column_cage(b, h, cc, _BAR[bar][0], db, col["top_bars"], col["side_bars"], high_axial=high_axial)
-    selected, cage = None, None
-    for bar, legs in STIRRUP_LADDER:
-        if legs not in cages[bar]["constructible_legs"]:
-            continue
-        trial = column_cage(b, h, cc, _BAR[bar][0], db, col["top_bars"], col["side_bars"], high_axial=high_axial, legs=legs)
-        if not cage_passes(trial):
-            continue
-        hx = trial["hx_in"]
-        so = max(4.0, min(6.0, 4.0 + (14.0 - hx) / 3.0))
+
+    def bounds_for(hx):
         # The hx-dependent so (4-6 in) is recorded, but the methodology keeps a
         # conservative 4-in cap.
-        bounds = {"quarter_min_dimension": min(b, h) / 4.0, "six_db": 6.0 * db, "so": so,
-                  "conservative_so_cap": 4.0}
-        av = legs * _BAR[bar][1]
-        s_shear = av * fy * d / worst["vs_required_kip"] if worst and worst["vs_required_kip"] > 0 else float("inf")
-        s_conf = av / (ratio * bc)
-        spacing = _grid_down(min(s_shear, s_conf, *bounds.values()))
-        if spacing is not None:
-            selected = {"bar_size": bar, "legs": legs, "spacing_in": spacing, "av_in2": av,
-                        "spacing_from_shear_in": s_shear, "spacing_from_confinement_in": s_conf,
-                        "ash_provided_per_in": av / spacing, "ash_required_per_in": ratio * bc,
-                        "phi_vn_kip": PHI_SHEAR * ((worst["vc_kip"] if worst else 0.0) + av * fy * d / spacing),
-                        "crossties_per_direction": legs - 2}
-            cage = trial
-            break
+        return {"quarter_min_dimension": min(b, h) / 4.0, "six_db": 6.0 * db,
+                "so": max(4.0, min(6.0, 4.0 + (14.0 - hx) / 3.0)), "conservative_so_cap": 4.0}
+
+    selected, cage, bounds = None, None, None
+    for bar in COLUMN_HOOP_BARS:
+        base = column_cage(b, h, cc, _BAR[bar][0], db, col["top_bars"], col["side_bars"], high_axial=high_axial)
+        options = base["constructible_legs_by_direction"]
+        # Every constructible leg pair is priced; the pick for this bar is the
+        # largest spacing the pair allows, then the fewest legs -- a crosstie
+        # is cheaper to add than a hoop set.
+        candidates = []
+        for nb in options["across_b_face"]:
+            for nh in options["across_h_face"]:
+                legs = {"across_b_face": nb, "across_h_face": nh}
+                trial = column_cage(b, h, cc, _BAR[bar][0], db, col["top_bars"], col["side_bars"],
+                                    high_axial=high_axial, legs=legs)
+                if cage_passes(trial):
+                    candidates.append((legs, trial))
+        priced = []
+        for legs, trial in candidates:
+            bounds = bounds_for(trial["hx_in"])
+            per_direction = {}
+            for axis, spec in directions.items():
+                d = spec["depth_in"] - offset
+                av = legs[spec["legs_key"]] * _BAR[bar][1]
+                vs_req = worst[axis]["vs_required_kip"] if axis in worst else 0.0
+                per_direction[axis] = {
+                    "legs_key": spec["legs_key"], "legs": legs[spec["legs_key"]], "av_in2": av, "d_in": d,
+                    "bc_in": spec["bc_in"], "vs_required_kip": vs_req,
+                    "spacing_from_shear_in": av * fy * d / vs_req if vs_req > 0 else float("inf"),
+                    "spacing_from_confinement_in": av / (ratio * spec["bc_in"]),
+                    "ash_required_per_in": ratio * spec["bc_in"]}
+            s_shear = min(v["spacing_from_shear_in"] for v in per_direction.values())
+            s_conf = min(v["spacing_from_confinement_in"] for v in per_direction.values())
+            spacing = _grid_down(min(s_shear, s_conf, *bounds.values()))
+            if spacing is not None:
+                priced.append((spacing, legs, trial, per_direction, bounds, s_shear, s_conf))
+        if not priced:
+            continue
+        spacing, legs, trial, per_direction, bounds, s_shear, s_conf = max(
+            priced, key=lambda item: (item[0], -sum(item[1].values()), -max(item[1].values())))
+        for axis, v in per_direction.items():
+            v["ash_provided_per_in"] = v["av_in2"] / spacing
+            v["phi_vn_kip"] = PHI_SHEAR * ((worst[axis]["vc_kip"] if axis in worst else 0.0)
+                                           + v["av_in2"] * fy * v["d_in"] / spacing)
+        selected = {"bar_size": bar, "legs": legs, "spacing_in": spacing,
+                    # Scalars for the single-value consumers (IMK rho_sh, legacy Av): the lighter direction.
+                    "legs_model": min(legs.values()),
+                    "av_in2": min(v["av_in2"] for v in per_direction.values()),
+                    "spacing_from_shear_in": s_shear, "spacing_from_confinement_in": s_conf,
+                    "ash_provided_per_in": min(v["ash_provided_per_in"] for v in per_direction.values()),
+                    "ash_required_per_in": max(v["ash_required_per_in"] for v in per_direction.values()),
+                    "phi_vn_kip": min(v["phi_vn_kip"] for v in per_direction.values()),
+                    "crossties_per_direction": {k: n - 2 for k, n in legs.items()},
+                    "by_direction": per_direction}
+        cage = trial
+        break
     if cage is None:
         # Nothing selected: report the arrangement bounds for the first hoop bar.
-        first = cages[STIRRUP_LADDER[0][0]]
+        first = column_cage(b, h, cc, _BAR[COLUMN_HOOP_BARS[0]][0], db, col["top_bars"], col["side_bars"],
+                            high_axial=high_axial)
         hx = max(m["hx_in"] for m in first["minimal_support"].values())
-        so = max(4.0, min(6.0, 4.0 + (14.0 - hx) / 3.0))
-        bounds = {"quarter_min_dimension": min(b, h) / 4.0, "six_db": 6.0 * db, "so": so,
-                  "conservative_so_cap": 4.0}
+        bounds = bounds_for(hx)
         cage = {**first, "legs": None, "constructible": False, "arrangement": None, "hx_in": hx,
-                "checks": [{"rule": "18.7.5.2(b)/(d)", "passes": False,
-                            "detail": f"no hoop in the ladder is constructible: bars allow {first['legs_max']}, "
-                                      f"support rules need {first['legs_min']}"}]}
+                "checks": [{"rule": "18.7.5.2(b)/(d) / 18.7.5.3 / 18.7.5.4", "passes": False,
+                            "detail": (f"no hoop of #{COLUMN_HOOP_BARS[0]}-#{COLUMN_HOOP_BARS[-1]} with legs in "
+                                       f"{first['constructible_legs_by_direction']} reaches a spacing of at least "
+                                       f"{SPACING_MIN_IN:g} in under the shear, confinement and spacing limits")}]}
+    else:
+        hx = cage["hx_in"]
+    so = bounds["so"]
     hx_ok = (not high_axial) or hx <= 8.0
-    return {"stories": stories, "governing": worst, "vs_limit_kip": vs_limit,
-            "section_adequate": (worst["vs_required_kip"] if worst else 0.0) <= vs_limit,
+    return {"stories": stories, "governing": governing, "worst_by_direction": worst,
+            "vs_limit_kip": vs_limit[governing["axis"]] if governing else min(vs_limit.values()),
+            "vs_limit_by_direction_kip": vs_limit,
+            "section_adequate": section_adequate,
             "cage": cage,
-            "confinement": {"ach_in2": ach, "bc_in": bc, "ash_ratio_required": ratio, "high_axial": high_axial,
+            "confinement": {"ach_in2": ach, "bc_in": max(b, h) - 2.0 * cc,
+                            "bc_by_direction_in": {axis: spec["bc_in"] for axis, spec in directions.items()},
+                            "ash_ratio_required": ratio, "high_axial": high_axial,
                             "hx_in": hx, "so_in": so, "hx_within_8in_when_required": hx_ok},
             "spacing_bounds_in": bounds, "hoops": selected, "joint_delivery_kip_in": joint_delivery,
-            "basis": ("Ve = min(2 Mpr,col/ln over the factored axial range, joint-limited beam Mpr delivery) >= Vu; "
-                      "Vc = 0 when mechanism shear >= Ve/2 and Pu < Ag fc/20 (18.7.6.2.1); hoops from Vs, "
-                      "18.7.5.4 confinement and 18.7.5.3 spacing with every face bar tied")}
+            "directions": {axis: {"depth_in": spec["depth_in"], "width_in": spec["width_in"], "legs_key": spec["legs_key"],
+                                  "bc_in": spec["bc_in"], "layers_basis": spec["layers_basis"]}
+                           for axis, spec in directions.items()},
+            "basis": ("per direction: Ve = min(2 Mpr,col/ln over the factored axial range, joint-limited beam Mpr "
+                      "delivery) >= Vu with Mpr about that direction's axis; Vc = 0 when mechanism shear >= Ve/2 "
+                      "and Pu < Ag fc/20 (18.7.6.2.1); one hoop bar and spacing, legs per direction from Vs, "
+                      "18.7.5.4 confinement (Ash perpendicular to each bc) and 18.7.5.3 spacing with every face bar tied")}
 
 
 def joint_kinds(num_bay_x, num_bay_y):
