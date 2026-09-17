@@ -129,12 +129,27 @@ def beam_yield_moments(member_type, n_i, n_j):
         "exterior_ends": exterior, "exterior_anchorage": anchorage}
 
 
-def _member_properties(member_type, axial_kip=0.0):
+def beam_line_family(member_type, n_i):
+    """(axis, 'edge' | 'interior') for the beam member starting at node n_i, from its coordinates."""
+    from Design.SMRF_Beam_Slab_Strength import beam_family
+    xi, yi, _ = ops.nodeCoord(n_i)
+    if member_type == "beam_x":
+        line = int(round(yi / sp.BAY_Y)) if sp.BAY_Y > 0 else 0
+    else:
+        line = int(round(xi / sp.BAY_X)) if sp.BAY_X > 0 else 0
+    return beam_family(member_type, line, sp.NUM_BAY_X, sp.NUM_BAY_Y)
+
+
+def _member_properties(member_type, axial_kip=0.0, family=None):
     """Elastic properties for an IMK member, on effective (cracked) stiffness.
 
     The stiffness modifier is applied once, here, so it reaches both the
     elastic element between the springs and the spring calibration itself
-    (Ke = n * 6EI/L), keeping the two consistent.
+    (Ke = n * 6EI/L), keeping the two consistent. A beam's vertical-bending
+    I is its line's T/L section (Structure_Parameters.beam_flexural_section),
+    the same section the design frame analysed; ``family`` is (axis,
+    position) from beam_line_family, and defaults to the interior line when
+    the caller has no member in hand.
     """
     modifier = sp.section_stiffness_modifier(member_type)
 
@@ -170,13 +185,18 @@ def _member_properties(member_type, axial_kip=0.0):
             "stiffness_modifier": modifier,
         }
 
+    axis, position = family if family is not None else (member_type[-1] if member_type in ("beam_x", "beam_y") else "x", "interior")
+    section = sp.beam_flexural_section(axis, position)
     return {
         "area": sp.rect_area(sp.B_BEAM, sp.H_BEAM),
         "e": sp.concrete_ec_ksi(sp.FC_BEAM_KSI),
         "g": sp.concrete_shear_modulus_ksi(sp.concrete_ec_ksi(sp.FC_BEAM_KSI)),
         "j": modifier * sp.approx_rect_j(sp.B_BEAM, sp.H_BEAM),
-        "iy": modifier * sp.rect_iy(sp.B_BEAM, sp.H_BEAM),
+        "iy": modifier * section["iy_in4"],
         "iz": modifier * sp.rect_iz(sp.B_BEAM, sp.H_BEAM),
+        "iy_basis": section["basis"],
+        "flange_width_in": section["flange_width_in"],
+        "family": f"{axis}_{position}",
         "my": sp.beam_nominal_moment_y(),
         "mz": sp.beam_nominal_moment_z(),
         "theta_y": sp.IMK_BEAM_THETA_Y,
@@ -410,7 +430,8 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         story_index, grid_i, grid_j = column_grid_position(n_i)
         axial_kip = column_gravity_axial(story_index, grid_i, grid_j)
 
-    props = _member_properties(member_type, axial_kip=axial_kip)
+    family = beam_line_family(member_type, n_i) if member_type in ("beam_x", "beam_y") else None
+    props = _member_properties(member_type, axial_kip=axial_kip, family=family)
     strength_basis = None
     if member_type in ("beam_x", "beam_y"):
         hogging, sagging, strength_basis = beam_yield_moments(member_type, n_i, n_j)
@@ -448,7 +469,10 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
         "exterior_slab_anchorage": (strength_basis or {}).get("exterior_anchorage"),
         "yield_moment_z_kip_in": props["mz"],
         "strength_basis": (strength_basis or {}).get("basis"),
-        "beam_family": (strength_basis or {}).get("family"),
+        "beam_family": (strength_basis or {}).get("family") or props.get("family"),
+        "stiffness_basis": props.get("iy_basis"),
+        "flange_width_in": props.get("flange_width_in"),
+        "iy_effective_in4": props["iy"],
         "theta_y_target": props["theta_y"],
         # The spring's OWN elastic limit. theta_y_target is a member-level
         # nominal (a fixed 0.004 for columns, 0.005 for beams), but the spring

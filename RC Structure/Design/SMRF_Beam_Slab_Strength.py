@@ -34,14 +34,14 @@ def beta1(fc_ksi):
 
 
 def effective_flange_width(bw, slab_h, clear_span, clear_to_adjacent_web, slab_sides):
-    """ACI 318-19 Table 6.3.2.1 total flange width for 1 or 2 slab sides."""
-    if slab_sides == 2:
-        overhang = min(8.0 * slab_h, clear_to_adjacent_web / 2.0, clear_span / 8.0)
-    elif slab_sides == 1:
-        overhang = min(6.0 * slab_h, clear_to_adjacent_web / 2.0, clear_span / 12.0)
-    else:
-        raise ValueError("slab_sides must be 1 or 2.")
-    return bw + slab_sides * overhang, overhang
+    """ACI 318-19 Table 6.3.2.1 total flange width for 1 or 2 slab sides.
+
+    The same flange sets the frame's beam flexural stiffness
+    (Structure_Parameters.beam_flexural_section), so the section analysed
+    is the section checked; one implementation serves both.
+    """
+    import Structure_Parameters as sp
+    return sp.effective_flange_width_in(bw, slab_h, clear_span, clear_to_adjacent_web, slab_sides)
 
 
 def section_moment(layers, fc_ksi, fy_ksi, depth, web_width, flange_width=None, flange_depth=0.0):

@@ -66,7 +66,7 @@ from Redesign import apply_updates, redesign_steel
 
 
 DESIGN_ARTIFACT_NAME = "design.json"
-DESIGN_SCHEMA_VERSION = "rc_smrf_candidate_v8_directional_hoops"
+DESIGN_SCHEMA_VERSION = "rc_smrf_candidate_v9_t_section_stiffness"
 
 _STATE_KEYS = (
     "B_COL", "H_COL", "FC_COL_KSI", "B_BEAM", "H_BEAM", "FC_BEAM_KSI",

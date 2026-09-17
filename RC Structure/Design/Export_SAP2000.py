@@ -87,6 +87,27 @@ def node_tag(nx, ny, k, i, j):
     return k * ((nx + 1) * (ny + 1)) + j * (nx + 1) + i + 1
 
 
+def _beam_stiffness_ratios(record, frame):
+    """I(T/L on the 6.3.2 flange) / I(rectangular web) per beam line, from the record's own geometry."""
+    import Structure_Parameters as sp
+    g, s = record["geometry"], record["sections"]
+    b, h = float(s["b_beam_in"]), float(s["h_beam_in"])
+    t = record.get("slab", {}).get("thickness_in")
+    rect = sp.rect_iy(b, h)
+    if t is None:
+        return {(axis, position): 1.0 for axis in ("x", "y") for position in ("edge", "interior")}
+    ratios = {}
+    for axis in ("x", "y"):
+        if axis == "x":
+            clear_span, clear_web = float(g["bay_x_in"]) - float(s["h_col_in"]), float(g["bay_y_in"]) - b
+        else:
+            clear_span, clear_web = float(g["bay_y_in"]) - float(s["b_col_in"]), float(g["bay_x_in"]) - b
+        for position, sides in (("edge", 1), ("interior", 2)):
+            bf, _ = sp.effective_flange_width_in(b, float(t), clear_span, clear_web, sides)
+            ratios[(axis, position)] = sp.t_section_inertia_in4(b, h, float(t), bf) / rect
+    return ratios
+
+
 class Frame:
     """Geometry and numbering, mirroring Model/elements.py exactly."""
 
@@ -350,11 +371,22 @@ def build(record, variant):
             [dict(Frame=tag, AutoSelect="N.A.", AnalSect="COL", MatProp="Default") for tag, *_ in frame.columns]
             + [dict(Frame=tag, AutoSelect="N.A.", AnalSect="BEAM", MatProp="Default")
                for tag, *_ in frame.beams_x + frame.beams_y])
+    # Beams stay a rectangular SAP section (the web is what SAP designs); their
+    # vertical-bending stiffness is the design frame's T/L section on the
+    # 6.3.2 flange, carried as an I33 modifier per line so SAP analyses the
+    # same stiffness the record was designed with.
+    t_over_rect = _beam_stiffness_ratios(record, frame)
+
+    def beam_i33(axis, i, j):
+        edge = (j in (0, frame.ny)) if axis == "x" else (i in (0, frame.nx))
+        return beam_mod * t_over_rect[(axis, "edge" if edge else "interior")]
+
     s.table("FRAME PROPERTY MODIFIERS",
             [dict(Frame=tag, AMod=1, AS2Mod=1, AS3Mod=1, JMod=col_mod, I22Mod=col_mod, I33Mod=col_mod, MMod=1, WMod=weight_mod["column"])
              for tag, *_ in frame.columns]
-            + [dict(Frame=tag, AMod=1, AS2Mod=1, AS3Mod=1, JMod=beam_mod, I22Mod=beam_mod, I33Mod=beam_mod, MMod=1, WMod=weight_mod[axis])
-               for axis, beams in (("x", frame.beams_x), ("y", frame.beams_y)) for tag, *_ in beams])
+            + [dict(Frame=tag, AMod=1, AS2Mod=1, AS3Mod=1, JMod=beam_mod, I22Mod=beam_mod, I33Mod=beam_i33(axis, i, j),
+                    MMod=1, WMod=weight_mod[axis])
+               for axis, beams in (("x", frame.beams_x), ("y", frame.beams_y)) for tag, _ni, _nj, _k, i, j in beams])
     s.table("FRAME DESIGN PROCEDURES",
             [dict(Frame=tag, DesignProc="From Material") for tag, *_ in frame.columns + frame.beams_x + frame.beams_y])
 

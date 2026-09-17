@@ -23,7 +23,7 @@ import openseespy.opensees as ops  # noqa: E402
 import Structure_Parameters as sp  # noqa: E402
 from Design import Design_Driver as driver  # noqa: E402
 from Design.SMRF_Floor_Transfer import build_floor_transfer, global_couple  # noqa: E402
-from Design.SMRF_Elastic import build_design_model, physical_members  # noqa: E402
+from Design.SMRF_Elastic import beam_line_family, build_design_model, physical_members  # noqa: E402
 from Design.SMRF_Beam_Actions import recover_beam_bending, applied_element_loads  # noqa: E402
 from Loads import Gravity_Loads as loads  # noqa: E402
 from Analysis.Gravity import run_gravity_analysis  # noqa: E402
@@ -162,8 +162,11 @@ class FrameReferenceTests(unittest.TestCase):
             b, h, fc = ((sp.B_COL, sp.H_COL, sp.FC_COL_KSI) if column else (sp.B_BEAM, sp.H_BEAM, sp.FC_BEAM_KSI))
             modifier = sp.section_stiffness_modifier("column" if column else "beam")
             e = sp.concrete_ec_ksi(fc)
+            # Same section as the production frame: rectangular columns, the
+            # line's T/L section for beams (Structure_Parameters.beam_flexural_section).
+            iy = sp.rect_iy(b, h) if column else sp.beam_flexural_inertia_in4(*beam_line_family(ni, kind))
             props = (b * h, e, sp.concrete_shear_modulus_ksi(e), modifier * sp.approx_rect_j(b, h),
-                     modifier * sp.rect_iy(b, h), modifier * sp.rect_iz(b, h))
+                     modifier * iy, modifier * sp.rect_iz(b, h))
             transform = (sp.COL_TRANSF_TAG if column else
                          sp.BEAM_X_TRANSF_TAG if kind == "beam_x" else sp.BEAM_Y_TRANSF_TAG)
             if column:

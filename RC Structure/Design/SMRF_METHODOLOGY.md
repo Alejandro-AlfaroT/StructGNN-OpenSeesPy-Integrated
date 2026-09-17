@@ -249,6 +249,26 @@ type rather than silently adopting these assumptions for unrelated input data.
   preliminary strength/drift demand calculations. Response-history member
   formulations are unchanged; the new slab-aware load/mass state is separate
   from the explicitly retained legacy load mode.
+- Beam flexural stiffness in the frame models is the gross T/L section on
+  the ACI 318-19 6.3.2 effective flange, per line (x/y, perimeter/interior),
+  as R6.6.3.1.1 directs for frame analysis; Table 6.6.3.1.1(a)'s 0.35
+  applies to that Ig in the design frame and the IMK elastic elements, and
+  the compatibility check runs it gross. It is the same flange the beam
+  strengths use, so the section analysed is the section checked
+  (`Structure_Parameters.beam_flexural_section`; `SMRF_Elastic`,
+  `Model/IMK_Hinges`, and `Export_SAP2000` as per-line I33 modifiers).
+  Columns stay rectangular. Without a slab the beam is the web, as before.
+  Basis: the 150-case verification of 2026-09-16 (`dv150_v9`) rejected the
+  five 2-bay plans at 5.02-5.45% column-vertical mismatch against the
+  monolithic reference with the rectangular web; the desktop investigation
+  of case_0144 isolated beam stiffness as the first cause and the
+  eccentric-web-versus-centroidal representation as the residual (two
+  monolithic models differ by ~2% verticals and ~6 kip-in base moment with
+  no transfer step). On the 6.3.2 T/L section all five read 1.0-1.3% and
+  every control <= 1.6%; periods shorten 12-17%. The floor plate routine
+  keeps its 8.4.1.8 beam lines (the two-way-slab convention for alpha_f;
+  its shells carry the slab). Design schema
+  `rc_smrf_candidate_v9_t_section_stiffness`.
 - An explicit D/L/seismic strength-combination subset: gravity, positive and
   negative X/Y, 100/30 orthogonal effects, vertical seismic dead-load effects,
   and conservative rho=1.3. This is not the complete applicable load inventory.
@@ -601,8 +621,9 @@ geometry/thickness/load family at all levels. For every thickness trial:
    8.4.1.8, with one flange on perimeter beams and two on interior beams.
    A full transverse-bay slab strip is retained at perimeter beams as a
    conservative stiffness-ratio assumption; adjacent flange projections cannot
-   overlap. This is a thickness-screen stiffness, **not** an update to the
-   frame's cracked beam stiffness or its nominal/probable moment capacity.
+   overlap. This is a thickness-screen stiffness for alpha_f; the frame's
+   own beam stiffness is the 6.3.2 T/L section (above), and neither
+   changes the nominal/probable moment capacity.
 3. Evaluate Table 8.3.1.2 on every panel, including the 8.3.1.2.1 discontinuous
    edge adjustment where applicable, using the trial thickness consistently.
 4. Select the first trial passing every panel and apply it to every floor.

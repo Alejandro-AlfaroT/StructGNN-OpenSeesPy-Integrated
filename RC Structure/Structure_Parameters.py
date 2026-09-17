@@ -335,6 +335,87 @@ def section_stiffness_modifier(member_type):
     return COLUMN_STIFFNESS_MODIFIER if member_type == "column" else BEAM_STIFFNESS_MODIFIER
 
 
+# Beam flexural stiffness in the frame models: the gross T/L section on the
+# ACI 318-19 6.3.2 effective flange.
+#
+# R6.6.3.1.1 says the moment of inertia of a T-beam should be based on the
+# effective flange width of 6.3.2 (and that 2 x the web Ig is the usual
+# approximation); Table 6.6.3.1.1(a)'s 0.35 then applies to that Ig. The
+# beam strengths already use the 6.3.2 flange (Design/SMRF_Beam_Slab_Strength),
+# so this makes the analysis section the same section that is checked. The
+# 150-case verification of 2026-09-16 (dv150_v9) found the rectangular web
+# 5.0-5.4% off the monolithic slab/frame reference on column vertical
+# reactions for every 2-bay plan; the 6.3.2 T/L section brings all of them
+# to 1.0-1.3% and every control to <= 1.6%, and shortens periods 12-17%.
+#
+# Without a slab (legacy load mode) the beam is the rectangular web. The
+# floor plate routine keeps its own 8.4.1.8 beam lines: that is the two-way
+# slab convention for alpha_f, and its shells carry the slab there.
+def effective_flange_width_in(bw, slab_h, clear_span, clear_to_adjacent_web, slab_sides):
+    """ACI 318-19 Table 6.3.2.1 total flange width for a beam with slab on 1 or 2 sides."""
+    if slab_sides == 2:
+        overhang = min(8.0 * slab_h, clear_to_adjacent_web / 2.0, clear_span / 8.0)
+    elif slab_sides == 1:
+        overhang = min(6.0 * slab_h, clear_to_adjacent_web / 2.0, clear_span / 12.0)
+    else:
+        raise ValueError("slab_sides must be 1 or 2.")
+    return bw + slab_sides * overhang, overhang
+
+
+def t_section_inertia_in4(bw, h, slab_h, flange_width):
+    """Gross I of a T/L section (web bw x h including the flange depth) about its own centroid."""
+    web_h = h - slab_h
+    if web_h <= 0.0 or flange_width < bw:
+        raise ValueError("The slab must be thinner than the beam and the flange at least the web width.")
+    flange_area, web_area = flange_width * slab_h, bw * web_h
+    flange_y, web_y = slab_h / 2.0, slab_h + web_h / 2.0
+    centroid = (flange_area * flange_y + web_area * web_y) / (flange_area + web_area)
+    return (flange_width * slab_h ** 3 / 12.0 + flange_area * (flange_y - centroid) ** 2
+            + bw * web_h ** 3 / 12.0 + web_area * (web_y - centroid) ** 2)
+
+
+def beam_flange_geometry(axis, position):
+    """Clear span, clear distance to the adjacent web and slab sides for a beam family.
+
+    ``axis`` 'x' or 'y' (the beam's direction); ``position`` 'edge' (a
+    perimeter line, slab on one side) or 'interior'. The clear span is the
+    bay less the column dimension parallel to the beam (H_COL along x,
+    B_COL along y, the joint adapter's convention).
+    """
+    if axis == "x":
+        clear_span, clear_web = BAY_X - H_COL, BAY_Y - B_BEAM
+    elif axis == "y":
+        clear_span, clear_web = BAY_Y - B_COL, BAY_X - B_BEAM
+    else:
+        raise ValueError("axis must be 'x' or 'y'.")
+    if position not in ("edge", "interior"):
+        raise ValueError("position must be 'edge' or 'interior'.")
+    return clear_span, clear_web, (1 if position == "edge" else 2)
+
+
+def beam_flexural_section(axis, position):
+    """Gross vertical-bending I and its basis for one beam family.
+
+    Returns {"iy_in4", "flange_width_in", "overhang_in", "basis"}. With a
+    slab: the T/L section on the 6.3.2 flange. Without one: the rectangular
+    web, as before. This is what SMRF_Elastic, the IMK elastic elements and
+    the SAP export use; the stiffness modifier is applied by the caller.
+    """
+    if SLAB_THICKNESS_IN is None:
+        return {"iy_in4": rect_iy(B_BEAM, H_BEAM), "flange_width_in": B_BEAM, "overhang_in": 0.0,
+                "basis": "rectangular web (no slab in the model)"}
+    clear_span, clear_web, sides = beam_flange_geometry(axis, position)
+    flange_width, overhang = effective_flange_width_in(B_BEAM, SLAB_THICKNESS_IN, clear_span, clear_web, sides)
+    return {"iy_in4": t_section_inertia_in4(B_BEAM, H_BEAM, SLAB_THICKNESS_IN, flange_width),
+            "flange_width_in": flange_width, "overhang_in": overhang,
+            "basis": "gross T/L section on the ACI 318-19 6.3.2 effective flange (R6.6.3.1.1)"}
+
+
+def beam_flexural_inertia_in4(axis, position):
+    """Gross vertical-bending I of a beam family for the frame models (see beam_flexural_section)."""
+    return beam_flexural_section(axis, position)["iy_in4"]
+
+
 # Fiber section mesh settings
 CORE_PATCH_NY = 12
 CORE_PATCH_NZ = 12

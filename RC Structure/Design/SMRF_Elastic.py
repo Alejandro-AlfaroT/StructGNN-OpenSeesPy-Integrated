@@ -32,6 +32,17 @@ def physical_members():
                 tag += 1
 
 
+def beam_line_family(node_i, kind):
+    """(axis, 'edge' | 'interior') of the beam that starts at ``node_i``, from the node grid."""
+    per_story = (sp.NUM_BAY_X + 1) * (sp.NUM_BAY_Y + 1)
+    j, i = divmod((int(node_i) - 1) % per_story, sp.NUM_BAY_X + 1)
+    if kind == "beam_x":
+        return "x", "edge" if j in (0, sp.NUM_BAY_Y) else "interior"
+    if kind == "beam_y":
+        return "y", "edge" if i in (0, sp.NUM_BAY_X) else "interior"
+    raise ValueError(f"{kind!r} is not a beam kind.")
+
+
 def build_design_model():
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 6)
@@ -49,9 +60,12 @@ def build_design_model():
         e = sp.concrete_ec_ksi(fc)
         transform = (sp.COL_TRANSF_TAG if column else
                      sp.BEAM_X_TRANSF_TAG if kind == "beam_x" else sp.BEAM_Y_TRANSF_TAG)
+        # Vertical bending: columns on the rectangular section, beams on the
+        # T/L section of their line (ACI 318-19 R6.6.3.1.1, 6.3.2 flange).
+        iy = sp.rect_iy(b, h) if column else sp.beam_flexural_inertia_in4(*beam_line_family(ni, kind))
         ops.element("elasticBeamColumn", tag, ni, nj, b * h, e,
                     sp.concrete_shear_modulus_ksi(e), modifier * sp.approx_rect_j(b, h),
-                    modifier * sp.rect_iy(b, h), modifier * sp.rect_iz(b, h), transform)
+                    modifier * iy, modifier * sp.rect_iz(b, h), transform)
     create_rigid_diaphragms()
     assign_nodal_masses()
 
