@@ -169,3 +169,5 @@ A numerical pass alone does not establish the engineering assertions.
 | DCR band | 0.60–0.95 | `DESIGN_DCR_MAX` |
 | workers | 4 | one fresh interpreter per case |
 | `GENERATION_RELEASE_READY` | False | NTHA stays blocked until the assertions are real |
+
+##
