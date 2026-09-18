@@ -14,10 +14,7 @@ from Model.IMK_Calibration import (
 
 
 # Per-hinge backbones recorded as the model is built, keyed by physical
-# element tag. Consumers that need to know what a specific hinge was actually
-# given -- mechanism checks, hysteresis recording, dataset export -- read this
-# instead of recomputing from globals, which cannot capture the axial
-# dependence of a column.
+# element tag.
 _HINGE_REGISTRY = {}
 
 # The nominal P-M sweep is identical for every column in a build, so it is
@@ -156,15 +153,12 @@ def _member_properties(member_type, axial_kip=0.0, family=None):
     if member_type == "column":
         # Zero-axial flexural capacity understates a column badly: it ignores
         # the compression and side steel, and ignores axial load entirely.
-        # Both moments come off the nominal P-M surface instead.
         if getattr(sp, "IMK_USE_CALIBRATED_BACKBONE", True):
             diagram = _cached_pm_diagram()
             low, high = column_axial_domain(diagram)
             if not low <= axial_kip <= high:
                 # Outside the nominal surface the section has no flexural
-                # strength: it cannot carry the axial load. A hinge without
-                # strength is not a model of anything, so refuse rather than
-                # build a column that fails under gravity.
+                # strength: it cannot carry the axial load.
                 raise ValueError(f"Column gravity axial estimate {axial_kip:.1f} kip is outside the nominal "
                                  f"P-M surface [{low:.1f}, {high:.1f}] kip (0.80 P0 cap, ACI 318-19 22.4.2.1); "
                                  "the section cannot carry it and the hinge cannot be calibrated.")
@@ -390,10 +384,9 @@ def _create_end_hinge(
     ke_y = imk_hinge_stiffness(member_type, "rot_y", length)
     ke_z = imk_hinge_stiffness(member_type, "rot_z", length)
 
-    # Beam hinges are asymmetric. Measured on the zeroLength springs (see
-    # tests/test_beam_hinge_asymmetry.py): hogging is POSITIVE spring
+    # Beam hinges are asymmetric. Measured on the zeroLength springs; hogging is POSITIVE spring
     # deformation at end i and NEGATIVE at end j, for beam_x and beam_y alike.
-    # Both strengths can differ between the ends: at an exterior end whose
+    # Both strengths can differ between the ends. At an exterior end whose
     # slab bars are not developed at the perimeter the hinge yields without
     # them in either sign (beam_yield_moments).
     hogging = props.get("my_hogging_i" if end_id == 1 else "my_hogging_j", props.get("my_hogging", props["my"]))
