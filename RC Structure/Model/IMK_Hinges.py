@@ -101,7 +101,16 @@ def beam_yield_moments(member_type, n_i, n_j):
     beam = {"b_in": sp.B_BEAM, "h_in": sp.H_BEAM, "fc_ksi": sp.FC_BEAM_KSI, "fy_ksi": sp.FY_KSI,
             "bar_size": sp.BEAM_BAR_SIZE, "top_bars": sp.BEAM_TOP_BARS, "bot_bars": sp.BEAM_BOT_BARS,
             "centroid_offset_in": sp.longitudinal_cover_in("beam")}
-    slab = {"thickness_in": sp.SLAB_THICKNESS_IN if layout is not None else 0.0}
+    # The chosen slab thickness enters whether or not a reinforcement layout
+    # is established: with no layout composite_beam_strengths counts no slab
+    # mats (hogging is the bare rectangle) but keeps the flange concrete in
+    # compression under sagging, which needs no reinforcement to act. This is
+    # the convention the design's family strengths, its SCWB pricing and the
+    # F1 strength-distribution evidence use (SMRF_Beam_Slab_Strength
+    # .beam_slab_strengths), and the elastic spine already carries the T/L
+    # section; a hinge priced on thickness 0 was weaker in sagging than the
+    # design assumed (2026-09-21).
+    slab = {"thickness_in": sp.SLAB_THICKNESS_IN}
     geometry = {"bay_x_in": sp.BAY_X, "bay_y_in": sp.BAY_Y, "h_col_in": sp.H_COL, "b_col_in": sp.B_COL}
     family = composite_beam_strengths(beam, slab, layout, geometry, axis, position)
     anchorage = perimeter_slab_bar_anchorage(layout, axis, sp.B_BEAM, sp.BEAM_CLEAR_COVER_IN,
@@ -117,7 +126,8 @@ def beam_yield_moments(member_type, n_i, n_j):
                     for end in ("i", "j")}
     return hogging, sagging, {
         "basis": "beam plus developed slab mats in the ACI 6.3.2 flange" if layout is not None
-                 else "rectangular beam, actual top and bottom bars; slab reinforcement not established",
+                 else ("rectangular beam in hogging; the chosen slab's flange concrete in compression under sagging with no "
+                       "slab mats counted (slab reinforcement not established)"),
         "family": f"{axis}_{position}",
         "effective_flange_width_in": family["effective_flange_width_in"],
         "slab_steel_in_flange_in2": family["slab_steel_in_flange_in2"],

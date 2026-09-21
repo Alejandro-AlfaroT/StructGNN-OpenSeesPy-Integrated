@@ -53,6 +53,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from Design.SMRF_Beam_Slab_Strength import composite_beam_strengths
 from Design.SMRF_Common import make_check, not_evaluated
 from Design.SMRF_Joints import (MPR_BASIS, beam_capacity_shear_envelope, rectangular_joint_area)
@@ -646,6 +648,99 @@ def _golden_maximum(g, lo, hi, tolerance):
     return value, point, c - a, evaluations
 
 
+def _dense_golden_maximum(g, lo, hi, tolerance, samples=65):
+    """(value, c, final bracket width, evaluations) of the maximum of g on [lo, hi]: a dense sample, then a
+    golden-section search closed on the best sample's neighbours (the fallback where a segment's closed form is
+    not trusted, probable_moment_over_axial_range)."""
+    xs = [lo + (hi - lo) * k / (samples - 1) for k in range(samples)]
+    values = [g(x) for x in xs]
+    best = max(range(samples), key=lambda k: values[k])
+    value, point, width, used = _golden_maximum(g, xs[max(0, best - 1)], xs[min(samples - 1, best + 1)], tolerance)
+    if values[best] > value:
+        value, point = values[best], xs[best]
+    return value, point, width, samples + used
+
+
+POLYNOMIAL_MISMATCH_TOLERANCE = 1e-8      # closed-form check of a smooth segment, relative to max(1, |M|) (kip-in)
+
+
+def _segment_moment_polynomial(b, h, fc, fy, es, layers, displaced, c_mid):
+    """(a, b, d0, e) of the signed masked moment M(c) = a c^2 + b c + d0 + e / c on one smooth segment.
+
+    Between consecutive breakpoints (section_breakpoints) of a branch the
+    steel state of every layer (elastic, yielded in tension, yielded in
+    compression), the block saturation and the displaced-layer set are
+    fixed, so the moment of ``_section_forces_masked`` is exactly this
+    function of the neutral-axis depth. The states are read at ``c_mid``,
+    the segment's midpoint; each layer's stress and the block depth are
+    monotone in c, so a state shared by the two ends and the midpoint holds
+    on the whole segment.
+
+    Unsaturated block (beta1 c < h): a = -0.85 f'c b beta1^2 / 2 and
+    b = 0.85 f'c b beta1 h / 2; saturated: a = b = 0 (the block's moment
+    about mid-depth is zero). An elastic layer at depth d_k with area A_k
+    has stress Es 0.003 (1 - d_k / c) and contributes Es 0.003 A_k (h/2 - d_k)
+    to d0 and -Es 0.003 d_k A_k (h/2 - d_k) to e; a yielded layer contributes
+    +-fy A_k (h/2 - d_k) to d0; a displaced layer subtracts 0.85 f'c A_k
+    (h/2 - d_k) from d0.
+    """
+    b1, ag, ast, hc, p0 = _probable_section(b, h, fc, fy, es, layers)
+    if b1 * c_mid < h:
+        a2, a1 = -0.85 * fc * b * b1 ** 2 / 2.0, 0.85 * fc * b * b1 * h / 2.0
+    else:
+        a2, a1 = 0.0, 0.0
+    d0, e = 0.0, 0.0
+    for index, (area, depth) in enumerate(layers):
+        lever = hc - depth
+        stress = es * 0.003 * (c_mid - depth) / c_mid
+        if stress <= -fy:
+            d0 -= fy * area * lever
+        elif stress >= fy:
+            d0 += fy * area * lever
+        else:
+            d0 += es * 0.003 * area * lever
+            e -= es * 0.003 * depth * area * lever
+        if displaced[index]:
+            d0 -= 0.85 * fc * area * lever
+    return a2, a1, d0, e
+
+
+def _stationary_depths(a, b, e, x0, x1, newton_steps=8):
+    """Neutral-axis depths in [x0, x1] where a c^2 + b c + d0 + e / c is stationary, i.e. the real roots of
+    2 a c^3 + b c^2 - e = 0 (a quadratic when a = 0, none when a = b = 0), each polished by Newton steps on the
+    derivative and kept only when positive and inside the segment (a small relative tolerance at the ends)."""
+    if a == 0.0 and b == 0.0:
+        raw = []
+    elif a == 0.0:
+        q = e / b
+        raw = [math.sqrt(q), -math.sqrt(q)] if q > 0.0 else ([0.0] if q == 0.0 else [])
+    elif e == 0.0:
+        raw = [0.0, -b / (2.0 * a)]
+    else:
+        # A near-double root can come back as a conjugate pair with a small imaginary part; keeping it is safe
+        # because every candidate is evaluated through the model, never through the polynomial.
+        raw = [float(r.real) for r in np.roots([2.0 * a, b, 0.0, -e]) if abs(r.imag) <= 1e-6 * max(1.0, abs(r.real))]
+    slack = 1e-9 * max(x1 - x0, x1)
+    depths = []
+    for c in raw:
+        if not (c > 0.0 and x0 - slack <= c <= x1 + slack):
+            continue
+        for _ in range(newton_steps):
+            slope = 2.0 * a * c + b - e / (c * c)
+            curvature = 2.0 * a + 2.0 * e / (c * c * c)
+            if curvature == 0.0:
+                break
+            step = slope / curvature
+            trial = c - step
+            if not (trial > 0.0 and x0 - slack <= trial <= x1 + slack):
+                break
+            c = trial
+            if abs(step) <= 1e-15 * c:
+                break
+        depths.append(min(x1, max(x0, c)))
+    return sorted(depths)
+
+
 def probable_moment_over_axial_range(section, p_min, p_max, n_pts=PROBABLE_CURVE_POINTS,
                                      refined_pts=PROBABLE_CURVE_REFINED_POINTS, dense_check_points=0,
                                      tolerance=EXACT_SECTION_TOLERANCE):
@@ -657,17 +752,26 @@ def probable_moment_over_axial_range(section, p_min, p_max, n_pts=PROBABLE_CURVE
     by bisection (monotone within the branch); the branch's moment is then
     maximized on that closed interval, whose candidates are its end points
     (a range end, a block-entry limit, the tension end or the domain end),
-    every steel-yield transition and the block saturation inside it, and a
-    golden-section maximum on each smooth sub-segment between them. The
-    largest candidate over all branches is the envelope; a load inside a
-    block-entry jump is therefore covered by both adjacent branches. The
-    result names the branch and the kind of point, and carries evidence:
-    the golden-section bracket widths, the evaluation count, the round-trip
-    residual (the winning depth's own axial force re-solved for its roots
-    reproduces the moment) and, when ``dense_check_points`` > 0, a dense
-    sweep of the raw model restricted to the range whose maximum must not
-    exceed the envelope. The legacy 160-point and refined curve peaks are
-    reported for comparison.
+    every steel-yield transition and the block saturation inside it, and
+    the stationary points of the moment on each smooth sub-segment between
+    them. On such a segment the steel states and the block saturation are
+    fixed, so the signed moment is exactly M(c) = a c^2 + b c + d0 + e / c
+    (``_segment_moment_polynomial``); the closed form is verified against
+    the model at the segment's ends and midpoint, its stationary points are
+    the real roots of 2 a c^3 + b c^2 - e = 0 (``_stationary_depths``), and
+    each root is evaluated through the model itself. A segment whose closed
+    form does not reproduce the model to rounding level (a coefficient bug
+    or a missed breakpoint) falls back to a dense golden-section search and
+    is counted. The largest candidate over all branches is the envelope; a
+    load inside a block-entry jump is therefore covered by both adjacent
+    branches. The result names the branch and the kind of point, and carries
+    evidence: the stationary points found, the largest closed-form mismatch,
+    the fallback count (and its bracket widths), the evaluation count, the
+    round-trip residual (the winning depth's own axial force re-solved for
+    its roots reproduces the moment) and, when ``dense_check_points`` > 0,
+    a dense sweep of the raw model restricted to the range whose maximum
+    must not exceed the envelope. The legacy 160-point and refined curve
+    peaks are reported for comparison.
     """
     b, h, fc = section["b_in"], section["h_in"], section["fc_ksi"]
     fy, es, layers = section["fy_ksi"], section["es_ksi"], section["layers"]
@@ -680,14 +784,18 @@ def probable_moment_over_axial_range(section, p_min, p_max, n_pts=PROBABLE_CURVE
         raise ValueError(f"axial range [{p_min:.3f}, {p_max:.3f}] kip leaves the section's [{tension:.3f}, {cap:.3f}] kip domain")
     c_tolerance = tolerance * h
     candidates, evaluations, bracket_widths, branches_checked = [], 0, [], []
+    stationary_points, segments_checked, fallback_segments, max_mismatch = [], 0, 0, 0.0
     for branch in section_branches(b, h, fc, fy, es, layers):
         displaced = branch["displaced"]
 
         def f(c):
             return _section_forces_masked(b, h, fc, fy, es, layers, c, displaced)[0]
 
+        def m(c):
+            return _section_forces_masked(b, h, fc, fy, es, layers, c, displaced)[1]
+
         def g(c):
-            return abs(_section_forces_masked(b, h, fc, fy, es, layers, c, displaced)[1])
+            return abs(m(c))
 
         p_lo, p_hi = f(branch["c_lo"]), f(branch["c_hi"])
         evaluations += 2
@@ -713,24 +821,38 @@ def probable_moment_over_axial_range(section, p_min, p_max, n_pts=PROBABLE_CURVE
         for (x0, _), (x1, _) in zip(points, points[1:]):
             if x1 - x0 <= c_tolerance:
                 continue
-            # Nine samples locate the sub-segment's largest value; a golden-section search
-            # closes the bracket around it when it is not at an end.
-            samples = [x0 + (x1 - x0) * k / 8.0 for k in range(9)]
-            values = [g(x) for x in samples]
-            evaluations += 9
-            best = max(range(9), key=lambda k: values[k])
-            if 0 < best < 8 or (best == 0 and values[1] > values[0]) or (best == 8 and values[7] > values[8]):
-                lo = samples[max(0, best - 1)]
-                hi = samples[min(8, best + 1)]
-                value, c, width, used = _golden_maximum(g, lo, hi, c_tolerance)
+            # On the smooth segment the signed moment is a c^2 + b c + d0 + e / c; the closed form is
+            # checked against the model at both ends and the midpoint before its stationary points are used.
+            segments_checked += 1
+            c_mid = 0.5 * (x0 + x1)
+            qa, qb, qd, qe = _segment_moment_polynomial(b, h, fc, fy, es, layers, displaced, c_mid)
+            trusted = True
+            for x in (x0, c_mid, x1):
+                signed = m(x)
+                evaluations += 1
+                mismatch = abs(qa * x * x + qb * x + qd + qe / x - signed)
+                max_mismatch = max(max_mismatch, mismatch)
+                if mismatch > POLYNOMIAL_MISMATCH_TOLERANCE * max(1.0, abs(signed)):
+                    trusted = False
+            if not trusted:
+                fallback_segments += 1
+                value, c, width, used = _dense_golden_maximum(g, x0, x1, c_tolerance)
                 evaluations += used
                 bracket_widths.append(width)
-                candidates.append((value, c, f(c), branch["index"], "interior"))
+                candidates.append((value, c, f(c), branch["index"], "fallback_search"))
                 evaluations += 1
+                continue
+            for c in _stationary_depths(qa, qb, qe, x0, x1):
+                value, p = g(c), f(c)
+                evaluations += 2
+                candidates.append((value, c, p, branch["index"], "stationary"))
+                stationary_points.append({"c_in": c, "axial_kip": p, "moment_kip_in": value, "branch": branch["index"]})
     if not candidates:
         raise RuntimeError(f"no neutral-axis depth of the section model gives an axial force in [{p_min}, {p_max}] kip")
     best_m, best_c, best_p, best_branch, best_kind = max(candidates, key=lambda item: item[0])
-    location = {"range_min": "range_min", "range_max": "range_max"}.get(best_kind, best_kind)
+    # An interior maximum (a stationary point of the closed form, or the fallback search's) is located
+    # 'interior'; the raw kind of the winning candidate is reported beside it (candidate_kind).
+    location = {"stationary": "interior", "fallback_search": "interior"}.get(best_kind, best_kind)
     # Legacy curve peaks for comparison (vertex scan of the raw sweep).
     coarse = probable_section_curve(b, h, fc, fy, es, layers, n_pts)
     refined = probable_section_curve(b, h, fc, fy, es, layers, refined_pts)
@@ -745,7 +867,7 @@ def probable_moment_over_axial_range(section, p_min, p_max, n_pts=PROBABLE_CURVE
     roots = section_equilibrium_roots(b, h, fc, fy, es, layers, best_p, tolerance)
     round_trip = min(abs(r["moment_kip_in"] - best_m) for r in roots)
     result = {"mpr_kip_in": best_m, "at_axial_kip": best_p, "at_neutral_axis_depth_in": best_c, "location": location,
-              "branch": best_branch, "axial_range_kip": [p_min, p_max],
+              "candidate_kind": best_kind, "branch": best_branch, "axial_range_kip": [p_min, p_max],
               "curve_peak_kip_in": m_coarse, "curve_peak_at_axial_kip": p_coarse, "curve_points": n_pts,
               "refined_curve_peak_kip_in": m_refined, "refined_curve_peak_at_axial_kip": p_refined,
               "refined_curve_points": refined_pts,
@@ -753,6 +875,12 @@ def probable_moment_over_axial_range(section, p_min, p_max, n_pts=PROBABLE_CURVE
               "relative_difference_refined_vs_exact": abs(m_refined - best_m) / max(1e-12, best_m),
               "vertices_checked": len(candidates),
               "numerics": {"branches_checked": branches_checked, "candidates": len(candidates), "evaluations": evaluations,
+                           "segments_checked": segments_checked,
+                           "stationary_candidates": len(stationary_points),
+                           "stationary_points": stationary_points,
+                           "polynomial_max_mismatch_kip_in": max_mismatch,
+                           "polynomial_mismatch_tolerance": POLYNOMIAL_MISMATCH_TOLERANCE,
+                           "polynomial_fallback_segments": fallback_segments,
                            "golden_section_bracket_widths_in": bracket_widths,
                            "neutral_axis_tolerance_in": c_tolerance,
                            "round_trip_moment_residual_kip_in": round_trip,

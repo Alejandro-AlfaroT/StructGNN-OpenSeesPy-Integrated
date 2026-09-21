@@ -283,6 +283,51 @@ class FinalQualificationCounterexamples(unittest.TestCase):
         self.assertNotEqual(declared["qualification.joint_capacity_completion"]["status"], "not_evaluated")
 
 
+    # ---- one slab convention on both sides of the design (2026-09-21) ------------------------------
+    def test_hinge_strengths_equal_the_record_families_without_a_slab_layout(self):
+        """This frame was designed without the PROBE assertions, so no slab reinforcement layout exists.
+        The record's families then price hogging on the bare rectangle and sagging with the chosen slab's
+        flange concrete and no mats; the installed hinge must yield at exactly those values (it used to
+        price sagging on a thickness-0 section, weaker than the design assumed)."""
+        from Model.Build_Model import build_model
+        from Model.IMK_Hinges import hinge_registry
+        from Design.SMRF_Beam_Slab_Strength import beam_slab_strengths
+        record = self.fresh()
+        self.assertIsNone((record.get("slab_reinforcement") or {}).get("layout"))
+        self.assertIsNotNone(record["slab"]["thickness_in"])
+        entries, families = beam_slab_strengths(record)
+        self.assertTrue(all(e["slab_basis"] == "unknown" for e in entries.values()))     # joints stay not_evaluated
+        driver.apply_design(record)
+        try:
+            build_model()
+            registry = hinge_registry()
+        finally:
+            driver.ops.wipe()
+        beams = [e for e in registry.values() if e["member_type"] != "column"]
+        self.assertTrue(beams)
+        for entry in beams:
+            fam = families[entry["beam_family"]]
+            self.assertAlmostEqual(entry["yield_moment_y_hogging_kip_in"], fam["mn_negative_kip_in"], delta=1e-6)
+            self.assertAlmostEqual(entry["yield_moment_y_sagging_kip_in"], fam["mn_positive_kip_in"], delta=1e-6)
+            # Sagging counts the flange concrete (above the rectangle); hogging counts no mats (equals the rectangle).
+            self.assertGreater(entry["yield_moment_y_sagging_kip_in"], fam["rectangular"]["positive"]["mn_kip_in"] + 1.0)
+            self.assertAlmostEqual(entry["yield_moment_y_hogging_kip_in"], fam["rectangular"]["negative"]["mn_kip_in"], delta=1e-6)
+            self.assertIn("flange concrete", entry["strength_basis"])
+            for end in ("i", "j"):                      # no layout: no per-end undeveloped reduction either
+                self.assertAlmostEqual(entry[f"yield_moment_y_hogging_{end}_kip_in"], fam["mn_negative_kip_in"], delta=1e-6)
+                self.assertAlmostEqual(entry[f"yield_moment_y_sagging_{end}_kip_in"], fam["mn_positive_kip_in"], delta=1e-6)
+        # The pilot's installed-design verification agrees, with no evidence gap left to report.
+        from Analysis.Hinge_Hysteresis_Diagnostic import verify_installed_design
+        driver.apply_design(record)
+        try:
+            build_model()
+            verification = verify_installed_design(record)
+        finally:
+            driver.ops.wipe()
+        self.assertTrue(verification["consistent"], verification["differences"])
+        self.assertEqual(verification["design_evidence_gaps"], [])
+
+
 class StrengthDistributionTopologyTests(unittest.TestCase):
     """R4 on the live driver state: odd and even bay counts, edge/interior families."""
 

@@ -536,5 +536,184 @@ class BranchAwareSolverTests(unittest.TestCase):
             probable_moment_over_axial_range(REVIEW_0074, -100.0, 1.0e5)
 
 
+# ---------------------------------------------------------------------------------------------------
+# CS-N1b (review item accepted 2026-09-21): the envelope decided whether to search a smooth
+# sub-segment from nine samples, so an interior peak close to a segment end was missed when the end
+# won the samples. The repair enumerates the stationary points of the segment's closed-form moment
+# M(c) = a c^2 + b c + d0 + e / c (the real roots of 2 a c^3 + b c^2 - e = 0), verifies the closed form
+# against the model on every segment, and falls back to a dense golden-section search where it does not
+# match. The reproducer: a 28x28 in f'c 8 ksi section with three layers over [-1047.75, 5027.1632] kip.
+# ---------------------------------------------------------------------------------------------------
+
+CS_N1B_SECTION = {"b_in": 28.0, "h_in": 28.0, "fc_ksi": 8.0, "fy_ksi": 75.0, "es_ksi": 29000.0,
+                  "layers": [(7.62, 2.635), (2.54, 14.0), (3.81, 25.365)]}
+CS_N1B_RANGE = (-1047.75, 5027.1632)
+CS_N1B_OLD_MPR = 25561.664631037518            # the nine-sample decision: the transition at c = 19.10375 in
+CS_N1B_FEASIBLE_MPR = 25562.808493068154       # _section_forces at c = 18.9056078031332 in, P = 2802.571507271771 kip
+CS_N1B_FEASIBLE_C = 18.9056078031332
+
+
+def _segments_of(section):
+    """(branch, displaced, x0, x1) of every smooth segment of the section model over each branch's whole interval."""
+    b, h, fc, fy, es, layers = _args(section)
+    for branch in capacity.section_branches(b, h, fc, fy, es, layers):
+        inner = capacity.section_breakpoints(b, h, fc, fy, es, layers, branch["c_lo"], branch["c_hi"])
+        edges = [branch["c_lo"]] + inner + [branch["c_hi"]]
+        for x0, x1 in zip(edges, edges[1:]):
+            yield branch["index"], branch["displaced"], x0, x1
+
+
+class StationaryPointEnvelopeTests(unittest.TestCase):
+    def test_reproducer_interior_peak_near_a_transition_is_found(self):
+        envelope = probable_moment_over_axial_range(CS_N1B_SECTION, *CS_N1B_RANGE, dense_check_points=100000)
+        self.assertGreaterEqual(envelope["mpr_kip_in"], CS_N1B_FEASIBLE_MPR - 1e-6)
+        self.assertGreater(envelope["mpr_kip_in"], CS_N1B_OLD_MPR + 1.0)
+        self.assertEqual(envelope["location"], "interior")
+        self.assertEqual(envelope["candidate_kind"], "stationary")
+        self.assertAlmostEqual(envelope["at_neutral_axis_depth_in"], CS_N1B_FEASIBLE_C, delta=1e-6)
+        self.assertAlmostEqual(envelope["at_axial_kip"], 2802.571507271771, delta=1e-6)
+        numerics = envelope["numerics"]
+        self.assertTrue(numerics["dense_sweep"]["envelope_covers_sweep"])
+        self.assertGreaterEqual(numerics["dense_sweep"]["envelope_minus_dense_kip_in"], 0.0)
+        self.assertEqual(numerics["polynomial_fallback_segments"], 0)
+        self.assertEqual(numerics["golden_section_bracket_widths_in"], [])
+        self.assertLess(numerics["polynomial_max_mismatch_kip_in"], 1e-8 * envelope["mpr_kip_in"])
+        self.assertEqual(numerics["stationary_candidates"], len(numerics["stationary_points"]))
+        self.assertGreaterEqual(numerics["stationary_candidates"], 1)
+        winner = max(numerics["stationary_points"], key=lambda s: s["moment_kip_in"])
+        self.assertEqual(set(winner), {"c_in", "axial_kip", "moment_kip_in", "branch"})
+        self.assertAlmostEqual(winner["c_in"], envelope["at_neutral_axis_depth_in"])
+        self.assertEqual(winner["branch"], envelope["branch"])
+        # The winning depth is a point of the raw model, not of the polynomial.
+        raw_p, raw_m = capacity._section_forces(*_args(CS_N1B_SECTION), envelope["at_neutral_axis_depth_in"])
+        self.assertAlmostEqual(raw_m, envelope["mpr_kip_in"], delta=1e-9 * raw_m)
+        self.assertAlmostEqual(raw_p, envelope["at_axial_kip"], delta=1e-9 * abs(raw_p))
+        self.assertLess(numerics["round_trip_moment_residual_kip_in"], 1e-6)
+
+    def test_near_endpoint_extrema_are_found_from_either_side_and_at_zero_width(self):
+        envelope = probable_moment_over_axial_range(CS_N1B_SECTION, *CS_N1B_RANGE)
+        c_star, p_star = envelope["at_neutral_axis_depth_in"], envelope["at_axial_kip"]
+        _, m_star = capacity._section_forces(*_args(CS_N1B_SECTION), c_star)
+        p_min, p_max = CS_N1B_RANGE
+        for lo, hi in ((p_star - 0.5, p_max), (p_min, p_star + 0.5), (p_star - 0.05, p_star + 0.05)):
+            result = probable_moment_over_axial_range(CS_N1B_SECTION, lo, hi, dense_check_points=20000)
+            self.assertGreaterEqual(result["mpr_kip_in"], m_star - 1e-9 * m_star, (lo, hi))
+            self.assertTrue(result["numerics"]["dense_sweep"]["envelope_covers_sweep"], (lo, hi))
+            self.assertEqual(result["numerics"]["polynomial_fallback_segments"], 0)
+            self.assertTrue(lo - 1e-9 <= result["at_axial_kip"] <= hi + 1e-9, (lo, hi))
+            self.assertIn(result["location"], ("interior", "range_min", "range_max"))
+        # The same peak seen from the opposite compression face (the other bending sense).
+        mirrored = {**CS_N1B_SECTION, "layers": capacity._mirrored(CS_N1B_SECTION["layers"], CS_N1B_SECTION["h_in"])}
+        other = probable_moment_over_axial_range(mirrored, *CS_N1B_RANGE, dense_check_points=20000)
+        self.assertTrue(other["numerics"]["dense_sweep"]["envelope_covers_sweep"])
+        self.assertEqual(other["numerics"]["polynomial_fallback_segments"], 0)
+        self.assertNotAlmostEqual(other["mpr_kip_in"], envelope["mpr_kip_in"], delta=1.0)   # an asymmetric cage
+
+    def test_closed_form_coefficients_reproduce_the_model_on_every_segment(self):
+        for section in (REVIEW_0074, CASE_0074_SECTION, CS_N1B_SECTION):
+            b, h, fc, fy, es, layers = _args(section)
+            segments = 0
+            for branch, displaced, x0, x1 in _segments_of(section):
+                if x1 - x0 <= 1e-12 * h:
+                    continue
+                segments += 1
+                qa, qb, qd, qe = capacity._segment_moment_polynomial(b, h, fc, fy, es, layers, displaced, 0.5 * (x0 + x1))
+                if 0.5 * (x0 + x1) * capacity._probable_section(b, h, fc, fy, es, layers)[0] >= h:
+                    self.assertEqual((qa, qb), (0.0, 0.0))                       # saturated block: no c terms
+                else:
+                    self.assertLess(qa, 0.0)
+                    self.assertGreater(qb, 0.0)
+                for k in range(11):
+                    c = x0 + (x1 - x0) * k / 10.0
+                    signed = capacity._section_forces_masked(b, h, fc, fy, es, layers, c, displaced)[1]
+                    self.assertAlmostEqual(qa * c * c + qb * c + qd + qe / c, signed, delta=1e-8 * max(1.0, abs(signed)),
+                                           msg=(section["h_in"], branch, x0, x1, c))
+                    # Every stationary depth returned is a zero of the closed form's derivative inside the segment.
+                for c in capacity._stationary_depths(qa, qb, qe, x0, x1):
+                    self.assertTrue(x0 <= c <= x1)
+                    self.assertLess(abs(2.0 * qa * c + qb - qe / (c * c)), 1e-9 * max(1.0, abs(qb)))
+            self.assertGreaterEqual(segments, 8)
+            # Through the routine, over several ranges: rounding-level mismatch and no fallback.
+            lo, hi = capacity._section_domain(b, h, fc, fy, es, layers)
+            for p_min, p_max in ((lo, hi), (lo, 0.5 * (lo + hi)), (0.25 * (lo + hi), hi), (lo + 1.0, lo + 300.0)):
+                result = probable_moment_over_axial_range(section, p_min, p_max)
+                numerics = result["numerics"]
+                self.assertLess(numerics["polynomial_max_mismatch_kip_in"], 1e-8 * max(1.0, result["mpr_kip_in"]))
+                self.assertEqual(numerics["polynomial_fallback_segments"], 0)
+                self.assertGreaterEqual(numerics["segments_checked"], 2)
+                self.assertEqual(numerics["golden_section_bracket_widths_in"], [])
+
+    def test_stationary_depth_special_cases(self):
+        self.assertEqual(capacity._stationary_depths(0.0, 0.0, 5.0, 1.0, 10.0), [])                 # saturated: monotone
+        self.assertEqual(capacity._stationary_depths(0.0, 2.0, 8.0, 1.0, 10.0), [2.0])              # b c^2 = e
+        self.assertEqual(capacity._stationary_depths(0.0, 2.0, -8.0, 1.0, 10.0), [])
+        self.assertEqual(capacity._stationary_depths(-1.0, 8.0, 0.0, 1.0, 10.0), [4.0])             # e = 0: c = -b / (2a)
+        self.assertEqual(capacity._stationary_depths(-1.0, 8.0, 0.0, 5.0, 10.0), [])                # outside the segment
+        a, b, e = -40.0, 1733.0, -90000.0
+        depths = capacity._stationary_depths(a, b, e, 1.0, 60.0)
+        self.assertGreaterEqual(len(depths), 1)
+        for c in depths:
+            self.assertLess(abs(2.0 * a * c ** 3 + b * c * c - e), 1e-9 * abs(e))
+        # A root sitting on a segment end is kept (and clamped) rather than lost to rounding.
+        c_root = depths[0]
+        self.assertIn(c_root, capacity._stationary_depths(a, b, e, c_root, 60.0))
+        self.assertIn(c_root, capacity._stationary_depths(a, b, e, 1.0, c_root))
+
+    def test_untrusted_closed_form_falls_back_to_the_dense_search_and_records_it(self):
+        exact = capacity._segment_moment_polynomial
+
+        def wrong(b, h, fc, fy, es, layers, displaced, c_mid):
+            qa, qb, qd, qe = exact(b, h, fc, fy, es, layers, displaced, c_mid)
+            return qa, qb, qd + 1.0, qe                                     # off by 1 kip-in: not rounding level
+        with patch.object(capacity, "_segment_moment_polynomial", side_effect=wrong):
+            result = probable_moment_over_axial_range(CS_N1B_SECTION, *CS_N1B_RANGE, dense_check_points=20000)
+        numerics = result["numerics"]
+        self.assertEqual(numerics["polynomial_fallback_segments"], numerics["segments_checked"])
+        self.assertGreater(numerics["polynomial_fallback_segments"], 0)
+        self.assertGreaterEqual(numerics["polynomial_max_mismatch_kip_in"], 1.0)
+        self.assertEqual(numerics["stationary_candidates"], 0)
+        self.assertEqual(len(numerics["golden_section_bracket_widths_in"]), numerics["polynomial_fallback_segments"])
+        for width in numerics["golden_section_bracket_widths_in"]:
+            self.assertLessEqual(width, 1e-14 * 28.0 * 1.01)
+        # The fallback search still reaches the interior peak.
+        self.assertGreaterEqual(result["mpr_kip_in"], CS_N1B_FEASIBLE_MPR - 1e-6)
+        self.assertEqual((result["location"], result["candidate_kind"]), ("interior", "fallback_search"))
+        self.assertTrue(numerics["dense_sweep"]["envelope_covers_sweep"])
+
+    def test_randomized_sections_and_ranges_are_covered_by_the_envelope(self):
+        """Completeness: 40 sections (square and rectangular, 2-6 layers of unequal area, f'c 4-10 ksi), 10 ranges each."""
+        import random
+        rng = random.Random(20260921)
+        worst_mismatch, envelopes, interior = 0.0, 0, 0
+        for _ in range(40):
+            h = rng.choice([16.0, 20.0, 24.0, 28.0, 32.0, 36.0])
+            b = h if rng.random() < 0.5 else rng.choice([14.0, 18.0, 20.0, 24.0, 30.0])
+            fc = rng.uniform(4.0, 10.0)
+            n_layers = rng.randint(2, 6)
+            cover = rng.uniform(2.0, 3.0)
+            depths = [cover + (h - 2.0 * cover) * k / (n_layers - 1) for k in range(n_layers)]
+            layers = [(rng.uniform(0.6, 8.0), depth) for depth in depths]
+            section = {"b_in": b, "h_in": h, "fc_ksi": fc, "fy_ksi": 75.0, "es_ksi": 29000.0, "layers": layers}
+            lo, hi = capacity._section_domain(b, h, fc, 75.0, 29000.0, layers)
+            raw = probable_section_curve(b, h, fc, 75.0, 29000.0, layers, n_pts=5000)
+            for _ in range(10):
+                p_min, p_max = sorted(rng.uniform(lo, hi) for _ in range(2))
+                result = probable_moment_over_axial_range(section, p_min, p_max, dense_check_points=20000)
+                numerics = result["numerics"]
+                envelopes += 1
+                interior += result["location"] == "interior"
+                worst_mismatch = max(worst_mismatch, numerics["polynomial_max_mismatch_kip_in"])
+                self.assertTrue(numerics["dense_sweep"]["envelope_covers_sweep"], (section, p_min, p_max, numerics["dense_sweep"]))
+                self.assertEqual(numerics["polynomial_fallback_segments"], 0, (section, p_min, p_max))
+                self.assertLess(numerics["polynomial_max_mismatch_kip_in"], 1e-8 * max(1.0, result["mpr_kip_in"]))
+                inside = [m for p, m in raw if p_min <= p <= p_max]
+                if inside:
+                    self.assertGreaterEqual(result["mpr_kip_in"], max(inside) - 1e-9 * max(1.0, max(inside)), (section, p_min, p_max))
+                self.assertTrue(p_min - 1e-6 <= result["at_axial_kip"] <= p_max + 1e-6)
+                self.assertLess(numerics["round_trip_moment_residual_kip_in"], 1e-6 * max(1.0, result["mpr_kip_in"]))
+        self.assertEqual(envelopes, 400)
+        self.assertGreater(interior, 0)                                     # the sweep exercises interior peaks
+
+
 if __name__ == "__main__":
     unittest.main()
