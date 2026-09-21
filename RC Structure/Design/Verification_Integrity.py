@@ -124,12 +124,18 @@ def checked_result(case, out_dir, saved, expected, probe, probe_date):
         identity_payload = {k: expected[k] for k in ("schema", "policy", "source_sha256")}
         method = hashlib.sha256(json.dumps(identity_payload, sort_keys=True, separators=(",", ":"),
                                           allow_nan=False).encode()).hexdigest()
+        search = record.get("search") or {}
+        torsion = (record.get("demand_basis") or {}).get("torsion") or {}
         return {**saved, "status": "designed", "design_sha256": before,
                 "request_sha256": expected["sha256"], "methodology_sha256": method,
                 "design_json_bytes": path.stat().st_size, "accepted": q["accepted"], "counts": q["counts"],
                 "sections": record["sections"], "dcr": record["dcr"],
                 "fail_ids": sorted(by_status.get("fail", [])),
-                "not_evaluated_ids": sorted(by_status.get("not_evaluated", []))}
+                "not_evaluated_ids": sorted(by_status.get("not_evaluated", [])),
+                "stop_reason": search.get("stop_reason"), "selected_iteration": search.get("selected_iteration"),
+                "last_iteration": search.get("last_iteration"),
+                "tir": torsion.get("tir", torsion.get("max_drift_ratio")),
+                "torsional_irregularity": torsion.get("torsional_irregularity")}
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
         return {"case": case, "status": "error", "accepted": False,
                 "error": f"Untrusted cached design: {exc}. Existing files preserved."}

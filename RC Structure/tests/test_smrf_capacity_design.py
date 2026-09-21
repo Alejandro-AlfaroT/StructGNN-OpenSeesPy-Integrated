@@ -297,30 +297,154 @@ class ColumnAndJointTests(unittest.TestCase):
         self.assertNotAlmostEqual(columns["stories"]["x"][1]["mpr_column_kip_in"],
                                   columns["stories"]["y"][1]["mpr_column_kip_in"])
 
-    def test_joint_shear_confinement_categories_and_roof_penalty(self):
-        st = state()
+    # ACI 318-19 Table 18.8.4.3, read from the standard (printed p. 313) on
+    # 2026-09-18 -- gamma by (column, beam in the direction of Vu, confinement
+    # by transverse beams per 15.2.8), independent of the production lookup:
+    #   continuous column / continuous beam: 20 confined, 15 not confined
+    #   continuous column / other beam:      15 confined, 12 not confined
+    #   other column / continuous beam:      15 confined, 12 not confined
+    #   other column / other beam:           12 confined,  8 not confined
+    # Column "continuous or meets 15.2.6" (extends >= h above with bars and
+    # hoops continued); beam "continuous or meets 15.2.7" (extends >= h beyond
+    # the face with the opposite beam's bars and hoops continued); confined
+    # per 15.2.8 by two transverse beams each >= 3/4 of the face width,
+    # extending >= h, with >= 2 continuous top and bottom bars and >= No. 3
+    # stirrups.
+    CONTINUITY = {"beam_reinforcement_continuous_through_interior_joints": True,
+                  "column_reinforcement_continuous_through_floor_joints": True, "basis": "test declaration"}
+
+    @staticmethod
+    def _joints(st, beams=None):
         strengths = {f"{a}_{p}": probable_beam_strengths(st, p, a) for a in ("x", "y") for p in ("edge", "interior")}
-        narrow = design_joint_shear(st, strengths, None)["joints"]
-        self.assertEqual(narrow["joint_shear/floor/interior/x"]["gamma"], 12.0)   # 10-in beams do not confine
-        self.assertEqual(narrow["joint_shear/roof/interior/x"]["gamma"], 8.0)
-        self.assertEqual(narrow["joint_shear/floor/interior/x"]["aj_in2"], 26.0 * 26.0)
+        return design_joint_shear(st, strengths, None, beams)["joints"], strengths
+
+    def test_joint_gamma_follows_the_three_table_inputs_with_narrow_beams(self):
+        """10-in beams on 26-in columns: no transverse confinement (0.38 < 3/4); continuity still counts."""
+        st = state(joint_continuity=self.CONTINUITY)
+        joints, strengths = self._joints(st, beams={"hoops": {"bar_size": 4}})
+        expected = {"floor/interior": 15.0, "floor/edge_x": {"x": 15.0, "y": 12.0}, "floor/edge_y": {"x": 12.0, "y": 15.0},
+                    "floor/corner": 12.0, "roof/interior": 12.0, "roof/edge_x": {"x": 12.0, "y": 8.0},
+                    "roof/edge_y": {"x": 8.0, "y": 12.0}, "roof/corner": 8.0}
+        for key, value in expected.items():
+            for axis in ("x", "y"):
+                gamma = value[axis] if isinstance(value, dict) else value
+                entry = joints[f"joint_shear/{key}/{axis}"]
+                self.assertEqual(entry["gamma"], gamma, (key, axis, entry["gamma_basis"]))
+                self.assertFalse(entry["transverse_confinement"])
+                self.assertTrue(entry["evidence_complete"], entry["unevaluated_evidence"])
+        interior = joints["joint_shear/floor/interior/x"]
+        self.assertEqual((interior["classification"]["column"]["state"], interior["classification"]["beam"]["state"]),
+                         ("continuous", "continuous"))
+        self.assertEqual(joints["joint_shear/roof/corner/x"]["classification"]["column"]["state"], "other")
+        self.assertEqual(joints["joint_shear/floor/corner/x"]["classification"]["beam"]["state"], "other")
+        self.assertEqual(interior["aj_in2"], 26.0 * 26.0)
         fam = strengths["x_interior"]
         t_hog = 1.25 * 60.0 * fam["tension_steel_hogging_in2"]
         t_sag = 1.25 * 60.0 * fam["tension_steel_sagging_in2"]
         vcol = (fam["mpr_negative_kip_in"] + fam["mpr_positive_kip_in"]) / 120.0
-        self.assertAlmostEqual(narrow["joint_shear/floor/interior/x"]["vj_kip"], t_hog + t_sag - vcol, places=6)
-        self.assertAlmostEqual(narrow["joint_shear/roof/interior/x"]["column_shear_kip"], 2.0 * vcol, places=6)
-        self.assertAlmostEqual(narrow["joint_shear/floor/interior/x"]["phi_vn_kip"],
-                               0.85 * 12.0 * math.sqrt(4000.0) * 676.0 / 1000.0, places=6)
-        wide = state(sections={"b_beam_in": 20.0})
-        strengths_w = {f"{a}_{p}": probable_beam_strengths(wide, p, a) for a in ("x", "y") for p in ("edge", "interior")}
-        confined = design_joint_shear(wide, strengths_w, None)["joints"]
-        self.assertEqual(confined["joint_shear/floor/interior/x"]["gamma"], 20.0)   # all four faces
-        self.assertEqual(confined["joint_shear/floor/edge_x/x"]["gamma"], 15.0)     # three faces
-        self.assertEqual(confined["joint_shear/floor/edge_x/y"]["gamma"], 15.0)     # three faces, the other way
-        self.assertEqual(confined["joint_shear/floor/edge_y/x"]["gamma"], 15.0)
-        self.assertEqual(confined["joint_shear/floor/corner/x"]["gamma"], 12.0)     # two adjacent faces
-        self.assertEqual(confined["joint_shear/roof/interior/x"]["gamma"], 15.0)
+        self.assertAlmostEqual(interior["vj_kip"], t_hog + t_sag - vcol, places=6)
+        self.assertAlmostEqual(joints["joint_shear/roof/interior/x"]["column_shear_kip"], 2.0 * vcol, places=6)
+        self.assertAlmostEqual(interior["phi_vn_kip"], 0.85 * 15.0 * math.sqrt(4000.0) * 676.0 / 1000.0, places=6)
+
+    def test_joint_gamma_with_confining_transverse_beams(self):
+        """20-in beams on 26-in columns (0.77 >= 3/4): interior joints are confined by their two transverse beams."""
+        st = state(sections={"b_beam_in": 20.0}, joint_continuity=self.CONTINUITY)
+        joints, _ = self._joints(st, beams={"hoops": {"bar_size": 4}})
+        self.assertEqual(joints["joint_shear/floor/interior/x"]["gamma"], 20.0)   # continuous / continuous / confined
+        self.assertTrue(joints["joint_shear/floor/interior/x"]["transverse_confinement"])
+        self.assertEqual(joints["joint_shear/roof/interior/x"]["gamma"], 15.0)    # other / continuous / confined
+        self.assertEqual(joints["joint_shear/floor/edge_x/x"]["gamma"], 15.0)     # one transverse beam: not confined
+        self.assertFalse(joints["joint_shear/floor/edge_x/x"]["transverse_confinement"])
+        self.assertEqual(joints["joint_shear/floor/edge_x/y"]["gamma"], 15.0)     # terminating beam, two transverse: confined
+        self.assertTrue(joints["joint_shear/floor/edge_x/y"]["transverse_confinement"])
+        self.assertEqual(joints["joint_shear/roof/edge_x/y"]["gamma"], 12.0)      # other / other / confined
+        self.assertEqual(joints["joint_shear/floor/corner/x"]["gamma"], 12.0)     # one transverse beam
+        self.assertEqual(joints["joint_shear/roof/corner/x"]["gamma"], 8.0)
+
+    def test_inadequate_transverse_width_never_confines(self):
+        st = state(sections={"b_beam_in": 19.0}, joint_continuity=self.CONTINUITY)   # 19/26 = 0.73 < 3/4
+        joints, _ = self._joints(st, beams={"hoops": {"bar_size": 4}})
+        entry = joints["joint_shear/floor/interior/x"]
+        self.assertEqual(entry["gamma"], 15.0)
+        self.assertFalse(entry["classification"]["confinement"]["width_ok"])
+        self.assertTrue(entry["evidence_complete"])                                   # nothing unknown: it simply fails
+
+    def test_sufficient_width_without_reinforcement_evidence_stays_unconfined(self):
+        st = state(sections={"b_beam_in": 20.0}, joint_continuity=self.CONTINUITY)
+        joints, _ = self._joints(st, beams=None)                                      # no beam hoops selected yet
+        entry = joints["joint_shear/floor/interior/x"]
+        self.assertEqual(entry["gamma"], 15.0)
+        self.assertFalse(entry["transverse_confinement"])
+        self.assertIn("transverse_beam_stirrup_bar_size", entry["unevaluated_evidence"])
+        self.assertFalse(entry["evidence_complete"])
+        # One continuous top bar only: 15.2.8(c) needs two.
+        st = state(sections={"b_beam_in": 20.0}, beam={"top_bars": 1}, joint_continuity=self.CONTINUITY)
+        joints, _ = self._joints(st, beams={"hoops": {"bar_size": 4}})
+        self.assertEqual(joints["joint_shear/floor/interior/x"]["gamma"], 15.0)
+        self.assertFalse(joints["joint_shear/floor/interior/x"]["classification"]["confinement"]["continuous_top_and_bottom_bars"])
+
+    def test_missing_continuity_declaration_keeps_the_conservative_rows(self):
+        st = state(sections={"b_beam_in": 20.0})                                      # no joint_continuity at all
+        joints, _ = self._joints(st, beams={"hoops": {"bar_size": 4}})
+        entry = joints["joint_shear/floor/interior/x"]
+        self.assertEqual(entry["gamma"], 8.0)                                         # other / other / not confined
+        self.assertEqual({entry["classification"]["column"]["state"], entry["classification"]["beam"]["state"]}, {"other"})
+        self.assertFalse(entry["evidence_complete"])
+        self.assertEqual(set(entry["unevaluated_evidence"]),
+                         {"column_reinforcement_continuous_through_floor_joints",
+                          "beam_reinforcement_continuous_through_interior_joints"})
+        # The conservative arithmetic never reads as a checked classification: the
+        # downstream check stays open and names what is missing (Codex R5).
+        self.assertFalse(entry["capacity_topology_and_confinement_checked"])
+        from Design.SMRF_Joints import joint_shear_check
+        downstream = joint_shear_check(entry, location=entry["id"])
+        self.assertEqual(downstream["status"], "not_evaluated")
+        self.assertIn("Unevaluated: column_reinforcement", downstream["details"]["reason"])
+        # With the declaration and designed hoops the flag is earned, not assumed.
+        declared = state(sections={"b_beam_in": 20.0}, joint_continuity=self.CONTINUITY)
+        strengths = {f"{a}_{p}": probable_beam_strengths(declared, p, a) for a in ("x", "y") for p in ("edge", "interior")}
+        with_hoops = design_joint_shear(declared, strengths, {"hoops": {"bar_size": 4, "legs": {"across_b_face": 4, "across_h_face": 4}}},
+                                        {"hoops": {"bar_size": 4}})["joints"]
+        self.assertTrue(with_hoops["joint_shear/floor/interior/x"]["capacity_topology_and_confinement_checked"])
+        self.assertEqual(joint_shear_check(with_hoops["joint_shear/floor/interior/x"])["status"], "pass")
+        without_hoops = design_joint_shear(declared, strengths, None, {"hoops": {"bar_size": 4}})["joints"]
+        self.assertFalse(without_hoops["joint_shear/floor/interior/x"]["capacity_topology_and_confinement_checked"])
+        # A declaration that says False is a known no, not an unknown.
+        st = state(joint_continuity={"beam_reinforcement_continuous_through_interior_joints": False,
+                                     "column_reinforcement_continuous_through_floor_joints": True})
+        joints, _ = self._joints(st, beams={"hoops": {"bar_size": 4}})
+        entry = joints["joint_shear/floor/interior/x"]
+        self.assertEqual(entry["gamma"], 12.0)                                        # continuous column / other beam
+        self.assertTrue(entry["evidence_complete"])
+
+    def test_dv150_v10_joint_entries_hand_values(self):
+        """Case 0003 sections (32x32 fc-4 columns, 16x22 beams): the corrected coefficients on fixed Aj.
+
+        phi Vn = 0.85 gamma sqrt(4000) 1024 / 1000: floor interior 825.734 kip
+        (gamma 15), roof interior and roof edge in the two-beam direction
+        660.587 (12), floor corner 660.587 (12), roof corner 440.391 (8).
+        """
+        st = state(sections={"b_col_in": 32.0, "h_col_in": 32.0, "fc_col_ksi": 4.0, "b_beam_in": 16.0, "h_beam_in": 22.0},
+                   joint_continuity=self.CONTINUITY)
+        joints, _ = self._joints(st, beams={"hoops": {"bar_size": 4}})
+        unit = 0.85 * math.sqrt(4000.0) * 1024.0 / 1000.0
+        for joint_id, gamma in (("floor/interior/x", 15.0), ("roof/interior/x", 12.0), ("roof/edge_x/x", 12.0),
+                                ("floor/corner/x", 12.0), ("roof/corner/x", 8.0), ("floor/edge_x/y", 12.0)):
+            entry = joints[f"joint_shear/{joint_id}"]
+            self.assertEqual(entry["gamma"], gamma, joint_id)
+            self.assertAlmostEqual(entry["phi_vn_kip"], gamma * unit, places=6)
+        self.assertAlmostEqual(joints["joint_shear/floor/interior/x"]["phi_vn_kip"], 825.7339, places=3)
+        self.assertAlmostEqual(joints["joint_shear/roof/corner/x"]["phi_vn_kip"], 440.3914, places=3)
+
+    def test_joint_hoop_relaxation_is_recorded_per_joint_and_not_applied(self):
+        st = state(sections={"b_beam_in": 20.0}, joint_continuity=self.CONTINUITY)
+        strengths = {f"{a}_{p}": probable_beam_strengths(st, p, a) for a in ("x", "y") for p in ("edge", "interior")}
+        transverse = design_joint_shear(st, strengths, None, {"hoops": {"bar_size": 4}})["joint_transverse"]
+        by_joint = transverse["relaxation_18_8_3_2_by_joint"]
+        self.assertTrue(by_joint["joint_shear/floor/interior/x"])                    # four beams >= 3/4 width
+        self.assertFalse(by_joint["joint_shear/floor/corner/x"])
+        self.assertFalse(transverse["relaxation_18_8_3_2_applicable"])
+        self.assertFalse(transverse["relaxation_18_8_3_2_applied"])
 
     def test_hooked_anchorage_and_splices(self):
         st = state()
@@ -341,11 +465,30 @@ class ColumnAndJointTests(unittest.TestCase):
         result = build_capacity_design(state(transfer=single_load_transfer()))
         ids = {c["id"] for c in result["checks"]}
         for check_id in ("beam.capacity_shear_section", "column.hoops_selected", "joint.shear_screen",
-                         "joint.terminating_bar_hook", "detailing.splices_designed"):
+                         "joint.classification_evidence", "joint.terminating_bar_hook", "detailing.splices_designed"):
             self.assertIn(check_id, ids)
         self.assertEqual(len(result["joint_evidence"]["joint_shear"]), 16)   # 4 kinds x 2 axes x floor/roof
         self.assertEqual(len(result["joint_evidence"]["beam_capacity_shear"]), 8)   # 4 families x 2 gravity cases
         self.assertEqual(result["accepted"], all(c["status"] == "pass" for c in result["checks"]))
+        # The fixture carries no continuity declaration: every joint whose classification
+        # needs continuity evidence (all floor joints: column continuity; roof joints with two
+        # beams in the direction: beam continuity) is open, none failed, the build is not
+        # accepted, and the numeric screens are still reported. A roof corner joint, or a
+        # roof edge joint in its terminating direction, is Other/Other by topology alone
+        # and needs no declaration: its evidence item is complete.
+        evidence_items = {c["location"]: c["status"] for c in result["checks"] if c["id"] == "joint.classification_evidence"}
+        self.assertEqual(len(evidence_items), 16)
+        self.assertEqual(sum(1 for s in evidence_items.values() if s == "not_evaluated"), 12)
+        self.assertEqual({k for k, s in evidence_items.items() if s == "pass"},
+                         {"joint_shear/roof/corner/x", "joint_shear/roof/corner/y",
+                          "joint_shear/roof/edge_x/y", "joint_shear/roof/edge_y/x"})
+        self.assertTrue(all(s == "not_evaluated" for k, s in evidence_items.items() if "/floor/" in k))
+        self.assertFalse(result["joints"]["evidence_complete"])
+        self.assertFalse(result["accepted"])
+        declared = build_capacity_design(state(transfer=single_load_transfer(),
+                                               joint_continuity=self.CONTINUITY))
+        self.assertTrue(all(c["status"] == "pass" for c in declared["checks"] if c["id"] == "joint.classification_evidence"))
+        self.assertTrue(declared["joints"]["evidence_complete"])
 
 
 if __name__ == "__main__":

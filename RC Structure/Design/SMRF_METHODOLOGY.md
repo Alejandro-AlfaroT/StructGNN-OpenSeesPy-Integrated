@@ -422,10 +422,22 @@ type rather than silently adopting these assumptions for unrelated input data.
    mechanical-splice staggering and bar-placement drawings remain open
    (`detailing.congestion_and_placement`).
 6. **Demand verification.** Implemented against a declared policy (see
-   "Demand basis"): SDC is derived from SDS/SD1/S1 (11.6), ELF eligibility
-   from Table 12.6-1 with regularity by construction and the torsional
-   check, accidental torsion is applied in every seismic combination with
-   Ax from the drift runs, live-load arrangements per ACI 6.4.2 enter the
+   "Demand basis"): SDC is derived from SDS/SD1/S1 (11.6), the ELF
+   procedure is permitted for any structure under ASCE 7-22 12.6 (the
+   7-16 Table 12.6-1 restriction was deleted; the rule is edition-explicit
+   since 2026-09-18), torsional irregularity is 7-22 Table 12.3-1 Type 1
+   from the 12.3.2.1.1 TIR (both eccentricity signs, every story and
+   direction) and the strength-distribution criterion, accidental torsion
+   is applied in every seismic combination with Ax from the drift runs,
+   the TIR <= 1.4 ceiling is a labelled project policy in every SDC (ASCE
+   7-22 removed the 7-16 12.3.3.1 prohibition of extreme torsional
+   irregularity: FEMA P-2192 Vol. 1 1.4.5, California 2025 Title 24
+   1617.12.6), the 12.8.4.3 Ax comes from the edge level displacements per
+   level (not from the TIR) and the largest value is applied as a
+   documented conservative envelope, the Type 1 strength criterion is
+   evaluated from the frame lines' beam-mechanism strengths with a line
+   through the center of mass counted on both sides, rho = 1.3 is carried without claiming
+   12.3.4.2 (a)/(b), live-load arrangements per ACI 6.4.2 enter the
    1.2D+1.6L family through the floor transfer, and the seismic-weight and
    drift bases are evaluated against the declared occupancy/site
    assumptions. Site class, risk category, occupancy, partition allowance,
@@ -510,10 +522,26 @@ pure and tested):
   the practical ratio) takes the next column size;
 - joint shear (18.8.4.1) jumps the column to the first rung whose
   b h sqrt(f'c) covers the worst Vj / phi Vn, the next evaluation deciding
-  (gamma can fall when a wider column loses a confined face); column shear,
-  hoop feasibility and anchorage take the next column size;
+  (gamma can fall when a wider column loses a confining transverse beam);
+  column shear, hoop feasibility and anchorage take the next column size;
+- a member with no larger dimension left steps to the same dimensions at
+  the next concrete strength (2026-09-18): the shear section limit
+  8 sqrt(f'c) bw d, the joint strength gamma sqrt(f'c) Aj and the stiffness
+  E = 57000 sqrt(f'c) all grow with it. dv150_v10 stopped case_0013 at a
+  20x32 fc-4 beam with fc 5/6/8 unvisited and case_0073 at a 36x36 fc-6
+  column with fc-8 unvisited; a missing dimension step is not exhaustion of
+  the material options;
 - while any requirement is unmet, neither member steps down, so one failure
   cannot be traded for another and the search cannot cycle;
+- the proposal is settled against the clear-span rule under the *proposed*
+  columns and against the pairs already evaluated (`_plan_next_candidate`):
+  an infeasible rung is substituted by the next feasible rung at or above
+  it, a pair already evaluated advances along the member the failed
+  requirements move, and every substitution is recorded with its reason
+  (`history[*].proposal`, `substitutions_before_evaluation`). dv150_v10
+  case_0017 evaluated the same 36x36 / 16x22 pair twice because the
+  compatibility selector fell back below the proposed 16x24 rung and the
+  loop then stopped on a repeated pair;
 - `max_section_iter` is 10 (was 6) and the search still stops at the first
   rung pair that meets every evaluated requirement.
 
@@ -523,6 +551,25 @@ The record states what the beam rung answers to: `dcr.governed_by` is
 (`history[*].step_reasons`, `next_rungs`). A drift- or shear-governed frame
 legitimately carries a beam DCR below the band; the band is a preference,
 not a code requirement, and qualification does not read it.
+
+How the search ended is its own record (`search`, 2026-09-18):
+`stop_reason` is one of `candidate_screen_passed`,
+`iteration_budget_exhausted`, `no_candidate_under_strategy` (unvisited
+feasible ladder pairs remain above the current pair that the step the
+failed requirements call for does not reach), `candidate_set_exhausted`
+(no unvisited feasible pair remains at or above the current pair under
+the never-step-down strategy) or `repeated_candidate_after_substitution`,
+with `stop_detail`, the visited pairs and the domain. None of them is
+evidence that no code-compliant frame exists for the geometry: the domain
+is the declared ladder pair and the strategy is monotone. The selected
+iteration (the objective's preferred candidate: smallest |beam DCR -
+target| plus penalties, a research preference) and the last iteration
+evaluated each keep their constraint record (`history[*].constraints`,
+`search.selected_constraints`, `search.last_constraints`); qualification
+runs on the selected candidate and decides acceptance, so a preferred
+candidate that failed a constraint is saved as failed (dv150_v10 case_0138:
+the saved iteration failed beam shear, the last one passed capacity design
+and failed SCWB).
 
 One more closure came out of the rerun: the joint rule is priced on bar
 positions, which sit inside the hoops the capacity design selects for the
@@ -909,6 +956,53 @@ checks; the driver installs the hoops before the state is captured, so
   18.7.5.4 confinement area (Ag/Ach and 0.09 fc/fyt; the Pu > 0.3 Ag fc form
   when it applies) and 18.7.5.3 spacing (b/4, 6 db, and the conservative
   4-in cap retained in place of so = 4 + (14 - hx)/3, which is recorded).
+  That rule is the named method `beam_joint_delivery_limited_v2`, the
+  production default and the method every saved design was produced with
+  (evidence without a name is read as it, never relabelled). A second,
+  selectable method `column_own_probable_envelope_v3` was prepared for the
+  engineering-method review of 2026-09-20 (Design.Config.CapacityPolicy
+  .column_shear_method; not selected for production): Ve = max((Mpr,i +
+  Mpr,j) / ln, Vu) with each end's probable moment the exact section
+  solution at the maximizing load of that end's own saved factored axial
+  range (all combinations, every column of the story, source combination
+  and column tag recorded), in the bending sense of the governing sway --
+  the sharing reduction through the joints is removed, as ACI 18.7.6.1.1
+  permits; Vu is the analysis shear along that direction's own local
+  axis (per-direction extraction from the saved local forces, convention
+  validated on a cantilever) and Vc = 0 whenever Pu,min < Ag f'c/20 since
+  the mechanism shear is all of Ve. The axial-range maximum is a branch-aware
+  global maximum of the declared section model (engineering review CS-N1,
+  2026-09-20): the model's axial force jumps down by 0.85 f'c A_k where
+  the Whitney block reaches a bar layer, so it is monotone only between
+  those depths; each continuous branch is solved on its own closed
+  interval with an explicit displaced-layer set, every equilibrium root
+  of a load is kept with its residual and the largest moment is the
+  capacity, and the range envelope maximizes each branch over the
+  neutral-axis interval whose axial force lies in the range, with the
+  range ends, the block-entry limits, the steel-yield transitions and the
+  block saturation as candidates and a golden-section search on each
+  smooth sub-segment. Evidence travels with the value: branches checked,
+  bracket widths, root residuals, a round-trip re-solve and, on request,
+  a dense sweep of the raw model that the envelope must cover. Never a
+  fixed nine-point sample that can straddle an interior peak, nor a
+  single-root bisection that can land on the smaller root of a jump. The clear height is a declared convention: the uniform
+  face-to-face height story_h - h_beam at every story (the review packet's
+  conservative choice, the default) or the physical base-to-soffit height
+  at the base story; both values and the Ve at the physical height are
+  recorded on every story entry, so a convention change is a visible
+  method difference. The review packet's symmetric-section special case
+  (twice the largest Mpr over the story's merged axial range) is recorded
+  as `ve_own_story_envelope_kip` beside the general value. Every story
+  entry carries both methods' values whatever the method selected; the
+  capacity record names the method (`column_shear_method`) and the
+  recomputation from the record reproduces the evidence under that same
+  method. On the dv150_v10 cases 0074 and 0144 the alternative raises the
+  governing Ve from 87.5 to 131.8 kip and from 117.1 to 183.2 kip; both
+  saved cages still screen below phi Vn (ratios 0.70 and 0.80, the packet's
+  values reproduced) and the sections stay adequate, while a strong-column
+  / weak-beam fixture (28x28 f'c 6 with #9 bars over 14x20 beams) moves its
+  hoops from #4 at 3 in to #5 at 4 in and fails the 22.5.1.2 section limit
+  under the alternative only (tests/test_smrf_column_shear_alternative.py).
   One hoop bar and one spacing serve both directions; the leg count is
   chosen per direction, as 18.7.5.4 defines Ash per direction: the legs
   that cross the b faces (the hoop's two legs parallel to h plus the
@@ -947,15 +1041,31 @@ checks; the driver installs the hoops before the state is captured, so
   perimeter line (two edge x-beams, one terminating interior y-beam), a
   column on the y perimeter line (the mirror) and interior -- in both
   directions and at floor and roof (`joint_kinds`). gamma per
-  Table 18.8.4.3: a face is confined when its beam is at least 3/4 of the
-  column width; "two opposite faces" means both faces of one direction. Aj
-  per 18.8.4.3 through `SMRF_Joints.rectangular_joint_area`; phi = 0.85. A
-  failing joint grows the column rung. Joint transverse reinforcement
-  (18.8.3.1) is the column end-zone hoops continued through the joint; the
-  18.8.3.2 relaxation is recorded as applicable only when all four faces are
-  confined. Vcol assumes the beam probable moments split equally between the
-  columns above and below with inflection at mid-height (all to the single
-  column at the roof); that distribution is an assumption to verify.
+  Table 18.8.4.3 from its three inputs, read from the standard on
+  2026-09-18 (`classify_joint_shear_inputs`): the column is continuous or
+  meets 15.2.6 at a floor joint (the column above extends at least h with
+  its bars and hoops continued) and "Other" at the roof; the beam in the
+  direction of Vj is continuous or meets 15.2.7 where beams frame into
+  both faces and carry their bars and hoops through the joint, "Other"
+  where it terminates; the joint is confined per 15.2.8 only by two
+  transverse beams each at least 3/4 of the face it frames into, extending
+  at least h, with two continuous top and bottom bars and No. 3 or larger
+  stirrups. gamma = 20/15 (continuous column, continuous beam, confined /
+  not), 15/12 (continuous column, Other beam), 15/12 (Other column,
+  continuous beam), 12/8 (Other/Other). The reinforcement continuity is a
+  declaration of the generated detailing (`detailing.joint_continuity`);
+  where it is absent the input falls to the table's conservative row and
+  the entry lists the evidence as unevaluated, never inferred from a face
+  count (dv150_v10 read a 16-in beam on a 32-in column as no beam at all
+  and used 12/8 for every joint). Aj per 15.4.2.4 through
+  `SMRF_Joints.rectangular_joint_area`; phi = 0.85. A failing joint grows
+  the column rung. Joint transverse reinforcement (18.8.3.1) is the column
+  end-zone hoops continued through the joint; the 18.8.3.2 relaxation
+  (beams on all four sides at least 3/4 of the column width) is recorded
+  per joint and applied nowhere. Vcol assumes the beam probable moments
+  split equally between the columns above and below with inflection at
+  mid-height (all to the single column at the roof); that distribution is
+  an assumption to verify.
 - Terminating bars (18.8.5.1): ldh = fy db / (65 sqrt(fc)) >= max(8 db, 6 in)
   against column depth - cover - hoop; through bars keep 18.8.2.3.
 - Splices: beams may lap (Class B, 1.3 ld) only between the 2h hinge zones
@@ -997,14 +1107,76 @@ and the drift/ELF assumptions. Items:
   (Tables 11.6-1/11.6-2, S1 >= 0.75 rule) must match the preset label; a
   declared Site Class D/E/F with S1 >= 0.2 flags the 11.4.8 site-specific
   requirement.
-- `demands.elf_eligibility`: Table 12.6-1 with height, the torsional
-  irregularity from the torsion runs, and regularity by construction
-  (rectangular grid, frames on every line, uniform stories/sections).
-- `demands.accidental_torsion`: 5% eccentricity applied at every level in
-  every seismic combination (signed with the force; the doubly symmetric
-  building's member envelope is the same for either sign), Ax from
-  delta_max/delta_avg at the two extreme frames with torsion applied
-  (Table 12.3-1: 1a > 1.2, 1b > 1.4; Ax = (dmax/1.2 davg)^2 <= 3).
+- `demands.elf_eligibility`: ASCE 7-22 12.6 permits the ELF procedure for
+  any structure; the check records the edition, the height, the torsional
+  classification and regularity by construction (rectangular grid, frames
+  on every line, uniform stories/sections), and, for traceability only,
+  what the superseded 7-16 Table 12.6-1 would have said. dv150_v10
+  rejected cases 0074 and 0144 on that 7-16 rule under a 7-22 label.
+- `demands.torsional_irregularity`: 7-22 Table 12.3-1 Type 1 from the
+  12.3.2.1.1 TIR (a ratio of edge *story drifts*: ELF drift runs with 5%
+  accidental torsion, Ax = 1, rigid diaphragm, every story, both
+  directions, both eccentricity signs; the residual between the signs is
+  recorded) or from more than 75% of a story's lateral strength at or on
+  one side of the center of mass, the fraction computed per direction from
+  the frame lines' beam-mechanism strengths (bays x (Mn- + Mn+)/h of the
+  line's beam family) with a line through the center counted on both sides
+  (three identical lines give 2/3; weaker perimeter families push a
+  three-line direction higher). The 12.8.4.3 Ax is a ratio of edge *level
+  displacements*, computed per level, direction and case from the same
+  Ax = 1 runs; the single Ax applied at every level of every seismic
+  combination and drift run must cover the largest per-level value (a
+  documented conservative envelope), or 1.0 where Type 1 is absent. The
+  item is derived only from the saved rows: every (story, direction, sign)
+  exactly once, each row's ratios and Ax reproduced from its primitives,
+  the stored scalars, per-case maxima, per-level Ax, eccentricity and the
+  Ax = 1 assumption reproduced, and the stored classification compared with
+  the recomputation; a saved single-sign (legacy) assessment, a missing
+  row, an unnamed strength model or any disagreement leaves the item
+  unevaluated rather than passing (Codex counterexamples, 2026-09-18).
+  Two further consistency rules from the second review: at every edge
+  and case the recorded story drift must equal the change of that edge's
+  recorded level displacement between adjacent levels with a fixed base
+  (relative tolerance 1e-6; the rigid diaphragm gives every node of an
+  edge line the same displacement), so a record cannot carry a drift
+  ratio its displacements do not support while the two physical ratios
+  stay distinct; and the strength-distribution evidence is accepted only
+  as complete line evidence -- both directions, every frame line at its
+  grid position, the beam-family strengths and story height it was priced
+  on (reproduced against the families rebuilt from the record's final
+  cage), a uniformity-over-height claim with its basis -- never as a named
+  scalar or a single direction. The line-strength model itself (bays x
+  (Mn- + Mn+)/h per line) is a declared approximation awaiting the
+  scientific review's hand calculation (column base, roof, axial-dependent
+  column and shear-limited mechanisms). Its scientific applicability is a
+  distinct status field (2026-09-20, review item M1): the evidence block
+  carries `applicability.status`, `provisional` until a person asserts
+  `IndependentVerification.story_strength_model_verified` with author,
+  date and basis, and the evaluator checks that status against the
+  record's own assertion (a claim without its assertion, or an assertion
+  the evidence was not priced under, is stale). Complete line arithmetic
+  therefore validates the arithmetic, not the model: a provisional model
+  can establish Type 1 (more than 75% on one side, conservative) but
+  cannot certify its absence, so with TIR <= 1.2 the classification is
+  `unresolved` and `demands.torsional_irregularity` stays open, naming
+  the fraction, the status and the review item; a TIR above 1.2
+  establishes Type 1 on its own and the item evaluates with the strength
+  branch reported as provisional. The TIR ceiling item below never needs
+  the strength evidence. The designed record applies Ax = 1.0 in the
+  unresolved case (Type 1 not established), which the open item makes
+  visible rather than silently accepting. The nominal line strengths are
+  never replaced by the column-shear envelope of the capacity design: a
+  demand-side upper bound on every line bounds no one-sided ratio.
+- `demands.accidental_torsion`: TIR (recomputed from the rows) <= 1.4,
+  labelled as project policy in every SDC: ASCE 7-22 removed the 7-16
+  12.3.3.1 prohibition of extreme torsional irregularity in SDC E/F
+  (FEMA P-2192 Vol. 1 1.4.5; California 2025 Title 24 1617.12.6
+  "repealed all language related to the extreme torsional irregularities
+  ... to align with ASCE 7-22"); Type 1 with TIR > 1.4 still carries
+  12.3.4.2.1 for rho in SDC D-F.
+- `demands.redundancy`: rho = 1.3 in every seismic strength combination
+  against 12.3.4.1 (1.0 for SDC B/C) and 12.3.4.2 (1.3 for D-F without the
+  (a)/(b) demonstrations); drift forces at rho = 1.0.
 - `demands.live_load_patterning`: ACI 6.4.2 alternate-span and adjacent-
   span arrangements as slab panel patterns, solved in the floor model as
   unit live cases of the transfer and combined as 1.2D + 1.6L; the

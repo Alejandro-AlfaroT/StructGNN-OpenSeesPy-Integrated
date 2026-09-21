@@ -156,6 +156,17 @@ def probe_config(probe_date=None):
         verification=IndependentVerification(**{k: True for k in verify_flags}, **stamp))
 
 
+def search_summary(record):
+    """How the section search ended and what the torsion assessment found, for the result row."""
+    search = record.get("search") or {}
+    torsion = (record.get("demand_basis") or {}).get("torsion") or {}
+    return {"stop_reason": search.get("stop_reason"),
+            "selected_iteration": search.get("selected_iteration"),
+            "last_iteration": search.get("last_iteration"),
+            "tir": torsion.get("tir", torsion.get("max_drift_ratio")),
+            "torsional_irregularity": torsion.get("torsional_irregularity")}
+
+
 def run_worker(case, out_dir, probe, probe_date=None, attempt_id=None):
     with exclusive_lease(Path(out_dir) / ".worker.lease"):
         return _run_worker(case, out_dir, probe, probe_date, attempt_id)
@@ -205,6 +216,7 @@ def _run_worker(case, out_dir, probe, probe_date=None, attempt_id=None):
             "beam_hoops": [reb["beam_stirrup_bar_size"], reb["beam_stirrup_legs"], reb["beam_stirrup_spacing_in"]],
             "coupled_max_vertical_difference": (record.get("coupled_comparison") or {}).get("max_column_vertical_relative_difference"),
             "schema_version": record.get("schema_version"),
+            **search_summary(record),
         })
     except Exception as exc:                              # noqa: BLE001
         result.update({"status": "error", "elapsed_s": time.perf_counter() - t0,
@@ -349,14 +361,14 @@ def summarize(results, root, probe, cases=None, probe_date=None):
         lines.append(", ".join(r["case"]["case_id"] for r in missing))
         lines.append("")
     lines.append("## Cases\n")
-    lines.append("| case | plan | site | result | fail | open | min | MB | T1 s | sections | col bars | beam bars | col hoops | beam hoops | governed | coupled max | host |")
-    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    lines.append("| case | plan | site | result | fail | open | min | MB | T1 s | sections | col bars | beam bars | col hoops | beam hoops | governed | stop (sel/last) | coupled max | host |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in rows:
         c = r["case"]
         plan = f"{c['num_bay_x']}x{c['num_bay_y']}x{c['num_floor']} {c['bay_x_width_ft']}x{c['bay_y_width_ft']} ft / {c['story_height_ft']} ft"
         if r.get("status") != "designed":
             lines.append(f"| {c['case_id']} | {plan} | {c['seismic_site']} | {str(r.get('status', '')).upper()} | | | | | | "
-                         f"{str(r.get('error', ''))[:80]} | | | | | | | {r.get('host', '')} |")
+                         f"{str(r.get('error', ''))[:80]} | | | | | | | | {r.get('host', '')} |")
             continue
         s = r["sections"]
         period = r.get("model_period_sec")
@@ -366,14 +378,16 @@ def summarize(results, root, probe, cases=None, probe_date=None):
                      f"{s['b_col_in']:g}x{s['h_col_in']:g} fc{s['fc_col_ksi']:g} / {s['b_beam_in']:g}x{s['h_beam_in']:g} fc{s['fc_beam_ksi']:g} | "
                      f"#{r['column_bars'][0]} {r['column_bars'][1]}T/{r['column_bars'][2]}S | #{r['beam_bars'][0]} {r['beam_bars'][1]}T/{r['beam_bars'][2]}B | "
                      f"#{r['column_hoops'][0]}-{r['column_hoops'][1]}L@{r['column_hoops'][2]:g} | #{r['beam_hoops'][0]}-{r['beam_hoops'][1]}L@{r['beam_hoops'][2]:g} | "
-                     f"{r['governed_by']} | {100 * (r.get('coupled_max_vertical_difference') or 0):.1f}% | {r.get('host', '')} |")
+                     f"{r['governed_by']} | {r.get('stop_reason') or ''} ({r.get('selected_iteration') or ''}/{r.get('last_iteration') or ''}) | "
+                     f"{100 * (r.get('coupled_max_vertical_difference') or 0):.1f}% | {r.get('host', '')} |")
     (root / "summary.md").write_text("\n".join(lines), encoding="utf-8")
     with (root / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["case_id", "num_bay_x", "num_bay_y", "num_floor", "story_height_ft", "bay_x_width_ft", "bay_y_width_ft",
                          "seismic_site", "status", "accepted", "fail", "not_evaluated", "elapsed_s", "design_json_bytes",
                          "model_period_sec", "b_col_in", "h_col_in", "fc_col_ksi", "b_beam_in", "h_beam_in", "fc_beam_ksi",
-                         "dcr_column", "dcr_beam", "governed_by", "iterations", "host", "request_sha256", "methodology_sha256",
+                         "dcr_column", "dcr_beam", "governed_by", "iterations", "stop_reason", "selected_iteration",
+                         "last_iteration", "tir", "torsional_irregularity", "host", "request_sha256", "methodology_sha256",
                          "fail_ids", "not_evaluated_ids"])
         for r in rows:
             c, s, d = r["case"], r.get("sections") or {}, r.get("dcr") or {}
@@ -383,6 +397,8 @@ def summarize(results, root, probe, cases=None, probe_date=None):
                              round(r.get("elapsed_s", 0.0), 1), r.get("design_json_bytes"), r.get("model_period_sec"),
                              s.get("b_col_in"), s.get("h_col_in"), s.get("fc_col_ksi"), s.get("b_beam_in"), s.get("h_beam_in"),
                              s.get("fc_beam_ksi"), d.get("column"), d.get("beam"), r.get("governed_by"), r.get("iterations"),
+                             r.get("stop_reason"), r.get("selected_iteration"), r.get("last_iteration"), r.get("tir"),
+                             r.get("torsional_irregularity"),
                              r.get("host"), r.get("request_sha256"), r.get("methodology_sha256"),
                              ";".join(r.get("fail_ids", [])), ";".join(r.get("not_evaluated_ids", []))])
     (root / "summary.json").write_text(json.dumps({"probe_assertions": probe, "cases": rows}, indent=1, default=str),

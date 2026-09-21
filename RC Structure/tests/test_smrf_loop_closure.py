@@ -137,6 +137,116 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(next_beam, bi)
         self.assertGreater(next_column, ci)
 
+    def test_next_stronger_index_keeps_the_dimensions(self):
+        ci = next(i for i, r in enumerate(self.columns) if r == (36., 36., 6.))
+        self.assertEqual(self.columns[driver._next_stronger_index(self.columns, ci)], (36., 36., 8.))
+        self.assertIsNone(driver._next_stronger_index(self.columns, ci + 1))          # 36x36 fc-8: top strength
+        beams = beam_ladder(span_in=168., story_height_in=156.)                       # case_0013 ladder
+        bi = next(i for i, r in enumerate(beams) if r == (20., 32., 4.))
+        self.assertEqual(beams[driver._next_stronger_index(beams, bi)], (20., 32., 5.))
+        self.assertIsNone(driver._next_stronger_index(beams, next(i for i, r in enumerate(beams) if r == (20., 32., 8.))))
+
+    def test_beam_shear_at_the_top_dimensions_takes_the_next_concrete_strength(self):
+        """case_0013: 20x32 fc-4 is the widest, deepest rung its span allows; fc 5/6/8 remain candidates."""
+        beams = beam_ladder(span_in=168., story_height_in=156.)
+        ci = next(i for i, r in enumerate(self.columns) if r == (36., 36., 6.))
+        bi = next(i for i, r in enumerate(beams) if r == (20., 32., 4.))
+        self.assertIsNone(driver._next_deeper_beam_index(beams, bi))
+        self.assertIsNone(driver._next_wider_beam_index(beams, bi))
+        next_column, next_beam, reasons = driver._plan_next_rungs(
+            self.columns, beams, ci, bi, {"beam": 0.84, "column": 0.44}, 0.85, 1.0, scwb_index=0,
+            flags=flags(beam_section_adequate=False, capacity_accepted=False))
+        self.assertEqual(reasons, ["beam_capacity_shear"])
+        self.assertEqual(beams[next_beam], (20., 32., 5.))
+        self.assertEqual(next_column, ci)                                             # the column is not the lever
+
+    def test_column_shear_at_the_largest_size_takes_the_next_concrete_strength(self):
+        """case_0073: column shear fails at 36x36 fc-6 with 36x36 fc-8 unvisited."""
+        ci = next(i for i, r in enumerate(self.columns) if r == (36., 36., 6.))
+        bi = next(i for i, r in enumerate(self.beams) if r == (14., 28., 8.))
+        self.assertIsNone(driver._next_larger_column_index(self.columns, ci))
+        next_column, next_beam, reasons = driver._plan_next_rungs(
+            self.columns, self.beams, ci, bi, {"beam": 0.85, "column": 0.55}, 0.85, 1.0, scwb_index=0,
+            flags=flags(column_section_adequate=False, capacity_accepted=False))
+        self.assertEqual(reasons, ["column_capacity_shear"])
+        self.assertEqual(self.columns[next_column], (36., 36., 8.))
+        self.assertEqual(next_beam, bi)
+
+
+class CandidatePlanTests(unittest.TestCase):
+    """_plan_next_candidate: feasibility under the proposed columns, visited pairs, explicit stop reasons."""
+
+    def setUp(self):
+        self.columns = column_ladder()
+        self.beams = beam_ladder(span_in=168., story_height_in=168.)                   # case_0017: 120 x 168 ft bays
+        self.c36 = next(i for i, r in enumerate(self.columns) if r == (36., 36., 6.))
+        self.b22 = next(i for i, r in enumerate(self.beams) if r == (16., 22., 8.))
+        self.b24 = next(i for i, r in enumerate(self.beams) if r == (16., 24., 6.))
+
+    def feasible(self, column_index):
+        """Under 36-in columns on a 120-in bay (ln = 84 in) nothing deeper than 22 in fits 4d; smaller columns allow 24."""
+        cap = 22. if self.columns[column_index][0] >= 36. else 24.
+        return [i for i, r in enumerate(self.beams) if r[1] <= cap]
+
+    def plan(self, ci, bi, visited, **overrides):
+        return driver._plan_next_candidate(self.columns, self.beams, ci, bi, {"beam": 0.86, "column": 0.70}, 0.85, 1.0,
+                                           0, flags(**overrides), visited, self.feasible)
+
+    def test_infeasible_proposal_is_substituted_and_a_visited_pair_ends_with_an_explicit_reason(self):
+        """case_0017 iteration 7: the planner asks for 16x24 under 36-in columns; the clear span forbids it."""
+        visited = {(self.c36, self.b22)}
+        plan = self.plan(self.c36, self.b22, visited, beam_section_adequate=False, capacity_accepted=False)
+        self.assertEqual(self.beams[plan["proposed"]["beam"]][1], 24.)                 # what the strategy asked for
+        self.assertEqual(plan["substitutions"][0]["stage"], "clear_span_compatibility")
+        self.assertIsNone(plan["candidate"])                                           # 16x22 fc-8 is the top feasible rung
+        self.assertEqual(plan["stop_reason"], "no_candidate_under_strategy")           # unvisited pairs exist: larger columns
+        self.assertIn("beam_capacity_shear", plan["stop_detail"])
+
+    def test_column_reasons_advance_the_column_past_a_visited_pair(self):
+        visited = {(self.c36, self.b22)}
+        plan = self.plan(self.c36, self.b22, visited, joints_all_pass=False, capacity_accepted=False)
+        self.assertIsNotNone(plan["candidate"])
+        self.assertEqual(self.columns[plan["candidate"]["column"]], (36., 36., 8.))   # same size, next f'c
+        self.assertEqual(plan["candidate"]["beam"], self.b22)                           # the deeper proposal cannot fit
+        self.assertTrue(plan["substitutions"])
+        self.assertLessEqual({s["stage"] for s in plan["substitutions"]}, {"clear_span_compatibility", "visited_pair"})
+        # With the strength rung already visited too, the next unvisited pair is one column rung further.
+        visited.add((self.c36 + 1, self.b22))
+        plan = self.plan(self.c36, self.b22, visited, joints_all_pass=False, capacity_accepted=False)
+        self.assertIsNone(plan["candidate"])                                            # 36x36 fc-8 is the ladder top
+        self.assertEqual(plan["stop_reason"], "candidate_set_exhausted")
+
+    def test_domain_exhaustion_is_named_when_no_unvisited_pair_remains(self):
+        top = len(self.columns) - 1
+        visited = {(top, j) for j in self.feasible(top)}
+        plan = self.plan(top, self.b22, visited, joints_all_pass=False, capacity_accepted=False)
+        self.assertIsNone(plan["candidate"])
+        self.assertEqual(plan["stop_reason"], "candidate_set_exhausted")
+
+    def test_unvisited_feasible_proposal_passes_through_unchanged(self):
+        c32 = next(i for i, r in enumerate(self.columns) if r == (32., 32., 8.))
+        plan = self.plan(c32, self.b22, {(c32, self.b22)}, beam_section_adequate=False, capacity_accepted=False)
+        self.assertEqual(plan["substitutions"], [])
+        self.assertEqual(self.beams[plan["candidate"]["beam"]][1], 24.)                 # deeper fits under 32-in columns
+        self.assertEqual(plan["candidate"]["column"], c32)
+        self.assertIsNone(plan["stop_reason"])
+
+    def test_feasible_beam_indices_follow_both_clear_spans(self):
+        saved = {k: getattr(sp, k) for k in ("BAY_X", "BAY_Y", "STORY_H", "SLAB_THICKNESS_IN")}
+        try:
+            # Explicit clear cover (slab set): #6 bars inside #4 hoops sit 2.375 in from the face, so a
+            # 24-in beam has d = 21.625 in and needs 86.5 in of clear span: 88 under 32-in columns, 84 under 36.
+            sp.BAY_X, sp.BAY_Y, sp.STORY_H, sp.SLAB_THICKNESS_IN = 120., 168., 168., 5.0
+            beams = beam_ladder(span_in=168., story_height_in=168.)
+            under_36 = driver._feasible_beam_indices(beams, 36., 36.)
+            under_32 = driver._feasible_beam_indices(beams, 32., 32.)
+            self.assertTrue(all(beams[i][1] <= 22. for i in under_36))
+            self.assertTrue(any(beams[i][1] == 24. for i in under_32))
+            self.assertLess(set(under_36), set(under_32))
+        finally:
+            for k, v in saved.items():
+                setattr(sp, k, v)
+
 
 class CapturedActionCheckTests(unittest.TestCase):
     def setUp(self):

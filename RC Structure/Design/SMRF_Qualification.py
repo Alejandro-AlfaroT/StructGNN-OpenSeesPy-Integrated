@@ -268,12 +268,23 @@ def _apply_capacity_design_evidence(record, checks, evidence):
                 1, 1, "==",
                 details={"basis": "uniform top and bottom bars continuous through every support; end and along-span "
                                   "strength balance are the beam.span_strength checks; splices per detailing.splices_designed"})
-        replaced["qualification.joint_capacity_completion"] = make_check(
-            "qualification.joint_capacity_completion", "ACI 318-19 18.7.3; 18.8",
-            int(bool(capacity.get("accepted"))), 1, "==",
-            details={"method_version": capacity.get("method_version"),
-                     "joint_shear_all_pass": capacity.get("joints", {}).get("all_pass"),
-                     "anchorage_all_pass": capacity.get("anchorage", {}).get("all_pass")})
+        open_items = [c for c in capacity.get("checks", []) if c.get("status") == "not_evaluated"]
+        failed_items = [c for c in capacity.get("checks", []) if c.get("status") == "fail"]
+        if open_items and not failed_items:
+            # Missing classification or detailing evidence stays open here; a
+            # conservative numeric screen is not completion.
+            replaced["qualification.joint_capacity_completion"] = not_evaluated(
+                "qualification.joint_capacity_completion", "ACI 318-19 18.7.3; 18.8",
+                "capacity-design items without supporting evidence: " + ", ".join(
+                    f"{c.get('id')}@{c.get('location', '')}" if c.get("location") else str(c.get("id")) for c in open_items[:8]))
+        else:
+            replaced["qualification.joint_capacity_completion"] = make_check(
+                "qualification.joint_capacity_completion", "ACI 318-19 18.7.3; 18.8",
+                int(bool(capacity.get("accepted"))), 1, "==",
+                details={"method_version": capacity.get("method_version"),
+                         "joint_shear_all_pass": capacity.get("joints", {}).get("all_pass"),
+                         "joint_evidence_complete": capacity.get("joints", {}).get("evidence_complete"),
+                         "anchorage_all_pass": capacity.get("anchorage", {}).get("all_pass")})
         replaced["qualification.column_capacity_shear"] = make_check(
             "qualification.column_capacity_shear", "ACI 318-19 18.7.6",
             int(bool(hoops) and bool(columns.get("section_adequate"))), 1, "==",
@@ -377,7 +388,9 @@ def qualify_design(record):
     checks.extend(evaluate_joints(evidence))
     checks.extend(evidence.get("completeness_checks", []))
     from Design.SMRF_Demands import evaluate_demand_basis
-    checks.extend(evaluate_demand_basis(record))
+    # The strength-distribution evidence is checked against the beam families
+    # rebuilt from the record's final cage (never against the saved copies).
+    checks.extend(evaluate_demand_basis(record, strength_families=recomputed["families"] or None))
     checks.extend(evaluate_slab(record.get("slab")))
     if record.get("gravity_load_model") == "slab_transfer" or record.get("floor_transfer") is not None:
         from Design.SMRF_Floor_Transfer import validate_floor_transfer

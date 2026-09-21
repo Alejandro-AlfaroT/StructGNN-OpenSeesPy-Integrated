@@ -325,7 +325,11 @@ class IntegrationTests(unittest.TestCase):
             from Design.SMRF_Demands import live_load_patterns
             patterns = live_load_patterns(sp.NUM_BAY_X, sp.NUM_BAY_Y)
             self.assertEqual(len(result["design_actions"]["combinations"]), 18 + len(patterns))
-            self.assertEqual(result["demand_basis"]["torsion"]["torsional_irregularity"], "none")
+            # No story_strength_model_verified assertion: the strength criterion is provisional and a low
+            # TIR cannot certify the absence of Type 1 (review item M1).
+            self.assertEqual(result["demand_basis"]["torsion"]["torsional_irregularity"], "unresolved")
+            self.assertEqual(result["demand_basis"]["regularity"]["lateral_strength_distribution"]["applicability"]["status"],
+                             "provisional")
             self.assertEqual([p["id"] for p in result["demand_basis"]["live_load_patterns"]], [p["id"] for p in patterns])
             floor = result["floor_analysis"]
             self.assertEqual(floor["status"], "diagnostic_only")

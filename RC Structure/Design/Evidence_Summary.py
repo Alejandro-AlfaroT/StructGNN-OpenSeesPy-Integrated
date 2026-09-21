@@ -286,8 +286,13 @@ def write_evidence_summary(r, out_dir, elapsed=None):
     tor = dem["torsion"]
     worst = max(tor["stories"], key=lambda x: x["delta_max_over_avg"])
     line(f"- Derived SDC {statuses.get('demands.site_hazard') and [c for c in q['checks'] if c['id']=='demands.site_hazard'][0]['details']['derived_sdc']} from SDS/SD1/S1 (Tables 11.6-1/11.6-2); label agrees.")
-    line(f"- ELF eligibility: height {g['num_floor']*g['story_h_in']/12:.0f} ft ≤ 160 ft, regular by construction, torsional irregularity: {tor['torsional_irregularity']} → Table 12.6-1 permitted.")
-    line(f"- Accidental torsion: 5% eccentricity in every seismic combination; worst δmax/δavg = {tor['max_drift_ratio']:.3f} (story {worst['story']}, {worst['direction']}), Type 1a threshold 1.2 → Ax = {tor['amplification']:.2f}.")
+    line(f"- Analysis procedure: ELF is permitted for any structure (ASCE 7-22 12.6; the 7-16 Table 12.6-1 restriction was deleted); "
+         f"height {g['num_floor']*g['story_h_in']/12:.0f} ft, regular by construction, torsional irregularity (7-22 Table 12.3-1 Type 1): {tor['torsional_irregularity']}.")
+    line(f"- Accidental torsion: 5% eccentricity in every seismic combination; TIR (12.3.2.1.1, {len(tor.get('cases') or ['x', 'y'])} accidental-torsion cases) "
+         f"= {tor.get('tir', tor['max_drift_ratio']):.3f} (story {worst['story']}, {worst['direction']}{', ' + worst['case'] if worst.get('case') else ''}), "
+         f"Type 1 threshold 1.2 → Ax applied {tor['amplification']:.3f} (12.8.4.3 envelope over levels from the edge level displacements: "
+         f"{tor.get('amplification_envelope_12_8_4_3', float('nan')):.3f}); TIR ≤ 1.4 is a project policy in every SDC (ASCE 7-22 removed the 7-16 12.3.3.1 E/F prohibition); "
+         f"one-sided story strength fraction {((tor.get('strength_distribution') or {}).get('one_side_fraction') or float('nan')):.3f} (Type 1 above 0.75).")
     line(f"- Live-load arrangements (ACI 6.4.2): {len(dem['live_load_patterns'])} — " + ", ".join(p['id'] for p in dem['live_load_patterns']) + "; combinations in the strength envelope: " + str(len(r['design_actions']['combinations'])) + ".")
     line(f"- Seismic weight per floor {loads['total_floor_seismic_weight_kip']:.1f} kip = slab {loads['slab_self_weight_ksf']*1000:.1f} psf + SDL {loads['floor_superimposed_dead_load_ksf']*1000:.0f} psf (incl. ≥10 psf partitions) over {loads['floor_area_sqft']:.0f} ft² + members {loads['member_self_weight_per_floor_kip']:.1f} kip; live fraction {loads['seismic_live_load_fraction']:g} (office).")
     line(f"- Drift basis: 0.35/0.70 Ig, ρ = 1 forces at the capped period, Cd = 5.5, P-Δ included, full D+L gravity; SDC used {r['drift_screen']['assumptions']['seismic_design_category']}.")
@@ -323,15 +328,22 @@ def write_evidence_summary(r, out_dir, elapsed=None):
          f"Ve = {bs['ve_kip']:.1f} kip with factored gravity reactions; Vc = 0 in the hinge zone ({'yes' if bs['vc_zero_hinge_zone'] else 'no'}); Vs required {bs['vs_required_kip']:.1f} ≤ 8√f'c·bw·d = {bs['vs_limit_kip']:.1f} kip; "
          f"hoops #{bs['hoops']['bar_size']}-{bs['hoops']['legs']}L @ {bs['hoops']['spacing_in']:g} in (φVn {bs['hoops']['phi_vn_kip']:.0f} kip).")
     gv = cs["governing"]
-    line(f"- Column Ve: min(2·Mpr,col/ℓn = {gv['ve_own_kip']:.0f}, joint-limited {gv['ve_joint_limited_kip']:.0f}) ≥ Vu {gv['vu_analysis_kip']:.0f} → {gv['ve_kip']:.0f} kip; Vc = 0 ({'yes' if gv['vc_zero'] else 'no'}: P_min {gv['axial_min_kip']:.0f} kip < Ag f'c/20 = {s['b_col_in']*s['h_col_in']*s['fc_col_ksi']/20:.0f}); "
+    method = cs.get("column_shear_method") or "beam_joint_delivery_limited_v2 (unnamed legacy evidence)"
+    own_envelope = gv.get("ve_own_envelope_kip")
+    line(f"- Column Ve, method `{method}`: min(2·Mpr,col/ℓn = {gv['ve_own_kip']:.0f}, joint-limited {gv['ve_joint_limited_kip']:.0f}) ≥ Vu {gv['vu_analysis_kip']:.0f} → {gv['ve_kip']:.0f} kip"
+         + (f" (column-own probable envelope, each end at its own axial range: {own_envelope:.0f} kip, recorded for comparison)" if own_envelope is not None else "")
+         + f"; Vc = 0 ({'yes' if gv['vc_zero'] else 'no'}: P_min {gv['axial_min_kip']:.0f} kip < Ag f'c/20 = {s['b_col_in']*s['h_col_in']*s['fc_col_ksi']/20:.0f}); "
          f"hoops #{cs['hoops']['bar_size']}-{cs['hoops']['legs']}L @ {cs['hoops']['spacing_in']:g} in (shear s = {cs['hoops']['spacing_from_shear_in']:.1f}, confinement s = {cs['hoops']['spacing_from_confinement_in']:.1f}, 4-in cap); "
          f"Ash/s provided {cs['hoops']['ash_provided_per_in']:.3f} vs required {cs['hoops']['ash_required_per_in']:.3f} in²/in; hx {cs['confinement']['hx_in']:.1f} in.")
     line()
-    line("| joint | Vj kip | φVn kip | γ | confined faces | Vj/φVn |")
+    line("| joint | Vj kip | φVn kip | γ | Table 18.8.4.3 inputs (column / beam / transverse confinement) | Vj/φVn |")
     line("|---|---|---|---|---|---|")
     for k, j in cap["joints"]["joints"].items():
         if j["axis"] == "x":
-            line(f"| {j['level']} {j['kind']} | {j['vj_kip']:.0f} | {j['phi_vn_kip']:.0f} | {j['gamma']:.0f} | {j['confined_faces']} | {j['vj_kip']/j['phi_vn_kip']:.2f} |")
+            cls = j.get("classification") or {}
+            inputs = (f"{cls['column']['state']} / {cls['beam']['state']} / {'confined' if cls['confinement']['confined'] else 'not confined'}"
+                      if cls else f"{j.get('confined_faces')} faces ≥ 3/4 width (legacy record)")
+            line(f"| {j['level']} {j['kind']} | {j['vj_kip']:.0f} | {j['phi_vn_kip']:.0f} | {j['gamma']:.0f} | {inputs} | {j['vj_kip']/j['phi_vn_kip']:.2f} |")
     an = cap["anchorage"]["directions"]["x"]; spl = cap["splices"]
     line()
     line(f"- Vj hand check, floor interior x: 1.25·60·(As_top + slab) + 1.25·60·As_bot − Vcol = 75·{st['tension_steel_hogging_in2']:.2f} + 75·{st['tension_steel_sagging_in2']:.2f} − {cap['joints']['joints']['joint_shear/floor/interior/x']['column_shear_kip']:.0f} = {cap['joints']['joints']['joint_shear/floor/interior/x']['vj_kip']:.0f} kip; "

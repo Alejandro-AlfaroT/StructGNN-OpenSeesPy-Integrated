@@ -292,7 +292,9 @@ def joint_shear_check(data, *, location=""):
     try:
         if (data.get("capacity_basis") != "ACI318-19_Table18.8.4.3"
                 or data.get("capacity_topology_and_confinement_checked") is not True):
-            raise ValueError("Verified 2019 joint-area, continuity, confinement and transverse-steel capacity is required.")
+            missing = data.get("unevaluated_evidence")
+            raise ValueError("Verified 2019 joint-area, continuity, confinement and transverse-steel capacity is required."
+                             + (f" Unevaluated: {', '.join(str(m) for m in missing)}." if isinstance(missing, list) and missing else ""))
         nominal = _number(data.get("nominal_vn_kip"), "nominal_vn_kip", minimum=0)
     except ValueError as exc:
         check = not_evaluated("joint_shear", JOINT_SHEAR_CLAUSE, str(exc), location)

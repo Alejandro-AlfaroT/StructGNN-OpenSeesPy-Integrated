@@ -341,6 +341,12 @@ class IndependentVerification:
     fire_resistance_scope_accepted: bool = False     # slab_fire_resistance
     congestion_and_placement_accepted: bool = False  # detailing.congestion_and_placement
     floor_frame_compatibility_reviewed: bool = False   # floor.compatibility_idealization_reviewed
+    # demands.torsional_irregularity, strength-distribution branch (review item
+    # M1, 2026-09-20): the frame-line story-strength model behind the Table
+    # 12.3-1 "75% at or on one side" criterion is a declared approximation
+    # until a person asserts it. Unasserted, the criterion can establish a
+    # Type 1 irregularity (conservative) but never its absence.
+    story_strength_model_verified: bool = False
     asserted_by: str = ""
     assertion_date: str = ""
     assertion_basis: str = ""
@@ -433,6 +439,24 @@ class IterationConfig:
     penalty_weight: float = 1e3
 
 
+@dataclass
+class CapacityPolicy:
+    """Capacity-design method selection (ACI 318-19 Chapter 18), part of the request identity.
+
+    ``column_shear_method`` names the 18.7.6.1.1 Ve rule
+    (Design.SMRF_Capacity_Design.COLUMN_SHEAR_METHODS): the default
+    ``beam_joint_delivery_limited_v2`` is the rule every saved design was
+    produced with; ``column_own_probable_envelope_v3`` is the column-own
+    probable-strength alternative prepared for review on 2026-09-20 and is
+    not selected for production. ``column_clear_height_convention`` applies
+    to that alternative only: ``uniform_face_to_face`` (story_h - h_beam at
+    every story, the engineering note's conservative convention) or
+    ``physical_base`` (the base story's base-to-soffit height).
+    """
+    column_shear_method: str = "beam_joint_delivery_limited_v2"
+    column_clear_height_convention: str = "uniform_face_to_face"
+
+
 # ---------------------------------------------------------------------------
 # Root config
 # ---------------------------------------------------------------------------
@@ -462,6 +486,7 @@ class DesignConfig:
     floor_analysis: FloorAnalysisConfig = field(default_factory=FloorAnalysisConfig)
     dcr: DCRTargets = field(default_factory=DCRTargets)
     iteration: IterationConfig = field(default_factory=IterationConfig)
+    capacity: CapacityPolicy = field(default_factory=CapacityPolicy)
 
     @classmethod
     def from_structure_parameters(cls) -> "DesignConfig":

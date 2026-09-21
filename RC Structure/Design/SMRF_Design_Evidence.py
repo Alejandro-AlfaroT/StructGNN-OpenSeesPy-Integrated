@@ -51,18 +51,15 @@ def capacity_state_from_record(record):
     layers_about_z.append((outer, b_col - cover))
     layers_about_z.sort(key=lambda layer: layer[1])
     per_story = (geometry["num_bay_x"] + 1) * (geometry["num_bay_y"] + 1)
-    axial, shear = {}, {}
-    for action in (record.get("design_actions") or {}).get("combinations", []):
-        for tag, member in action["members"].items():
-            if member["member_type"] != "column":
-                continue
-            story = (int(tag) - 1) // per_story + 1
-            forces = member["local_force_kip_kipin"]
-            p_low, p_high = axial.get(story, (math.inf, -math.inf))
-            values = (member["axial_i_kip"], member["axial_j_kip"])
-            axial[story] = (min(p_low, *values), max(p_high, *values))
-            v = max(abs(forces[1]), abs(forces[2]), abs(forces[7]), abs(forces[8]))
-            shear[story] = max(shear.get(story, 0.0), v)
+    from Design.SMRF_Capacity_Design import (column_action_envelopes, COLUMN_SHEAR_METHOD_DEFAULT,
+                                             CLEAR_HEIGHT_CONVENTION_DEFAULT)
+    envelopes = column_action_envelopes((record.get("design_actions") or {}).get("combinations", []), per_story)
+    axial, shear = envelopes["axial"], envelopes["shear"]
+    # The Ve rule the saved evidence was produced with. Records written
+    # before the method was named carry none and are read as the
+    # joint-limited method they were produced with, never relabelled.
+    saved_capacity = record.get("capacity_design") or {}
+    saved_columns = saved_capacity.get("columns") or {}
     return {
         "geometry": geometry,
         "sections": {key: sections[key] for key in ("b_col_in", "h_col_in", "fc_col_ksi", "b_beam_in", "h_beam_in", "fc_beam_ksi")},
@@ -77,6 +74,14 @@ def capacity_state_from_record(record):
         "slab": {"thickness_in": thickness, "layout": (record.get("slab_reinforcement") or {}).get("layout")},
         "transfer": record.get("floor_transfer"), "sds": record["seismic"]["sds"],
         "column_axial_envelope": axial, "column_shear_demand": shear,
+        "column_action_envelopes": envelopes["detail"],
+        "combination_actions_used": envelopes["combinations_used"],
+        "column_shear_method": saved_capacity.get("column_shear_method") or COLUMN_SHEAR_METHOD_DEFAULT,
+        "column_clear_height_convention": saved_columns.get("clear_height_convention") or CLEAR_HEIGHT_CONVENTION_DEFAULT,
+        # The design's declaration of reinforcement continuity through the
+        # joints (Table 18.8.4.3 inputs); absent in older records, which then
+        # classify every joint on the table's conservative rows.
+        "joint_continuity": (record.get("detailing") or {}).get("joint_continuity"),
     }
 
 
@@ -107,6 +112,10 @@ def capacity_design_recomputation(record):
     differences = []
     if saved.get("method_version") != recomputed["method_version"]:
         differences.append(f"method_version {saved.get('method_version')!r} vs {recomputed['method_version']!r}")
+    from Design.SMRF_Capacity_Design import COLUMN_SHEAR_METHOD_DEFAULT
+    saved_method = saved.get("column_shear_method") or COLUMN_SHEAR_METHOD_DEFAULT
+    if saved_method != recomputed.get("column_shear_method"):
+        differences.append(f"column_shear_method {saved_method!r} vs {recomputed.get('column_shear_method')!r}")
     old, new = saved.get("checks") or [], recomputed["checks"]
     if len(old) != len(new):
         differences.append(f"{len(old)} saved checks vs {len(new)} recomputed")
