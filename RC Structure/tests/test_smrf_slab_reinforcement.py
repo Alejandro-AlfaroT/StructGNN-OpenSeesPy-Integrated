@@ -204,6 +204,29 @@ class SlabReinforcementTests(unittest.TestCase):
                 self.assertFalse(result["screen_passed"])
                 self.assertEqual(result["checks"][0]["status"], "not_evaluated")
 
+    def test_unverified_attempt_keeps_inputs_and_its_actual_rejection_reason(self):
+        data, demand = inputs(), evidence()
+        demand["verified"] = False
+        result = design_slab_reinforcement(data, demand)
+        self.assertIsNone(result["layout"])
+        self.assertFalse(result["accepted"])
+        self.assertFalse(result["screen_passed"])
+        initial_reason = result["checks"][0]["details"]["reason"]
+        self.assertIn("verification", initial_reason.lower())
+        # JSON round trip and caller mutations must preserve the rejected attempt.
+        data["thickness_in"] = 99.
+        demand["verified"] = True
+        result = json.loads(json.dumps(result, allow_nan=False))
+        self.assertEqual(result["inputs"]["slab"]["thickness_in"], 8.)
+        self.assertIs(result["inputs"]["demand_evidence"]["verified"], False)
+        audit = evaluate_slab_reinforcement(result)
+        self.assertEqual(audit[0]["id"], "slab_strip_saved_evidence")
+        self.assertEqual(audit[0]["status"], "pass")
+        self.assertEqual(audit[1]["details"]["reason"], initial_reason)
+        self.assertEqual(audit[1]["status"], "not_evaluated")
+        result["checks"][0]["details"]["reason"] = "fabricated reason"
+        self.assertEqual(evaluate_slab_reinforcement(result)[0]["status"], "fail")
+
     def test_rigid_diaphragm_or_depth_dependent_shear_is_rejected(self):
         for key, value in (("method", "rigid_diaphragm_frame"),
                            ("shear_envelope_basis", "d_from_support"),

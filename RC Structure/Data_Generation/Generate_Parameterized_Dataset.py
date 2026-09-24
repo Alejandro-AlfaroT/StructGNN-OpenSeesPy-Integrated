@@ -51,7 +51,7 @@ RANGES = {
     "num_bay_x": tuple(range(2, 7)),
     "num_bay_y": tuple(range(2, 7)),
     "num_floor": tuple(range(4, 10)),
-    "story_height_ft": tuple(range(10, 15)),
+    "story_height_ft": tuple(range(12, 17)),  # 12–16 ft inclusive, in 1 ft steps.
     "bay_x_width_ft": tuple(range(10, 16)),
     "bay_y_width_ft": tuple(range(10, 16)),
 }

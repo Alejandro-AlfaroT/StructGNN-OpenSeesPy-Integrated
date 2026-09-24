@@ -4,12 +4,17 @@ import openseespy.opensees as ops
 
 import Structure_Parameters as sp
 from Model.IMK_Calibration import (
+    BOND_SLIP_INDICATOR,
     backbone_for_member,
     column_axial_domain,
     column_gravity_axial,
     column_grid_position,
     column_moment_at_axial,
     column_pm_nominal,
+)
+from Model.IMK_Materials import (
+    MAPPING_VERSION, CyclicParameters, RotationalBackbone, define_rotational_imk,
+    define_mapped_rotational_imk, validate_energy_calibration,
 )
 
 
@@ -89,14 +94,19 @@ def beam_yield_moments(member_type, n_i, n_j):
     from Design.SMRF_Beam_Slab_Strength import (composite_beam_strengths, beam_family,
                                                 perimeter_slab_bar_anchorage, exterior_ends)
     xi, yi, _ = ops.nodeCoord(n_i)
+    xj, yj, _ = ops.nodeCoord(n_j)
     if member_type == "beam_x":
         line = int(round(yi / sp.BAY_Y)) if sp.BAY_Y > 0 else 0
-        span = int(round(xi / sp.BAY_X)) if sp.BAY_X > 0 else 0
+        span = int(round(min(xi, xj) / sp.BAY_X)) if sp.BAY_X > 0 else 0
+        reversed_connectivity = xj < xi
     else:
         line = int(round(xi / sp.BAY_X)) if sp.BAY_X > 0 else 0
-        span = int(round(yi / sp.BAY_Y)) if sp.BAY_Y > 0 else 0
+        span = int(round(min(yi, yj) / sp.BAY_Y)) if sp.BAY_Y > 0 else 0
+        reversed_connectivity = yj < yi
     axis, position = beam_family(member_type, line, sp.NUM_BAY_X, sp.NUM_BAY_Y)
     exterior = exterior_ends(member_type, span, sp.NUM_BAY_X, sp.NUM_BAY_Y)
+    if reversed_connectivity:
+        exterior = {"i": exterior["j"], "j": exterior["i"]}
     layout = (sp.SLAB_REINFORCEMENT or {}).get("layout")
     beam = {"b_in": sp.B_BEAM, "h_in": sp.H_BEAM, "fc_ksi": sp.FC_BEAM_KSI, "fy_ksi": sp.FY_KSI,
             "bar_size": sp.BEAM_BAR_SIZE, "top_bars": sp.BEAM_TOP_BARS, "bot_bars": sp.BEAM_BOT_BARS,
@@ -324,58 +334,52 @@ def _orientation(member_type):
 
 
 def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment, backbone=None,
-                              yield_moment_negative=None):
-    """
-    Define OpenSees IMKBilin using the current OpenSees argument order:
+                              yield_moment_negative=None, *, energy_calibration=None,
+                              reverse_physical=False, physical_directions=("section_positive", "section_negative"),
+                              verification_only=False, spring_context=None):
+    """Install a member material with its explicit, modern OpenSees signature.
 
-        Ke, dp_pos, dpc_pos, du_pos, Fy_pos, FmaxFy_pos, FresFy_pos,
-        dp_neg, dpc_neg, du_neg, Fy_neg, FmaxFy_neg, FresFy_neg,
-        Lamda_S, Lamda_C, Lamda_K, c_S, c_C, c_K, D_pos, D_neg
-
-    All positive/negative-direction backbone parameters are passed as positive
-    values, matching the OpenSees IMKBilin documentation. ``yield_moment`` is
-    the positive-deformation strength; ``yield_moment_negative`` (default:
-    the same) the negative-deformation strength.
+    The historical function name is retained for callers. Only Bilin and
+    PeakOriented are member options; a joint Pinching spring requires its own
+    topology and calibration. Legacy calls pass Lamda unchanged. The corrected
+    path derives every Lamda from an explicit reviewed reference energy.
     """
+    material_type = sp.IMK_MATERIAL_TYPE
+    if material_type not in ("IMKBilin", "IMKPeakOriented"):
+        raise ValueError("Member flexure requires IMKBilin or IMKPeakOriented; calibrate joint IMKPinching separately")
     if yield_moment_negative is None:
         yield_moment_negative = yield_moment
 
-    # Rotation capacities come from the per-member backbone when one is
-    # supplied. Falling back to the globals keeps the uncalibrated path usable.
-    theta_p = backbone["theta_p"] if backbone else sp.IMK_THETA_P_POS
-    theta_pc = backbone["theta_pc"] if backbone else sp.IMK_THETA_PC_POS
-    theta_u = backbone["theta_u"] if backbone else sp.IMK_THETA_U_POS
+    def branch(sign, strength):
+        def rotation(key):
+            if backbone:
+                return backbone.get(f"{key}_{sign.lower()}", backbone[key])
+            return getattr(sp, f"IMK_{key.upper()}_{sign}")
+        return RotationalBackbone(rotation("theta_p"), rotation("theta_pc"), rotation("theta_u"), strength,
+                                  getattr(sp, f"IMK_FMAXFY_{sign}"), getattr(sp, f"IMK_FRESFY_{sign}"))
 
-    fmaxfy_pos = getattr(sp, "IMK_FMAXFY_POS", 1.10)
-    fmaxfy_neg = getattr(sp, "IMK_FMAXFY_NEG", 1.10)
-    fresfy_pos = getattr(sp, "IMK_FRESFY_POS", sp.IMK_RES_POS)
-    fresfy_neg = getattr(sp, "IMK_FRESFY_NEG", sp.IMK_RES_NEG)
-
-    ops.uniaxialMaterial(
-        sp.IMK_MATERIAL_TYPE,
-        mat_tag,
-        elastic_stiffness,
-        theta_p,
-        theta_pc,
-        theta_u,
-        yield_moment,
-        fmaxfy_pos,
-        fresfy_pos,
-        theta_p,
-        theta_pc,
-        theta_u,
-        yield_moment_negative,
-        fmaxfy_neg,
-        fresfy_neg,
-        sp.IMK_LAMBDA_S,
-        sp.IMK_LAMBDA_C,
-        sp.IMK_LAMBDA_K,
-        sp.IMK_C_S,
-        sp.IMK_C_C,
-        sp.IMK_C_K,
-        sp.IMK_D_POS,
-        sp.IMK_D_NEG,
+    cyclic = CyclicParameters(
+        lamda_s=sp.IMK_LAMBDA_S, lamda_c=sp.IMK_LAMBDA_C, lamda_k=sp.IMK_LAMBDA_K,
+        c_s=sp.IMK_C_S, c_c=sp.IMK_C_C, c_k=sp.IMK_C_K, d_pos=sp.IMK_D_POS, d_neg=sp.IMK_D_NEG,
+        lamda_a=sp.IMK_LAMBDA_A if material_type == "IMKPeakOriented" else None,
+        c_a=sp.IMK_C_A if material_type == "IMKPeakOriented" else None,
+        energy_convention=sp.IMK_ENERGY_CONVENTION,
     )
+    provenance = {"calibration_id": sp.IMK_CYCLIC_CALIBRATION_ID,
+                    "status": sp.IMK_CYCLIC_CALIBRATION_STATUS,
+                    "backbone_source": (backbone or {}).get("source", "fixed"),
+                    "deformation_scope": "member_end_spring; joint_slip_partition_not_validated",
+                    "bond_slip_indicator": BOND_SLIP_INDICATOR}
+    if spring_context is not None:
+        provenance["spring_context"] = spring_context
+    args = (material_type, mat_tag, elastic_stiffness, branch("POS", yield_moment),
+            branch("NEG", yield_moment_negative), cyclic)
+    if energy_calibration is not None:
+        return define_mapped_rotational_imk(*args, calibration=energy_calibration,
+            reverse=reverse_physical, physical_directions=physical_directions,
+            provenance=provenance, verification_only=verification_only)
+    provenance["energy_mapping_status"] = "legacy_unmapped"
+    return define_rotational_imk(*args, provenance=provenance)
 
 
 def _create_hinge_node(source_node, hinge_node):
@@ -383,7 +387,8 @@ def _create_hinge_node(source_node, hinge_node):
 
 
 def _create_end_hinge(
-    ele_tag, end_id, retained_node, hinge_node, member_type, props, length, backbone=None
+    ele_tag, end_id, retained_node, hinge_node, member_type, props, length, backbone=None,
+    *, energy_profiles=None, reverse_physical=False, verification_only=False
 ):
     orient, tied_dofs = _orientation(member_type)
     for dof in tied_dofs:
@@ -393,6 +398,16 @@ def _create_end_hinge(
     mat_z = imk_material_tag(ele_tag, end_id, 6)
     ke_y = imk_hinge_stiffness(member_type, "rot_y", length)
     ke_z = imk_hinge_stiffness(member_type, "rot_z", length)
+    global_axes = {"column": ((1, 0, 0), (0, 1, 0)),
+                   "beam_x": ((0, 1, 0), (0, 0, 1)),
+                   "beam_y": ((-1, 0, 0), (0, 0, 1))}[member_type]
+    contexts = [{"physical_member_tag": int(ele_tag), "end": "i" if end_id == 1 else "j",
+                 "member_type": member_type, "spring_local_direction": direction,
+                 "global_rotation_axis": vector, "zero_length_orientation": orient,
+                 "retained_joint_node": int(retained_node), "member_hinge_node": int(hinge_node),
+                 "rotation_definition": "hinge-node rotation minus retained-joint rotation projected on spring axis",
+                 "tied_global_dofs": tied_dofs}
+                for direction, vector in zip((5, 6), global_axes)]
 
     # Beam hinges are asymmetric. Measured on the zeroLength springs; hogging is POSITIVE spring
     # deformation at end i and NEGATIVE at end j, for beam_x and beam_y alike.
@@ -405,8 +420,19 @@ def _create_end_hinge(
         positive, negative = hogging, sagging
     else:
         positive, negative = sagging, hogging
-    _define_imk_peak_material(mat_y, ke_y, positive, backbone, negative)
-    _define_imk_peak_material(mat_z, ke_z, props["mz"], backbone)
+    if energy_profiles is None:
+        material_y = _define_imk_peak_material(mat_y, ke_y, positive, backbone, negative, spring_context=contexts[0])
+        material_z = _define_imk_peak_material(mat_z, ke_z, props["mz"], backbone, spring_context=contexts[1])
+    else:
+        directions_y = (("hogging", "sagging") if member_type.startswith("beam")
+                        else ("section_positive_y", "section_negative_y"))
+        material_y = _define_imk_peak_material(mat_y, ke_y, hogging, backbone, sagging,
+            energy_calibration=energy_profiles["y"], reverse_physical=reverse_physical,
+            physical_directions=directions_y, verification_only=verification_only, spring_context=contexts[0])
+        material_z = _define_imk_peak_material(mat_z, ke_z, props["mz"], backbone,
+            energy_calibration=energy_profiles["z"], reverse_physical=reverse_physical,
+            physical_directions=("section_positive_z", "section_negative_z"),
+            verification_only=verification_only, spring_context=contexts[1])
 
     ops.element(
         "zeroLength",
@@ -422,15 +448,52 @@ def _create_end_hinge(
         "-orient",
         *orient,
     )
+    return {"y": material_y, "z": material_z}
 
 
-def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
+def _member_energy_profiles(ele_tag, verification_profiles=None):
+    mode = getattr(sp, "IMK_ENERGY_MAPPING_MODE", "legacy_unmapped")
+    if verification_profiles is not None:
+        if mode != MAPPING_VERSION:
+            raise ValueError("Synthetic member fixtures require explicit corrected mapping mode")
+        profiles = verification_profiles
+    elif mode == "legacy_unmapped":
+        return None
+    elif mode == MAPPING_VERSION:
+        profiles = sp.IMK_MEMBER_ENERGY_CALIBRATIONS.get(str(ele_tag))
+    else:
+        raise ValueError(f"Unknown IMK energy mapping mode: {mode}")
+    if not isinstance(profiles, dict) or set(profiles) != {"i", "j"}:
+        raise ValueError(f"Member {ele_tag} requires explicit energy profiles for ends i and j")
+    validated = {}
+    for end in ("i", "j"):
+        if not isinstance(profiles[end], dict) or set(profiles[end]) != {"y", "z"}:
+            raise ValueError(f"Member {ele_tag}/{end} requires energy profiles for axes y and z")
+        validated[end] = {axis: validate_energy_calibration(profiles[end][axis], sp.IMK_MATERIAL_TYPE,
+                           verification_only=verification_profiles is not None) for axis in ("y", "z")}
+    return validated
+
+
+def _canonical_member_reversed(n_i, n_j, member_type):
+    axis = {"beam_x": 0, "beam_y": 1, "column": 2}[member_type]
+    delta = [b - a for a, b in zip(ops.nodeCoord(n_i), ops.nodeCoord(n_j))]
+    if abs(delta[axis]) <= 1e-9 or any(abs(d) > 1e-9 for k, d in enumerate(delta) if k != axis):
+        raise ValueError("Corrected member mapping currently requires axis-aligned physical members")
+    return delta[axis] < 0
+
+
+def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag, *, _verification_calibrations=None):
+    # Validate all four profiles before mutating the OpenSees domain. Normal
+    # builders never pass the private synthetic-fixture argument.
+    energy_profiles = _member_energy_profiles(ele_tag, _verification_calibrations)
+    reverse_connectivity = (_canonical_member_reversed(n_i, n_j, member_type)
+                            if energy_profiles is not None else False)
     # A column's backbone depends on how hard it is being squeezed, so the
     # gravity axial load is estimated from tributary area before its hinge
     # properties are fixed. Beams carry no meaningful axial force.
     axial_kip = 0.0
     if member_type == "column":
-        story_index, grid_i, grid_j = column_grid_position(n_i)
+        story_index, grid_i, grid_j = column_grid_position(n_j if reverse_connectivity else n_i)
         axial_kip = column_gravity_axial(story_index, grid_i, grid_j)
 
     family = beam_line_family(member_type, n_i) if member_type in ("beam_x", "beam_y") else None
@@ -450,12 +513,20 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag):
 
     _create_hinge_node(n_i, i_hinge_node)
     _create_hinge_node(n_j, j_hinge_node)
-    _create_end_hinge(ele_tag, 1, n_i, i_hinge_node, member_type, props, length, backbone)
-    _create_end_hinge(ele_tag, 2, n_j, j_hinge_node, member_type, props, length, backbone)
+    materials_i = _create_end_hinge(ele_tag, 1, n_i, i_hinge_node, member_type, props, length, backbone,
+        energy_profiles=None if energy_profiles is None else energy_profiles["i"],
+        reverse_physical=reverse_connectivity, verification_only=_verification_calibrations is not None)
+    materials_j = _create_end_hinge(ele_tag, 2, n_j, j_hinge_node, member_type, props, length, backbone,
+        energy_profiles=None if energy_profiles is None else energy_profiles["j"],
+        reverse_physical=not reverse_connectivity, verification_only=_verification_calibrations is not None)
 
     _HINGE_REGISTRY[int(ele_tag)] = {
         "ele_tag": int(ele_tag),
         "member_type": member_type,
+        "material_type": sp.IMK_MATERIAL_TYPE,
+        "energy_mapping_mode": getattr(sp, "IMK_ENERGY_MAPPING_MODE", "legacy_unmapped"),
+        "verification_only": _verification_calibrations is not None,
+        "installed_materials": {"i": materials_i, "j": materials_j},
         # The element spans the two hinge nodes, so ops.eleNodes reports those
         # rather than the structural joints. Anything assembling forces at
         # joints needs the physical end nodes recorded here.

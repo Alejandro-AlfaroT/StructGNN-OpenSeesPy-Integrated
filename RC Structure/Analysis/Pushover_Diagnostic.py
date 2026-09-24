@@ -267,6 +267,8 @@ def hinge_inventory(inventory):
                 fy_pos, fy_neg = (hog, sag) if end == "i" else (sag, hog)
                 fz = entry["yield_moment_z_kip_in"]
             hinges.append({"hinge_tag": hinge_element_tag(member["tag"], end_id), "member_tag": member["tag"], "member_type": kind,
+                           "material_type": entry.get("material_type", "IMKBilin"),
+                           "installed_materials": entry.get("installed_materials", {}).get(end, {}),
                            "end": end, "joint_node": member["node_i"] if end == "i" else member["node_j"],
                            "springs": {"y": {"index": 0, "fy_positive_kip_in": fy_pos, "fy_negative_kip_in": fy_neg, "ke": ke_y,
                                              "theta_y_positive": fy_pos / ke_y if ke_y > 0 else None,

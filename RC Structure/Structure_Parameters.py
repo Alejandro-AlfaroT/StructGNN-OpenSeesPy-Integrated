@@ -279,6 +279,18 @@ IMK_HINGE_ELEMENT_TAG_BASE = 4000000
 IMK_USE_CALIBRATED_BACKBONE = True
 
 IMK_MATERIAL_TYPE = "IMKBilin"
+# Baseline remains selectable during the material transition. PeakOriented
+# requires explicit A-mode inputs below; joint Pinching uses a separate adapter.
+IMK_ENERGY_CONVENTION = "opensees_ref_energy_equals_lamda_times_fy"
+IMK_CYCLIC_CALIBRATION_ID = "legacy_member_cyclic_defaults_v1"
+IMK_CYCLIC_CALIBRATION_STATUS = "provisional_not_experimentally_calibrated"
+# Corrected member mapping stays disabled until experimentally supported mode
+# energies are supplied and reviewed (user decision, 2026-09-24). No hogging,
+# average-strength or legacy-Lambda energy anchor is inferred.
+IMK_ENERGY_MAPPING_MODE = "legacy_unmapped"
+# Corrected mode: "explicit_reference_energy_v1". Profiles are keyed by string
+# physical element tag, then i/j, then y/z; each contains its own evidence.
+IMK_MEMBER_ENERGY_CALIBRATIONS = {}
 
 # IMK rotational spring stiffness calibration.
 #   "yield_rotation"          = Ke = My / theta_y_input
@@ -295,9 +307,15 @@ IMK_COLUMN_THETA_Y = 0.004
 IMK_LAMBDA_S = 10.0
 IMK_LAMBDA_C = 10.0
 IMK_LAMBDA_K = 10.0
+# All LAMBDA values are direct modern OpenSees inputs: E_ref = Lamda * My.
+# Their deformation coordinate is spring rotation (rad), not normalized drift.
+# No additional theta_y multiplier is applied. A-mode values are approved only
+# for the provisional diagnostic comparison (2026-09-22), not experimental fits.
+IMK_LAMBDA_A = 10.0
 IMK_C_S = 1.0
 IMK_C_C = 1.0
 IMK_C_K = 1.0
+IMK_C_A = 1.0
 IMK_THETA_P_POS = 0.020
 IMK_THETA_P_NEG = 0.020
 IMK_THETA_PC_POS = 0.060

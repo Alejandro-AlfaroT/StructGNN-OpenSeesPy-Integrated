@@ -50,9 +50,15 @@ class SlabAssertionTests(unittest.TestCase):
 
     def test_signed_evidence_retains_provenance_but_does_not_clear_independent_review(self):
         evidence = self.evidence(signed())
-        self.assertTrue(evidence["verified"])
+        self.assertTrue(evidence["assertion_provenance_valid"])
+        self.assertTrue(evidence["engineering_assertions"]["verified"])
+        # This single-panel fixture has a governing face shear in bottom
+        # tension. A signature cannot turn an unresolved top-row shear basis
+        # into valid design evidence.
+        self.assertFalse(evidence["shear_recovery"]["top_rows_recovered_at_face"])
+        self.assertFalse(evidence["verified"])
         checks = {c["id"]: c for c in evaluate_slab_actions(evidence)}
-        self.assertEqual(checks["floor.qualified_slab_actions"]["status"], "pass")
+        self.assertEqual(checks["floor.qualified_slab_actions"]["status"], "not_evaluated")
         self.assertEqual(checks["floor.independent_hand_verification"]["status"], "not_evaluated")
 
     def test_cached_true_flags_cannot_replace_missing_assertions(self):

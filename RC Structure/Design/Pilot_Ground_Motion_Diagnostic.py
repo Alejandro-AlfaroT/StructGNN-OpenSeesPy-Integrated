@@ -69,6 +69,8 @@ def main(argv=None):
     parser.add_argument("--x-only", action="store_true")
     parser.add_argument("--plot-limit", type=int, default=24)
     parser.add_argument("--label", default="")
+    parser.add_argument("--member-material", choices=("IMKBilin", "IMKPeakOriented"), default="IMKBilin",
+                        help="member flexural law; PeakOriented uses provisional diagnostic A-mode values 10 and 1")
     args = parser.parse_args(argv)
 
     import openseespy.opensees as ops
@@ -109,6 +111,19 @@ def main(argv=None):
         if not all(v["match"] for v in site_check.values()):
             raise RuntimeError(f"the named site entry does not reproduce the record's seismic values: {site_check}")
         driver.apply_design(record)
+        # An explicit diagnostic choice, never a mutation of the saved design.
+        sp.IMK_MATERIAL_TYPE = args.member_material
+        if args.member_material == "IMKPeakOriented":
+            sp.IMK_LAMBDA_A, sp.IMK_C_A = 10.0, 1.0
+            sp.IMK_CYCLIC_CALIBRATION_ID = "peak_oriented_diagnostic_defaults_20260922"
+            sp.IMK_CYCLIC_CALIBRATION_STATUS = "provisional_not_experimentally_calibrated"
+        manifest["member_material_profile"] = {
+            "material_type": sp.IMK_MATERIAL_TYPE, "energy_convention": sp.IMK_ENERGY_CONVENTION,
+            "calibration_id": sp.IMK_CYCLIC_CALIBRATION_ID, "status": sp.IMK_CYCLIC_CALIBRATION_STATUS,
+            "lamda_a": sp.IMK_LAMBDA_A if args.member_material == "IMKPeakOriented" else None,
+            "c_a": sp.IMK_C_A if args.member_material == "IMKPeakOriented" else None,
+            "joint_springs_installed": False,
+        }
         current_identity = driver.design_request_identity()
         record_identity = record.get("request_identity") or {}
         record_sources = record_identity.get("source_sha256") or {}

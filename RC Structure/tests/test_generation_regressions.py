@@ -855,6 +855,15 @@ class GenerationRegressionTests(unittest.TestCase):
             "peer_1__x_only__dtf_0p5",
         )
 
+    def test_output_identity_rejects_changed_imk_energy_parameters(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            current = collect_global_parameters()
+            (output_dir / "global_parameters.json").write_text(json.dumps(current), encoding="utf-8")
+            with mock.patch.object(sp, "IMK_LAMBDA_S", sp.IMK_LAMBDA_S * 2):
+                with self.assertRaisesRegex(RuntimeError, "imk_cyclic_parameters"):
+                    validate_ntha_output_compatibility(output_dir)
+
     def test_imk_material_definition_uses_documented_argument_order(self):
         # Regression guard: this call has previously shipped with a wrong
         # OpenSees IMKBilin argument order (a nonexistent "A" deterioration

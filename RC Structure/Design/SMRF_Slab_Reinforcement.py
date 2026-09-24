@@ -438,17 +438,20 @@ def design_slab_reinforcement(slab_inputs, demand_evidence, policy=None, context
     try:
         inputs, resolved_policy = _inputs(slab_inputs), _policy(policy)
         resolved_context = _context(context)
-        demands = _demands(demand_evidence, inputs)
         # Preserve immutable-by-copy, JSON-safe provenance in saved designs.
         # A caller changing its source dictionary must not silently change the
         # demand evidence underneath already-computed reinforcement capacities.
+        # Retain valid inputs even when demands are unverified. Otherwise the
+        # later audit replaces the actual verification gap with a misleading
+        # "missing slab inputs" error and cannot reproduce the rejected attempt.
         saved_evidence = json.loads(json.dumps(demand_evidence, allow_nan=False))
+        record["inputs"] = {"slab": inputs, "demand_evidence": saved_evidence, "policy": resolved_policy,
+                            "context": resolved_context}
+        demands = _demands(saved_evidence, inputs)
     except (ValueError, TypeError, OverflowError) as exc:
         checks = [not_evaluated("slab_verified_strip_action_inputs", "ACI 318-19 8.4 / Chapter 6",
                                 str(exc)), *_open_checks()]
         return {**record, "checks": checks, "summary": summarize_checks(checks)}
-    record["inputs"] = {"slab": inputs, "demand_evidence": saved_evidence, "policy": resolved_policy,
-                        "context": resolved_context}
     candidates = []
     for bar in resolved_policy["bar_sizes"]:
         diameter, _ = _BARS[bar]

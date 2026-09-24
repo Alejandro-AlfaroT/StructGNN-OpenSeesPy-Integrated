@@ -42,6 +42,10 @@ Measurement path
   that sign's Fy, both from the extrema) is kept beside it, as is the
   production one-sided peak-based plastic rotation of
   Ground_Motion_Main._hinge_backbone_rows; disagreements are flagged.
+  This path-aware decomposition is a legacy Bilin diagnostic, not a validated
+  plastic-rotation measure for peak-oriented or pinched reloading. For those
+  laws we report virgin-envelope exceedance and leave accumulated plastic
+  rotation unavailable. Reversal yielding below that envelope can be missed.
   Dissipated energy is the work integral less the change in stored
   elastic energy on Ke (an exact discrete identity: zero for an elastic
   spring on any open path). Capping / ultimate flags use the installed
@@ -60,7 +64,7 @@ import Structure_Parameters as sp
 from Analysis.Pushover_Diagnostic import element_inventory, hinge_inventory, model_audit
 from Model.IMK_Hinges import hinge_registry
 
-DIAGNOSTIC_VERSION = "hinge_hysteresis_diagnostic_v2_path_aware_yield"
+DIAGNOSTIC_VERSION = "hinge_hysteresis_diagnostic_v3_material_aware"
 SPRING_MATERIAL_INDEX = {"y": 1, "z": 2}
 RECORDER_PRECISION = 12
 YIELD_MOMENT_TOLERANCE = 1e-3      # virgin backbone: peak |M| >= (1 - tol) Fy of that sign
@@ -239,7 +243,7 @@ def attach_hinge_recorders(output_dir, hinges):
             "columns": "time, then (moment kip-in, rotation rad) per hinge in hinge_tag_order",
             "precision_digits": RECORDER_PRECISION, "material_index": dict(SPRING_MATERIAL_INDEX),
             "rows": "one per committed analysis step, including recovery sub-steps; align by time",
-            "spring_frame": "spring's own conjugate pair (IMKBilin stress = moment, strain = rotation); no element-end negation"}
+            "spring_frame": "spring's own conjugate pair (IMK stress = moment, strain = rotation); no element-end negation"}
 
 
 def close_recorders():
@@ -322,8 +326,11 @@ def evaluate_hinge_histories(recorded, hinges, moment_tolerance=YIELD_MOMENT_TOL
                              plastic_tolerance=PLASTIC_ROTATION_TOLERANCE):
     """Per hinge and spring axis: full-rate extrema, path-aware and virgin-backbone yield calls per sign, plastic rotation, energy.
 
-    Field families: ``yielded*`` and ``plastic_rotation_*_accumulated`` are
-    the path-aware (tangent) call; ``virgin_yield_*`` are the
+    For Bilin, ``yielded*`` and ``plastic_rotation_*_accumulated`` use the
+    legacy path-aware tangent proxy. For PeakOriented/Pinching, ``yielded*``
+    reports virgin-envelope exceedance and accumulated plastic quantities
+    are None. These are diagnostics, not internal material state variables.
+    ``virgin_yield_*`` are the
     origin-referenced criteria on the extrema; ``plastic_rotation_peak*``
     is the production one-sided measure (peak rotation less that sign's
     elastic limit, Ground_Motion_Main._hinge_backbone_rows);
@@ -335,6 +342,10 @@ def evaluate_hinge_histories(recorded, hinges, moment_tolerance=YIELD_MOMENT_TOL
     index_of = {int(tag): k for k, tag in enumerate(recorded["hinge_tag_order"])}
     rows = []
     for h in hinges:
+        material_type = h.get("material_type", "IMKBilin")  # compatibility with historical inventories
+        if material_type not in ("IMKBilin", "IMKPeakOriented", "IMKPinching"):
+            raise ValueError(f"Unsupported hinge diagnostic material {material_type!r}")
+        use_bilin_path = material_type == "IMKBilin"
         k = index_of[int(h["hinge_tag"])]
         for axis in ("y", "z"):
             block = recorded.get(axis)
@@ -344,6 +355,11 @@ def evaluate_hinge_histories(recorded, hinges, moment_tolerance=YIELD_MOMENT_TOL
             fy_pos, fy_neg, ke = spring["fy_positive_kip_in"], spring["fy_negative_kip_in"], spring["ke"]
             ty_pos, ty_neg = spring["theta_y_positive"], spring["theta_y_negative"]
             base = {"hinge_tag": int(h["hinge_tag"]), "member_tag": h["member_tag"], "member_type": h["member_type"], "end": h["end"],
+                    "material_type": material_type,
+                    "installed_material": h.get("installed_materials", {}).get(axis),
+                    "yield_detection_basis": "legacy_bilin_tangent_proxy" if use_bilin_path else "virgin_envelope_exceedance",
+                    "accumulated_plastic_rotation_available": use_bilin_path,
+                    "energy_measure": "work_minus_initial_Ke_storage_estimate",
                     "spring_axis": axis, "beam_family": h.get("beam_family"), "joint_node": h["joint_node"],
                     "fy_positive_kip_in": fy_pos, "fy_negative_kip_in": fy_neg, "ke_kip_in_per_rad": ke,
                     "theta_y_positive": ty_pos, "theta_y_negative": ty_neg,
@@ -362,14 +378,20 @@ def evaluate_hinge_histories(recorded, hinges, moment_tolerance=YIELD_MOMENT_TOL
             v_pos_mom = fy_pos > 0 and max_m >= (1.0 - moment_tolerance) * fy_pos
             v_neg_mom = fy_neg > 0 and -min_m >= (1.0 - moment_tolerance) * fy_neg
             virgin_yielded = bool((v_pos_rot and v_pos_mom) or (v_neg_rot and v_neg_mom))
-            # Path-aware (kinematic) call from the plastic increments.
-            increments, plastic_mask = plastic_increments(moment, rotation, ke)
-            acc_pos = float(increments[increments > 0].sum())
-            acc_neg = float(-increments[increments < 0].sum())
-            yielded_pos = acc_pos > plastic_tolerance
-            yielded_neg = acc_neg > plastic_tolerance
+            # A reduced reloading tangent in PeakOriented/Pinching is not
+            # evidence of a separable plastic-rotation increment. Preserve
+            # missing values rather than mislabeling this contribution.
+            acc_pos = acc_neg = first_plastic = plastic_steps = None
+            if use_bilin_path:
+                increments, plastic_mask = plastic_increments(moment, rotation, ke)
+                acc_pos = float(increments[increments > 0].sum())
+                acc_neg = float(-increments[increments < 0].sum())
+                plastic_steps = int(plastic_mask.sum())
+                first_plastic = int(np.argmax(plastic_mask)) + 1 if plastic_mask.any() else None
+                yielded_pos, yielded_neg = acc_pos > plastic_tolerance, acc_neg > plastic_tolerance
+            else:
+                yielded_pos, yielded_neg = bool(v_pos_rot and v_pos_mom), bool(v_neg_rot and v_neg_mom)
             yielded = yielded_pos or yielded_neg
-            first_plastic = int(np.argmax(plastic_mask)) + 1 if plastic_mask.any() else None
             # Production one-sided peak measure.
             peak_pos = max(0.0, max_rot - (ty_pos or 0.0))
             peak_neg = max(0.0, -min_rot - (ty_neg or 0.0))
@@ -382,12 +404,12 @@ def evaluate_hinge_histories(recorded, hinges, moment_tolerance=YIELD_MOMENT_TOL
                 "moment_at_rotation_max_kip_in": float(moment[i_max_rot]), "moment_at_rotation_min_kip_in": float(moment[i_min_rot]),
                 "yielded": bool(yielded), "yielded_positive": bool(yielded_pos), "yielded_negative": bool(yielded_neg),
                 "plastic_rotation_positive_accumulated": acc_pos, "plastic_rotation_negative_accumulated": acc_neg,
-                "plastic_rotation_accumulated": acc_pos + acc_neg, "plastic_steps": int(plastic_mask.sum()),
+                "plastic_rotation_accumulated": acc_pos + acc_neg if use_bilin_path else None, "plastic_steps": plastic_steps,
                 "time_of_first_plastic_step": float(block["time"][first_plastic]) if first_plastic is not None else None,
                 "virgin_yield_positive_by_rotation": bool(v_pos_rot), "virgin_yield_positive_by_moment": bool(v_pos_mom),
                 "virgin_yield_negative_by_rotation": bool(v_neg_rot), "virgin_yield_negative_by_moment": bool(v_neg_mom),
                 "virgin_yielded": virgin_yielded,
-                "criteria_disagree": bool(virgin_yielded != yielded),
+                "criteria_disagree": bool(virgin_yielded != yielded) if use_bilin_path else None,
                 "plastic_rotation_peak_positive": peak_pos, "plastic_rotation_peak_negative": peak_neg, "plastic_rotation_peak": peak,
                 "plastic_rotation": peak,
                 "spring_rotation_over_elastic_limit_positive": (max_rot / ty_pos) if ty_pos else None,
@@ -412,7 +434,7 @@ def yield_summary(rows):
         entry["springs"] += 1
         entry["yielded"] += int(r["yielded"])
         entry["yielded_both_signs"] += int(r["yielded_positive"] and r["yielded_negative"])
-        entry["criteria_disagree"] += int(r["criteria_disagree"])
+        entry["criteria_disagree"] += int(bool(r["criteria_disagree"]))
         entry["past_capping"] += int(r["past_capping"])
     return {"springs": len(rows), "springs_with_response": len(present), "springs_missing_response": len(missing),
             "yielded_springs": len(yielded),
@@ -421,7 +443,10 @@ def yield_summary(rows):
             "yielded_both_signs": sum(1 for r in yielded if r["yielded_positive"] and r["yielded_negative"]),
             "by_type": by_type,
             "max_plastic_rotation_peak": max((r["plastic_rotation_peak"] for r in present), default=0.0),
-            "max_plastic_rotation_accumulated": max((r["plastic_rotation_accumulated"] for r in present), default=0.0),
+            "max_plastic_rotation_accumulated": max((r["plastic_rotation_accumulated"] for r in present
+                                                     if r["plastic_rotation_accumulated"] is not None), default=None),
+            "springs_with_accumulated_plastic_rotation": sum(r["plastic_rotation_accumulated"] is not None for r in present),
+            "yield_detection_bases": sorted({r.get("yield_detection_basis", "legacy_bilin_tangent_proxy") for r in present}),
             "max_damage_ratio": max((r["damage_ratio"] or 0.0 for r in present), default=0.0),
             "max_spring_rotation_over_elastic_limit": max((max(r["spring_rotation_over_elastic_limit_positive"] or 0.0,
                                                                r["spring_rotation_over_elastic_limit_negative"] or 0.0) for r in present), default=0.0),
@@ -431,7 +456,9 @@ def yield_summary(rows):
                                              f"being those with tangent < {PLASTIC_TANGENT_FRACTION:g} Ke (dtheta - dM/Ke)",
                                "virgin_rotation": f"peak |theta| > (1 + {YIELD_ROTATION_TOLERANCE:g}) Fy/Ke of that sign",
                                "virgin_moment": f"peak |M| >= (1 - {YIELD_MOMENT_TOLERANCE:g}) Fy of that sign",
-                               "yielded": "path-aware call; virgin_yielded (both virgin criteria in one sign) reported beside it",
+                               "yielded": "Bilin: legacy tangent proxy. PeakOriented/Pinching: virgin-envelope exceedance; "
+                                          "may miss reversal yielding below the original envelope; not an internal material-state query",
+                               "energy": "work minus initial-Ke elastic-storage estimate; raw work integral also reported",
                                "plastic_rotation": "peak-based one-sided measure (production definition); accumulated values beside it",
                                "spring_rotation_over_elastic_limit": "spring-level ratio; the spring is IMK_HINGE_STIFFNESS_FACTOR x the member "
                                                                      "stiffness, so this is not a member ductility"}}
@@ -516,11 +543,16 @@ def _loop_title(r, detail=True):
             f"{' (' + r['beam_family'] + ')' if r['beam_family'] else ''}")
     if not detail:
         return head
-    line2 = (f"rotation {100 * r['rotation_min']:+.2f}% to {100 * r['rotation_max']:+.2f}%   plastic peak {r['plastic_rotation_peak']:.4f} rad, "
-             f"accumulated {r['plastic_rotation_accumulated']:.4f} rad")
-    line3 = (f"dissipated energy {max(r['dissipated_energy_kip_in'], 0.0):.0f} kip-in   "
+    line2 = (f"rotation {100 * r['rotation_min']:+.2f}% to {100 * r['rotation_max']:+.2f}%   "
+             f"peak beyond elastic limit {r['plastic_rotation_peak']:.4f} rad; {_accumulated_label(r)}")
+    line3 = (f"energy estimate {r['dissipated_energy_kip_in']:.0f} kip-in   "
              f"capping at {100 * ((r['theta_y_positive'] or 0.0) + r['theta_p']):.1f}% (damage {r['damage_ratio'] if r['damage_ratio'] is not None else 0:.2f})")
     return "\n".join([head, line2, line3])
+
+
+def _accumulated_label(row):
+    value = row["plastic_rotation_accumulated"]
+    return "accumulated plastic rotation unavailable" if value is None else f"accumulated {value:.4f} rad"
 
 
 def plot_hinge_loops(recorded, hinges, rows, output_dir, limit=24, only_yielded=True):
@@ -594,8 +626,8 @@ def plot_selected_loops(recorded, rows, selection, output_dir, name):
         block = recorded[r["spring_axis"]]
         _loop_axis(ax, r, block["rotation"][:, k], block["moment"][:, k],
                    _loop_title(r, detail=False) + "\n" +
-                   f"Fy +{r['fy_positive_kip_in']:.0f} / -{r['fy_negative_kip_in']:.0f} kip-in; plastic peak "
-                   f"{r['plastic_rotation_peak']:.4f}, accumulated {r['plastic_rotation_accumulated']:.4f} rad", fontsize=9, legend=(ax is axes.flat[0]))
+                   f"Fy +{r['fy_positive_kip_in']:.0f} / -{r['fy_negative_kip_in']:.0f} kip-in; peak beyond elastic limit "
+                   f"{r['plastic_rotation_peak']:.4f} rad; {_accumulated_label(r)}", fontsize=9, legend=(ax is axes.flat[0]))
     figure.tight_layout()
     path = Path(output_dir) / name
     figure.savefig(path, dpi=140)

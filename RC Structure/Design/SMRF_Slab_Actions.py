@@ -3,7 +3,7 @@
 Produces the ``demand_evidence`` that ``SMRF_Slab_Reinforcement`` requires:
 one row per (panel, bar axis, face) with the governing factored moment and
 support-face shear per foot, resolved for twisting, enveloped over every
-Gauss point in the panel that lies outside the beam widths, every factored
+Gauss point outside the beam widths and recovered physical-face sample, every factored
 combination and every required live-load pattern, on one common floor that
 represents all floors.
 
@@ -17,12 +17,10 @@ all-panel case (6.4.3.3(b) and (c)).
 Twisting is resolved with the Wood-Armer rules for orthogonal x/y
 reinforcement, using the floor model's sagging-positive mx, my and raw mxy.
 Shear rows: the top-face (support) row carries the transverse shear
-recovered AT the beam face -- in the element row adjacent to each support
-line the two Gauss points that share a transverse coordinate are
-interpolated/extrapolated linearly to the face position (centerline +/- half
-the beam width), row by row and for both supports of the strip, and the
-maximum is kept; the tension face there is verified from the twisting-
-resolved top demand at the nearest point. The bottom-face row carries the
+recovered AT the beam face in its owning element on the clear-span side.
+The raw moment/shear tensor is recovered before Wood-Armer, and the tension
+face is checked at that same location. Separate element-side results are
+retained at transverse boundaries. The bottom-face row carries the
 maximum shear in the pure sagging zone (Wood-Armer bottom demand positive,
 top demand zero), which is where the bottom mat is the longitudinal tension
 steel the one-way shear strength relies on.
@@ -42,10 +40,11 @@ import json
 import math
 
 from Design.SMRF_Floor_Analysis import analyze_floor, transfer_mesh_per_bay
+from Design.SMRF_Slab_Recovery import recover_panel_faces, METHOD_VERSION as FACE_RECOVERY_VERSION
 from Design.SMRF_Slab_Reinforcement import slab_input_signature
 from Design.SMRF_Common import make_check, not_evaluated, assertion_provenance_valid
 
-METHOD_VERSION = "smrf_slab_actions_wood_armer_face_shear_v2"
+METHOD_VERSION = "smrf_slab_actions_wood_armer_physical_faces_v3"
 PATTERN_LIVE_FRACTION = 0.75
 PATTERN_RULE_ALL = "ACI 318-19 6.4.3.3(a): L <= 0.75 D, full factored live load on all panels governs"
 PATTERN_RULE_PARTIAL = ("ACI 318-19 6.4.3.3(b)/(c): 3/4 factored live load on alternate panels and on the "
@@ -138,6 +137,7 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
     envelope = {}   # (panel_id, axis, face) -> {"mu", "vu", "location"}
     max_membrane = 0.0
     equilibrium = []
+    face_coverage = []
     for case in cases:
         result = analyze_floor(slab_record, geometry, sections, case, mesh_per_bay=mesh,
                                support_model="flexible_beams")
@@ -145,10 +145,9 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
             raise RuntimeError(f"Slab action case {case['id']} failed: status {result['status']}.")
         max_membrane = max(max_membrane, result["max_abs_membrane_kip_per_in"])
         equilibrium.append({"case_id": case["id"], **result["equilibrium"]})
-        dx, dy = lx / mesh, ly / mesh
         for panel in result["panels"]:
-            pi, pj = panel["i"], panel["j"]
             points = panel["gauss_point_resultants"]
+            clear_points = []
             # Moments: Wood-Armer envelope over the points outside the beam widths.
             for point in points:
                 x, y = point["x_in"], point["y_in"]
@@ -157,7 +156,7 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
                 if to_x_line < half_beam or to_y_line < half_beam:
                     continue        # over a beam; not a slab strip section
                 bx, by, tx, ty = wood_armer(point["mx"], point["my"], point["mxy_raw"])
-                point["_wa"] = (bx, by, tx, ty)
+                clear_points.append((point, (bx, by, tx, ty)))
                 for (axis, face), moment in ((("x", "bottom"), bx), (("y", "bottom"), by),
                                              (("x", "top"), tx), (("y", "top"), ty)):
                     key = (panel["panel_id"], axis, face)
@@ -167,52 +166,44 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
                     if mu > entry["mu"]:
                         entry.update(mu=mu, mu_location={"case_id": case["id"], "x_in": x, "y_in": y,
                                                          "element": point["element"], "gauss_point": point["gauss_point"]})
-            # Shear at the support faces, from the element row adjacent to each support line.
-            by_element = {}
-            for point in points:
-                by_element.setdefault(point["element"], {})[point["gauss_point"]] = point
+            # Recover the raw tensor in the cell containing each physical face.
+            # Preserve GP extrema and also sample the faces; do not average away
+            # local peaks or use a nearest GP to infer the face's tension side.
+            recovered = recover_panel_faces(panel, geometry, sections["b_beam_in"])
+            face_coverage.append({"case_id": case["id"], "panel_id": panel["panel_id"],
+                                  "faces": recovered["coverage"], "complete": recovered["complete"]})
+            for sample in recovered["samples"]:
+                raw = sample["raw_resultants"]
+                wa = wood_armer(raw["mx"], raw["my"], raw["mxy_raw"])
+                location = {"case_id": case["id"], **sample, "recovery_method": FACE_RECOVERY_VERSION}
+                for (moment_axis, face), moment in zip(
+                        (("x", "bottom"), ("y", "bottom"), ("x", "top"), ("y", "top")), wa):
+                    key = (panel["panel_id"], moment_axis, face)
+                    entry = envelope.setdefault(key, {"mu": 0.0, "vu": 0.0, "mu_location": None, "vu_location": None,
+                                                      "shear_basis": None, "tension_face_verified": True})
+                    if 12.0 * moment > entry["mu"]:
+                        entry.update(mu=12.0 * moment, mu_location=location)
+                axis = sample["axis"]
+                entry = envelope[(panel["panel_id"], axis, "top")]
+                top_demand = wa[2 if axis == "x" else 3]
+                vu = 12.0 * abs(raw["qx_raw" if axis == "x" else "qy_raw"])
+                # Retain zero-shear coverage too; a missing sample and a true
+                # zero are different. A governing non-top tension face remains
+                # unresolved rather than being assigned bottom steel implicitly.
+                valid_tension_face = top_demand > 0.0 or vu == 0.0
+                tied = math.isclose(vu, entry["vu"], rel_tol=1e-12, abs_tol=0.0)
+                if entry["shear_basis"] is None or (vu > entry["vu"] and not tied) or (tied and not valid_tension_face):
+                    entry.update(vu=max(vu, entry["vu"]), shear_basis="raw tensor recovery in the physical face's clear-span cell",
+                                 tension_face_verified=valid_tension_face,
+                                 vu_location={**location, "top_demand_at_face_kip_in_per_in": top_demand})
+                elif tied:
+                    entry["vu"] = max(vu, entry["vu"])
             for axis in ("x", "y"):
-                key = (panel["panel_id"], axis, "top")
-                entry = envelope.setdefault(key, {"mu": 0.0, "vu": 0.0, "mu_location": None, "vu_location": None,
-                                                  "shear_basis": None, "tension_face_verified": True})
-                for element, gps in by_element.items():
-                    if len(gps) != 4:
-                        continue
-                    cell_i = int(math.floor(gps[1]["x_in"] / dx)); cell_j = int(math.floor(gps[1]["y_in"] / dy))
-                    if axis == "x":
-                        # supports are the y-lines at x = pi*lx and (pi+1)*lx; strips span x
-                        pairs = [((gps[1], gps[2]), "x_in", "qx_raw", 2), ((gps[4], gps[3]), "x_in", "qx_raw", 3)]
-                        left_cell, right_cell = cell_i == pi * mesh, cell_i == (pi + 1) * mesh - 1
-                        faces = ([pi * lx + half_beam] if left_cell else []) + ([(pi + 1) * lx - half_beam] if right_cell else [])
-                        tension_index = 2
-                    else:
-                        pairs = [((gps[1], gps[4]), "y_in", "qy_raw", 1), ((gps[2], gps[3]), "y_in", "qy_raw", 1)]
-                        left_cell, right_cell = cell_j == pj * mesh, cell_j == (pj + 1) * mesh - 1
-                        faces = ([pj * ly + half_beam] if left_cell else []) + ([(pj + 1) * ly - half_beam] if right_cell else [])
-                        tension_index = 3
-                    for face_position in faces:
-                        for (a, b), coordinate, shear_key, _ in pairs:
-                            x1, x2 = a[coordinate], b[coordinate]
-                            q1, q2 = a[shear_key], b[shear_key]
-                            q_face = q1 + (q2 - q1) * (face_position - x1) / (x2 - x1)
-                            nearest = a if abs(x1 - face_position) <= abs(x2 - face_position) else b
-                            top_demand = nearest.get("_wa", (0, 0, 0, 0))[tension_index] if "_wa" in nearest else wood_armer(
-                                nearest["mx"], nearest["my"], nearest["mxy_raw"])[tension_index]
-                            vu = 12.0 * abs(q_face)
-                            if vu > entry["vu"]:
-                                entry.update(vu=vu, shear_basis="linear recovery to the beam face from the two adjacent Gauss points",
-                                             tension_face_verified=top_demand > 0.0,
-                                             vu_location={"case_id": case["id"], "element": element, "face_position_in": face_position,
-                                                          "gauss_positions_in": [x1, x2], "gauss_shears_kip_per_in": [q1, q2],
-                                                          "top_demand_at_nearest_kip_in_per_in": top_demand})
                 # Bottom row: maximum shear in the pure sagging zone (bottom mat is the tension steel there).
                 key = (panel["panel_id"], axis, "bottom")
                 entry = envelope.setdefault(key, {"mu": 0.0, "vu": 0.0, "mu_location": None, "vu_location": None,
                                                   "shear_basis": None, "tension_face_verified": True})
-                for point in points:
-                    if "_wa" not in point:
-                        continue
-                    bx, by, tx, ty = point["_wa"]
+                for point, (bx, by, tx, ty) in clear_points:
                     sagging = (bx > 0 and tx == 0.0) if axis == "x" else (by > 0 and ty == 0.0)
                     if not sagging:
                         continue
@@ -233,7 +224,8 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
         strips.append({"panel_id": panel_id, "axis": axis, "face": face,
                        "mu_kip_in_per_ft": entry["mu"], "vu_kip_per_ft": entry["vu"],
                        "demand_location": (f"{panel_id}: Wood-Armer {face} {axis} envelope over Gauss points outside beam "
-                                           f"widths; moment at {entry['mu_location']}; shear: {entry.get('shear_basis')} at {entry['vu_location']}"),
+                                           f"widths and recovered physical faces; moment at {entry['mu_location']}; "
+                                           f"shear: {entry.get('shear_basis')} at {entry['vu_location']}"),
                        "moment_location": entry["mu_location"], "shear_location": entry["vu_location"],
                        "shear_basis": entry.get("shear_basis"),
                        "tension_face_at_shear_verified": bool(entry.get("tension_face_verified", True))})
@@ -246,15 +238,17 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
         "all_floors_enveloped": ("Uniform slab thickness, superimposed dead load and live load on every floor including the "
                                  "roof, so one common floor represents all floors."),
         "load_pattern_envelope_verified": pattern_rule,
-        "spatial_envelope_per_unit_width": ("Maximum over every Gauss point of every element in the panel outside the beam "
-                                            "widths; no strip averaging."),
+        "spatial_envelope_per_unit_width": ("Maximum over Gauss points outside beam widths and physical-face samples "
+                                            "in their clear-span cells; raw tensor recovery before Wood-Armer; no strip averaging."),
         "twisting_moment_resolution_verified": "Wood-Armer resolution of mx, my, mxy into orthogonal x/y top and bottom demands.",
         "zero_membrane_force_verified": f"In-plane DOFs fixed; max |p11,p22,p12| = {max_membrane:.3e} kip/in.",
         "verified": (f"Numerical only: every case in equilibrium to 1e-8 ({balanced}), membrane-free response "
-                     f"({membrane_free}). Engineering verification is asserted in Design.Config.SlabActionAssertions "
+                     f"({membrane_free}), valid governing face recovery ({face_recovery_complete}). "
+                     "Engineering verification is asserted in Design.Config.SlabActionAssertions "
                      "after an independent review (methodology item 7); it is not set by this module."),
     }
-    preconditions = {"zero_membrane_force_verified": membrane_free, "verified": membrane_free and balanced}
+    preconditions = {"zero_membrane_force_verified": membrane_free,
+                     "verified": membrane_free and balanced and face_recovery_complete}
     provenance_ok = assertion_provenance_valid(asserted)
     evidence = {flag: provenance_ok and asserted.get(flag) is True and preconditions.get(flag, True)
                 for flag in _FLAGS}
@@ -263,6 +257,7 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
         "source": f"Design/SMRF_Slab_Actions.py {METHOD_VERSION}; Design/SMRF_Floor_Analysis.py flexible_beams",
         "load_combination_basis": "ACI 318-19 5.3.1 (1.4D; 1.2D+1.6L) with " + pattern_rule,
         "analysis_model_sha256": _model_signature(slab_record, geometry, sections, mesh, [c["id"] for c in cases]),
+        "physical_model_sha256": _model_signature(slab_record, geometry, sections, None, [c["id"] for c in cases]),
         "slab_input_sha256": slab_input_signature(slab_inputs),
         "shear_envelope_basis": "support_face_maximum",
         "load_scope": "uniform_area_gravity_no_concentrated_loads",
@@ -275,7 +270,8 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
         "pattern_rule": pattern_rule,
         "mesh_per_bay": mesh,
         "beam_half_width_excluded_in": half_beam,
-        "shear_recovery": {"method": "linear_recovery_to_beam_face_from_adjacent_gauss_pair",
+        "physical_face_coverage": face_coverage,
+        "shear_recovery": {"method": FACE_RECOVERY_VERSION,
                            "top_rows_recovered_at_face": face_recovery_complete,
                            "bottom_rows": "maximum Gauss-point shear in the pure sagging zone"},
         "equilibrium": equilibrium,
@@ -284,6 +280,59 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
         "units": {"moment": "kip-in/ft", "shear": "kip/ft"},
     })
     return evidence
+
+
+def compare_slab_action_refinement(coarse, fine, *, moment_tolerance, shear_tolerance):
+    """Compare every strip at fixed physical inputs; never assert verification.
+
+    Caller supplies investigation tolerances. A shared physical-model identity,
+    exact load cases and strip inventory are required. Near-zero changes are not
+    hidden by an arbitrary denominator floor: zero-to-nonzero remains unstable.
+    This result describes agreement of sampled demands, not a rigorous error
+    bound or proof that a physical floor idealization is applicable.
+    """
+    for value in (moment_tolerance, shear_tolerance):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value < 1:
+            raise ValueError("Provide explicit finite refinement tolerances between zero and one")
+    if not isinstance(coarse, dict) or not isinstance(fine, dict):
+        raise ValueError("Two saved slab action evidence records are required")
+    identity = coarse.get("physical_model_sha256")
+    if not isinstance(identity, str) or len(identity) != 64 or fine.get("physical_model_sha256") != identity:
+        raise ValueError("Refinement requires identical physical-model and method identities")
+    if coarse.get("cases") != fine.get("cases") or coarse.get("slab_input_sha256") != fine.get("slab_input_sha256"):
+        raise ValueError("Refinement requires identical loads, patterns and slab inputs")
+    if coarse.get("analysis_model_sha256") == fine.get("analysis_model_sha256"):
+        raise ValueError("Refinement requires distinct analysis/mesh identities")
+    def rows(evidence):
+        result = {}
+        for row in evidence.get("strips", []):
+            key = (row["panel_id"], row["axis"], row["face"])
+            if key in result:
+                raise ValueError("Duplicate strip in refinement evidence")
+            for metric in ("mu_kip_in_per_ft", "vu_kip_per_ft"):
+                v = row[metric]
+                if isinstance(v, bool) or not isinstance(v, (int,float)) or not math.isfinite(v) or v < 0:
+                    raise ValueError("Refinement demands must be finite and nonnegative")
+            result[key] = row
+        if not result:
+            raise ValueError("Refinement requires explicit nonempty strip inventories")
+        return result
+    a,b = rows(coarse),rows(fine)
+    if set(a) != set(b):
+        raise ValueError("Refinement strip inventories differ")
+    comparisons = []
+    for key in sorted(a):
+        for metric,tolerance in (("mu_kip_in_per_ft",moment_tolerance),("vu_kip_per_ft",shear_tolerance)):
+            before,after = a[key][metric],b[key][metric]
+            change = abs(after-before)/before if before else 0.0 if after == 0 else None
+            comparisons.append({"panel_id":key[0],"axis":key[1],"face":key[2],"metric":metric,
+                "coarse":before,"fine":after,"relative_change":change,"tolerance":tolerance,
+                "within_tolerance":change is not None and change<=tolerance})
+    return {"method":"slab_strip_refinement_comparison_v1","physical_model_sha256":identity,
+            "coarse_analysis_sha256":coarse.get("analysis_model_sha256"),
+            "fine_analysis_sha256":fine.get("analysis_model_sha256"),
+            "all_within_tolerance":all(row["within_tolerance"] for row in comparisons),
+            "engineering_verified":False,"comparisons":comparisons}
 
 
 def evaluate_slab_actions(evidence):
@@ -321,11 +370,9 @@ def evaluate_slab_actions(evidence):
         checks.append(make_check("floor.support_face_shear_recovery", "Slab design section / shear recovery",
                                  1, 1, "==", details={"method": recovery.get("method"),
                                                       "bottom_rows": recovery.get("bottom_rows"),
-                                                      "basis": "top rows: shear interpolated/extrapolated linearly to the beam face "
-                                                               "from the adjacent Gauss pair, both supports, every element row "
-                                                               "(MITC4 transverse shear is constant across that pair, so this is "
-                                                               "the adjacent element's shear); tension face confirmed from the "
-                                                               "twisting-resolved top demand there"}))
+                                                      "basis": "top rows: raw resultants recovered in the element containing "
+                                                               "the physical face, on its clear-span side; all four faces covered; "
+                                                               "tension face determined at the same location before enveloping"}))
     else:
         checks.append(not_evaluated("floor.support_face_shear_recovery", "Slab design section / shear recovery",
                                     "Face shear was not recovered for every support row, or a face's tension side "
