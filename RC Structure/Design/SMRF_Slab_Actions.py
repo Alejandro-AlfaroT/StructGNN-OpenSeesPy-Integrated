@@ -44,7 +44,7 @@ from Design.SMRF_Slab_Recovery import recover_panel_faces, METHOD_VERSION as FAC
 from Design.SMRF_Slab_Reinforcement import slab_input_signature
 from Design.SMRF_Common import make_check, not_evaluated, assertion_provenance_valid
 
-METHOD_VERSION = "smrf_slab_actions_wood_armer_physical_faces_v3"
+METHOD_VERSION = "smrf_slab_actions_physical_faces_explicit_mesh_v4"
 PATTERN_LIVE_FRACTION = 0.75
 PATTERN_RULE_ALL = "ACI 318-19 6.4.3.3(a): L <= 0.75 D, full factored live load on all panels governs"
 PATTERN_RULE_PARTIAL = ("ACI 318-19 6.4.3.3(b)/(c): 3/4 factored live load on alternate panels and on the "
@@ -112,7 +112,8 @@ def _model_signature(slab_record, geometry, sections, mesh, case_ids):
 
 
 def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, slab_inputs,
-                               mesh_per_bay=None, uniform_all_floors=True, assertions=None):
+                               mesh_per_bay=None, uniform_all_floors=True, assertions=None,
+                               *, mesh_spec=None, case_observer=None):
     """Slab strip demand evidence for ``design_slab_reinforcement``.
 
     ``sections`` needs the beam section and column footprint (as for the
@@ -130,7 +131,7 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
     half_beam = sections["b_beam_in"] / 2.0
     dead_ksf = (slab_record["concrete_unit_weight_kcf"] * slab_record["thickness_in"] / 12.0
                 + slab_record["superimposed_dead_load_ksf"])
-    mesh = mesh_per_bay or transfer_mesh_per_bay(nx, ny)
+    mesh = (4 if mesh_spec is not None else transfer_mesh_per_bay(nx, ny)) if mesh_per_bay is None else mesh_per_bay
     cases, pattern_rule = slab_load_cases(dead_ksf, live_load_ksf, nx, ny)
     for case in cases:
         case["live_load_ksf"] = live_load_ksf
@@ -138,9 +139,19 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
     max_membrane = 0.0
     equilibrium = []
     face_coverage = []
+    solved_meshes = []
     for case in cases:
-        result = analyze_floor(slab_record, geometry, sections, case, mesh_per_bay=mesh,
-                               support_model="flexible_beams")
+        kwargs = {"mesh_spec": mesh_spec} if mesh_spec is not None else {}
+        try:
+            result = analyze_floor(slab_record, geometry, sections, case, mesh_per_bay=mesh,
+                                   support_model="flexible_beams", **kwargs)
+        except Exception as exc:
+            if case_observer is not None:
+                case_observer(case, {"status": "exception", "error": f"{type(exc).__name__}: {exc}"})
+            raise
+        if case_observer is not None:
+            case_observer(case, result)
+        solved_meshes.append({"case_id": case["id"], "mesh": result.get("mesh")})
         if result["status"] != "transfer_complete":
             raise RuntimeError(f"Slab action case {case['id']} failed: status {result['status']}.")
         max_membrane = max(max_membrane, result["max_abs_membrane_kip_per_in"])
@@ -248,7 +259,10 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
                      "after an independent review (methodology item 7); it is not set by this module."),
     }
     preconditions = {"zero_membrane_force_verified": membrane_free,
-                     "verified": membrane_free and balanced and face_recovery_complete}
+                     "mesh_refinement_verified": False,
+                     "physical_recovery_valid": membrane_free and balanced and face_recovery_complete,
+                     "verified": False}
+    numerical["mesh_refinement_verified"] = "Single mesh only; a completed bounded refinement comparison is required."
     provenance_ok = assertion_provenance_valid(asserted)
     evidence = {flag: provenance_ok and asserted.get(flag) is True and preconditions.get(flag, True)
                 for flag in _FLAGS}
@@ -256,8 +270,8 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
         "method": "plate_finite_element",
         "source": f"Design/SMRF_Slab_Actions.py {METHOD_VERSION}; Design/SMRF_Floor_Analysis.py flexible_beams",
         "load_combination_basis": "ACI 318-19 5.3.1 (1.4D; 1.2D+1.6L) with " + pattern_rule,
-        "analysis_model_sha256": _model_signature(slab_record, geometry, sections, mesh, [c["id"] for c in cases]),
-        "physical_model_sha256": _model_signature(slab_record, geometry, sections, None, [c["id"] for c in cases]),
+        "analysis_model_sha256": _model_signature(slab_record, geometry, sections, solved_meshes, cases),
+        "physical_model_sha256": _model_signature(slab_record, geometry, sections, None, cases),
         "slab_input_sha256": slab_input_signature(slab_inputs),
         "shear_envelope_basis": "support_face_maximum",
         "load_scope": "uniform_area_gravity_no_concentrated_loads",
@@ -268,7 +282,9 @@ def build_slab_action_evidence(slab_record, geometry, sections, live_load_ksf, s
         "assertion_provenance_valid": provenance_ok,
         "cases": [{k: v for k, v in case.items()} for case in cases],
         "pattern_rule": pattern_rule,
-        "mesh_per_bay": mesh,
+        "mesh_per_bay": mesh if mesh_spec is None else None,
+        "solved_meshes": solved_meshes,
+        "refinement": {"required": True, "status": "not_requested", "all_within_tolerance": False},
         "beam_half_width_excluded_in": half_beam,
         "physical_face_coverage": face_coverage,
         "shear_recovery": {"method": FACE_RECOVERY_VERSION,
@@ -341,8 +357,10 @@ def evaluate_slab_actions(evidence):
         return [not_evaluated("floor.qualified_slab_actions", "ACI 318-19 Chapters 6 and 8",
                               "No slab action evidence was generated.")]
     checks = []
+    from Design.SMRF_Slab_Refinement import refinement_verified
+    mesh_ok = refinement_verified(evidence)
     assertions = evidence.get("engineering_assertions") or {}
-    flags_ok = (assertion_provenance_valid(assertions)
+    flags_ok = (mesh_ok and assertion_provenance_valid(assertions)
                 and all(assertions.get(flag) is True and evidence.get(flag) is True for flag in _FLAGS))
     details = {"numerical_basis": evidence.get("numerical_basis"), "pattern_rule": evidence.get("pattern_rule"),
                "cases": [c["id"] for c in evidence.get("cases", [])],
@@ -352,6 +370,8 @@ def evaluate_slab_actions(evidence):
                                  1, 1, "==", details=details))
     else:
         missing = [flag for flag in _FLAGS if evidence.get(flag) is not True]
+        if not mesh_ok:
+            missing.append("completed_mesh_refinement")
         if not assertion_provenance_valid(assertions):
             missing.append("named_dated_assertion_basis")
         missing.extend("assertion." + flag for flag in _FLAGS if assertions.get(flag) is not True)
@@ -363,6 +383,13 @@ def evaluate_slab_actions(evidence):
         and bool(evidence.get("equilibrium"))
     checks.append(make_check("floor.slab_action_equilibrium", "Reaction/first-moment balance of every slab case",
                              int(balanced), 1, "=="))
+    if mesh_ok:
+        checks.append(make_check("floor.slab_action_mesh_refinement", "Declared numerical investigation tolerances",
+                                 1, 1, "==", details={"basis": evidence["refinement"]["tolerance_basis"],
+                                                      "engineering_verified": False}))
+    else:
+        checks.append(not_evaluated("floor.slab_action_mesh_refinement", "Declared numerical investigation tolerances",
+                                    "A complete, identity-matched refinement comparison has not passed."))
     checks.append(not_evaluated("floor.independent_hand_verification", "Engineering review",
                                 "Hand-check a representative floor's strip moments, shears and beam transfer against the model."))
     recovery = evidence.get("shear_recovery") or {}

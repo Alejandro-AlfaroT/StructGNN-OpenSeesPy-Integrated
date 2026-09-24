@@ -117,6 +117,10 @@ def _demands(evidence, inputs):
     for key in ("method", "source", "load_combination_basis", "analysis_model_sha256"):
         if not isinstance(evidence.get(key), str) or not evidence[key].strip():
             raise ValueError(f"Slab evidence requires {key} provenance.")
+    if evidence["source"].startswith("Design/SMRF_Slab_Actions.py "):
+        from Design.SMRF_Slab_Refinement import refinement_verified
+        if not refinement_verified(evidence):
+            raise ValueError("Generated slab actions require completed, identity-matched mesh refinement.")
     fingerprint = evidence["analysis_model_sha256"]
     if len(fingerprint) != 64 or any(c not in "0123456789abcdefABCDEF" for c in fingerprint):
         raise ValueError("analysis_model_sha256 must identify the upstream analysis model.")

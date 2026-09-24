@@ -412,6 +412,10 @@ class FloorAnalysisConfig:
     refinement_mesh_per_bay: int = 8
     transfer_to_frame: bool = True
     transfer_mesh_per_bay: Optional[int] = None
+    # Explicit bounded slab-demand refinement; meshes, tolerances and basis
+    # are recorded in the request identity. None keeps single-mesh demands
+    # unverified. This does not change frame-transfer stiffness/kinematics.
+    slab_refinement: Optional[dict] = None
 
 
 @dataclass

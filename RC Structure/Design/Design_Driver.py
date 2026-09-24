@@ -249,19 +249,24 @@ def _update_slab_reinforcement(cfg, slab):
         sp.SLAB_ACTIONS = None
         return None
     from Design.SMRF_Slab_Actions import build_slab_action_evidence
+    from Design.SMRF_Slab_Refinement import build_refined_slab_action_evidence
     from Design.SMRF_Slab_Reinforcement import design_slab_reinforcement
     inputs = _slab_strength_inputs_from_state(slab, cfg)
     ops.wipe()
-    evidence = build_slab_action_evidence(
-        slab, _slab_geometry(),
-        {"b_beam_in": sp.B_BEAM, "h_beam_in": sp.H_BEAM, "fc_beam_ksi": sp.FC_BEAM_KSI,
-         "b_col_in": sp.B_COL, "h_col_in": sp.H_COL},
-        sp.FLOOR_LIVE_LOAD_KSF, inputs, mesh_per_bay=cfg.floor_analysis.transfer_mesh_per_bay,
-        assertions=asdict(cfg.slab_actions))
+    sections = {"b_beam_in": sp.B_BEAM, "h_beam_in": sp.H_BEAM, "fc_beam_ksi": sp.FC_BEAM_KSI,
+                "b_col_in": sp.B_COL, "h_col_in": sp.H_COL}
+    if cfg.floor_analysis.slab_refinement is None:
+        evidence = build_slab_action_evidence(
+            slab, _slab_geometry(), sections, sp.FLOOR_LIVE_LOAD_KSF, inputs,
+            mesh_per_bay=cfg.floor_analysis.transfer_mesh_per_bay, assertions=asdict(cfg.slab_actions))
+    else:
+        evidence = build_refined_slab_action_evidence(
+            slab, _slab_geometry(), sections, sp.FLOOR_LIVE_LOAD_KSF, inputs,
+            cfg.floor_analysis.slab_refinement, assertions=asdict(cfg.slab_actions))
     sp.SLAB_ACTIONS = evidence
     record = design_slab_reinforcement(inputs, evidence, None, _slab_completion_context(slab, cfg))
     if record["layout"] is None and cfg.slab_actions.all_asserted():
-        raise RuntimeError("Slab reinforcement ladder exhausted: " + "; ".join(
+        raise RuntimeError("Slab reinforcement not selected: " + "; ".join(
             c["details"].get("reason", c["id"]) for c in record["checks"] if c["status"] != "pass"))
     sp.SLAB_REINFORCEMENT = record
     return record

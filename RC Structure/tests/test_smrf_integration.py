@@ -357,7 +357,8 @@ class IntegrationTests(unittest.TestCase):
             # actions: evidence is computed, nothing is certified, no layout.
             strength = result["slab_reinforcement"]
             self.assertIsNone(strength["layout"])
-            self.assertNotIn("inputs", strength)          # unverified evidence is not routine input
+            # Rejected attempts retain their exact inputs for review.
+            self.assertEqual(strength["inputs"]["demand_evidence"], result["slab_actions"])
             computed = result["slab_actions"]              # but it is saved for review
             self.assertFalse(computed["verified"])
             self.assertEqual(len(computed["strips"]), 4)   # 1 panel x 2 axes x 2 faces
@@ -407,6 +408,23 @@ class IntegrationTests(unittest.TestCase):
                 twisting_moment_resolution_verified=True, zero_membrane_force_verified=True,
                 verified=True, two_way_shear_path_assessed=True,
                 asserted_by="test", assertion_date="2026-09-13", assertion_basis="unit test fixture"))
+            with self.assertRaisesRegex(RuntimeError, "Slab reinforcement not selected"):
+                driver._update_slab_reinforcement(asserted, result["slab"])
+            self.assertFalse(sp.SLAB_ACTIONS["verified"])
+            # A numerical comparison is required even for this signed fixture.
+            # These normalized offsets reproduce the existing bounded graded
+            # support refinement, scaled to this test's bay dimensions.
+            half = [0., 2., 4., 7., 10., 15., 22., 32., 45., 60., 80., 100., 120.]
+            base = sorted(set(half + [240. - x for x in half]))
+            coarse = sorted(base + [(a + b) / 2 for a, b in zip(base, base[1:])])
+            fine = sorted(coarse + [(a + b) / 2 for a, b in zip(coarse, coarse[1:])
+                                    if 4 < (a + b) / 2 < 15 or 225 < (a + b) / 2 < 236])
+            asserted.floor_analysis.slab_refinement = {
+                "meshes": [{"x_offsets_in": [x * sp.BAY_X / 240 for x in offsets],
+                            "y_offsets_in": [x * sp.BAY_Y / 240 for x in offsets], "max_shells": 45000}
+                           for offsets in (coarse, fine)],
+                "moment_tolerance": .05, "shear_tolerance": .05,
+                "tolerance_basis": "Test fixture: inherited 5% local-demand investigation screen; not engineering approval"}
             verified = driver.design_structure(cfg=asserted, max_section_iter=1, max_steel_iter=1, verbose=False)
             layout = verified["slab_reinforcement"]["layout"]
             self.assertEqual(set(layout["layers"]), {"x_top", "x_bottom", "y_top", "y_bottom"})

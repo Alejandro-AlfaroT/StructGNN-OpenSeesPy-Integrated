@@ -49,11 +49,12 @@ class SlabRecoveryTests(unittest.TestCase):
         self.assertEqual(result,before)
         return evidence
 
-    def test_supported_faces_can_satisfy_assertions_without_clearing_independent_review(self):
+    def test_supported_faces_and_assertions_cannot_replace_mesh_refinement(self):
         evidence = self.fixture_evidence(lambda x,y,i,j:dict(mx=-1.,my=-2.,mxy_raw=0.,qx_raw=1.,qy_raw=2.))
-        self.assertTrue(evidence['verified'])
+        self.assertFalse(evidence['verified'])
         checks = {c['id']:c for c in evaluate_slab_actions(evidence)}
-        self.assertEqual(checks['floor.qualified_slab_actions']['status'],'pass')
+        self.assertEqual(checks['floor.qualified_slab_actions']['status'],'not_evaluated')
+        self.assertEqual(checks['floor.slab_action_mesh_refinement']['status'],'not_evaluated')
         self.assertEqual(checks['floor.independent_hand_verification']['status'],'not_evaluated')
 
     def test_tied_shear_cannot_discard_an_unresolved_tension_face_in_either_order(self):

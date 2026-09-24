@@ -29,7 +29,7 @@ import openseespy.opensees as ops
 
 from Design.SMRF_Floor_Analysis import _inputs, _integer, _number, MAX_SHELLS
 
-METHOD_VERSION = "smrf_monolithic_eccentric_shell_web_column_gravity_v1"
+METHOD_VERSION = "smrf_monolithic_eccentric_shell_web_column_gravity_v2_section_actions"
 
 
 def _rectangle(b, h, fc, modifier, nu):
@@ -182,7 +182,8 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
                         tag += 1
                         _frame_element(tag, ni, nj, web, 2)
                         beams.append({"tag": tag, "floor": k, "axis": axis, "line_index": line,
-                                      "span_index": t//mesh, "segment_index": t % mesh, "nodes": [ni, nj]})
+                                      "span_index": t//mesh, "segment_index": t % mesh, "nodes": [ni, nj],
+                                      "body_load_force_kip": [0., 0., 0.]})
         ops.timeSeries("Linear", 1)
         ops.pattern("Plain", 1, 1)
         for n, p in applied_nodes.items():
@@ -202,6 +203,7 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
                 w = factor*b*(hb-hs)*gamma*clear/length
                 ops.eleLoad("-ele", item["tag"], "-type", "-beamUniform", 0., -w, 0.)
                 p = w*length/mesh
+                item["body_load_force_kip"] = [0., 0., -p]
                 ni, nj = item["nodes"]
                 weight_ledger["beam_drop_weight_kip"] += p
                 gravity_resultant(p, (positions[ni][0]+positions[nj][0])/2., (positions[ni][1]+positions[nj][1])/2.)
@@ -248,11 +250,15 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
                 for d in range(6):
                     shell_forces[n][d] += f[index*6+d]
             stresses = _vector(ops.eleResponse(item["tag"], "stresses"), 32, "shell Gauss resultants")
+            q = parsed[item["floor"]-1][-1][item["i"]//mesh, item["j"]//mesh] / 144.
             panels.append({"floor": item["floor"], "panel_i": item["i"]//mesh,
                            "panel_j": item["j"]//mesh, "element": item["tag"],
                            "cell_i": item["i"], "cell_j": item["j"],
                            "bounds_xy_in": [item["i"]*dx, (item["i"]+1)*dx, item["j"]*dy, (item["j"]+1)*dy],
-                           "gauss_resultants_raw": stresses})
+                           "gauss_resultants_raw": stresses,
+                           "node_positions_in": [positions[n] for n in item["nodes"]],
+                           "global_nodal_force_kip_kip_in": f,
+                           "applied_nodal_force_kip_kip_in": [0., 0., -q*dx*dy/4., 0., 0., 0.]*4})
         interface = []
         for retained, _ in links:
             loads = [-v for v in shell_forces[retained]]
@@ -271,6 +277,19 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
         for group in (beams, columns):
             for item in group:
                 item["local_force_kip_kip_in"] = _vector(ops.eleResponse(item["tag"], "localForce"), 12, "member local force")
+                item["global_force_kip_kip_in"] = _vector(ops.eleForce(item["tag"]), 12, "member global force")
+                item["node_positions_in"] = [positions[n] for n in item["nodes"]]
+                if group is beams:
+                    item["body_load_position_in"] = [(a+b)/2. for a,b in zip(*item["node_positions_in"])]
+        floor_boundary_actions = []
+        for col in columns:
+            # Column actions ON the floor are opposite the column's native
+            # nodal resisting forces. Include both adjacent stories separately.
+            for floor, end in ((col["story"]-1, 0), (col["story"], 1)):
+                if floor > 0:
+                    floor_boundary_actions.append({"floor": floor, "source_column": col["tag"],
+                        "end": "i" if end == 0 else "j", "position_in": col["node_positions_in"][end],
+                        "force_moment": [-v for v in col["global_force_kip_kip_in"][6*end:6*end+6]]})
         floors = []
         for k in range(1, nf+1):
             nodes = [n for (kk, i, j), n in floor_nodes.items() if kk == k]
@@ -287,6 +306,8 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
                        "beam_segment_count": len(beams), "column_count": len(columns),
                        "node_count": len(positions), "floors": floors, "shell_resultants": panels,
                        "web_segment_actions": beams, "column_actions": columns,
+                       "floor_boundary_actions": floor_boundary_actions,
+                       "section_action_schema": "native_global_actions_and_applied_loads_v1",
                        "shell_to_frame_nodal_actions": interface,
                        "shell_to_frame_equilibrium": {
                            "interface_force_kip": interface_force, "interface_moment_kip_in": interface_moment,

@@ -850,14 +850,13 @@ as the transfer: 1.4D and 1.2D+1.6L (ACI 5.3.1), with live-load patterns per
 support line, enveloped with the all-panel case. At every Gauss point outside
 the beam widths the sagging-positive mx, my and raw mxy are resolved with the
 Wood-Armer rules into x/y top and bottom design moments; the panel envelope is
-the maximum over those points, cases and (identical) floors. Support-face
-shear is recovered at the beam face: in the element row adjacent to each
-support line the two Gauss points sharing a transverse coordinate are
-interpolated/extrapolated linearly to the face position (centerline plus or
-minus half the beam width) -- MITC4 transverse shear is constant across that
-pair, so this is the adjacent element's shear -- for both supports and every
-row, and the top-face row carries the maximum with its tension side
-confirmed from the twisting-resolved top demand there; the bottom-face row
+the maximum over those points, cases and (identical) floors. Raw moment and
+shear tensors are also recovered at physical beam faces from the containing
+rectangular cell's four Gauss points. At mesh-aligned faces the clear-span
+cell is used; transverse element-side limits remain separate, without
+smoothing. Wood-Armer follows raw recovery at that same location, and the
+top-face row carries the maximum shear with its tension side confirmed
+from the recovered tensor. The bottom-face row
 carries the maximum shear in the pure sagging zone, where the bottom mat is
 the longitudinal steel the one-way shear strength relies on
 (`floor.support_face_shear_recovery`). Membrane resultants are shown to vanish.
@@ -871,8 +870,36 @@ precondition holds. Equilibrium, benchmarks and unit tests establish software
 behavior, not verification. Assertions are part of the design request
 identity, so a design made under them records who asserted what. The
 computed evidence is always saved as `design.json['slab_actions']` for
-review; only asserted evidence becomes routine input. The qualification
+review. Rejected reinforcement attempts retain inputs and their actual
+verification failure reason, without selecting a layout. The qualification
 report keeps `floor.independent_hand_verification` open regardless.
+
+The bounded refinement path is configured through
+`FloorAnalysisConfig.slab_refinement`: a sequence of 2-8 explicit meshes,
+`moment_tolerance`, `shear_tolerance`, and a nonempty `tolerance_basis`.
+Each mesh contains `x_offsets_in` and `y_offsets_in` spanning one bay,
+and an explicit `max_shells` budget (at most 45,000 for one floor).
+Coordinates repeat at every bay; later meshes retain all previous nodes.
+`SMRF_Floor_Analysis` uses actual cell widths and physical load fractions,
+records the full coordinates and coordinate hash, and selects UmfPack for
+explicit meshes. Existing uniform settings retain the 8,192-shell limit.
+
+`SMRF_Slab_Refinement` solves every required load case at every requested
+level. Each level retains mesh provenance, case outcomes, demand evidence
+and errors. Every adjacent pair is compared over all panel/axis/face rows;
+the final pair must pass the explicitly supplied tolerances. Earlier failed
+comparisons remain in the record; a failed solve prevents qualification
+and cannot fall back to an earlier passing pair. The tolerance is a declared
+numerical investigation criterion, not a code acceptance limit or global
+error bound. Physical/model signatures include full load cases, not just IDs.
+
+A single mesh cannot set generated demands `verified=True`, even with
+engineering assertions. Both qualification and the reinforcement consumer
+recompute the final comparison against its stored evidence and returned
+demands, rather than accepting cached pass flags. Numerical success still
+requires all independent applicability assertions. The optional refinement
+path changes slab-demand resolution; it does not resolve the separate
+frame-transfer stiffness, composite force recovery or membrane design.
 
 `SMRF_Slab_Reinforcement.design_slab_reinforcement` then selects one bar size
 and four spacings (method v2). With floor context it also settles: straight

@@ -42,6 +42,7 @@ import copy
 import math
 
 import openseespy.opensees as ops
+from Design.SMRF_Floor_Mesh import floor_mesh
 
 
 METHOD_VERSION = "shellmitc4_rigid_beam_line_floor_diagnostic_v1"
@@ -88,7 +89,7 @@ def _integer(value, name):
     return int(result)
 
 
-def _inputs(slab_record, geometry, sections, loadcase, mesh_per_bay, *, allow_zero=False):
+def _inputs(slab_record, geometry, sections, loadcase, mesh_per_bay, *, allow_zero=False, mesh_spec=None):
     if not all(isinstance(x, dict) for x in (slab_record, geometry, sections, loadcase)):
         raise ValueError("Floor inputs must be dictionaries.")
     try:
@@ -110,7 +111,7 @@ def _inputs(slab_record, geometry, sections, loadcase, mesh_per_bay, *, allow_ze
     except KeyError as exc:
         raise ValueError(f"Missing floor-analysis input: {exc.args[0]}.") from exc
     mesh = _integer(mesh_per_bay, "mesh_per_bay")
-    if not 2 <= mesh <= 24 or nx * ny * mesh * mesh > MAX_SHELLS:
+    if mesh_spec is None and (not 2 <= mesh <= 24 or nx * ny * mesh * mesh > MAX_SHELLS):
         raise ValueError(f"Floor analysis requires 2-24 subdivisions per bay and at most {MAX_SHELLS} shells.")
     nu = _number(sections.get("slab_poisson_ratio", 0.2), "slab_poisson_ratio", zero=True)
     if nu >= 0.5 or h >= min(lx, ly):
@@ -196,7 +197,7 @@ def _extrema(values):
 
 
 def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
-                  support_model="rigid_lines"):
+                  support_model="rigid_lines", *, mesh_spec=None):
     """Analyze one common floor using explicit D/L factors and live pattern.
 
     Load case keys: ``id``, ``dead_factor``, ``live_factor``, ``live_load_ksf``,
@@ -211,13 +212,15 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
     Numerical convergence/equilibrium does not set ``verified`` to True.
     """
     nx, ny, lx, ly, h, fc, nu, mesh, pressures = _inputs(
-        slab_record, geometry, sections, loadcase, mesh_per_bay)
+        slab_record, geometry, sections, loadcase, mesh_per_bay, mesh_spec=mesh_spec)
+    grid = floor_mesh(nx, ny, lx, ly, mesh, mesh_spec=mesh_spec, uniform_shell_limit=MAX_SHELLS)
+    xs, ys = grid["x_coordinates_in"], grid["y_coordinates_in"]
+    mx, my = grid["subdivisions_x_per_bay"], grid["subdivisions_y_per_bay"]
     beam = _beam_inputs(sections, support_model, h, lx, ly)
     flexible = beam is not None
     if ops.getNodeTags() or ops.getEleTags():
         raise RuntimeError("Floor diagnostic requires an empty OpenSees domain; preserve/extract the frame first.")
-    ex, ey = nx * mesh, ny * mesh
-    dx, dy = lx / mesh, ly / mesh
+    ex, ey = len(xs) - 1, len(ys) - 1
     ec = 57.0 * math.sqrt(fc * 1000.0)
     nodal_loads = {}
     element_grid = []
@@ -234,8 +237,7 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
         "beam_model": copy.deepcopy(beam),
         "inputs": {"slab": copy.deepcopy(slab_record), "geometry": copy.deepcopy(geometry),
                    "sections": copy.deepcopy(sections)},
-        "mesh": {"subdivisions_per_bay": mesh, "shell_count": ex * ey,
-                 "node_count": (ex + 1) * (ey + 1), "dx_in": dx, "dy_in": dy},
+        "mesh": grid,
         "material": {"ec_ksi": ec, "poisson_ratio": nu, "thickness_in": h,
                      "basis": "linear elastic gross isotropic concrete, no cracking or creep"},
         "response_convention": {
@@ -272,10 +274,10 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
         for j in range(ey + 1):
             for i in range(ex + 1):
                 node = tag(i, j)
-                node_positions[node] = (i * dx, j * dy)
-                ops.node(node, i * dx, j * dy, 0.0)
-                intersection = i % mesh == 0 and j % mesh == 0
-                line_support = i % mesh == 0 or j % mesh == 0
+                node_positions[node] = (xs[i], ys[j])
+                ops.node(node, xs[i], ys[j], 0.0)
+                intersection = i % mx == 0 and j % my == 0
+                line_support = i % mx == 0 or j % my == 0
                 held = intersection if flexible else line_support
                 # In-plane DOFs and drilling are suppressed in this pure
                 # linear plate problem; bending rotations remain free.
@@ -287,7 +289,8 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
                 element = 1 + i + ex * j
                 nodes = [tag(i, j), tag(i + 1, j), tag(i + 1, j + 1), tag(i, j + 1)]
                 ops.element("ShellMITC4", element, *nodes, 1)
-                panel = (i // mesh, j // mesh)
+                panel = (i // mx, j // my)
+                dx, dy = xs[i + 1] - xs[i], ys[j + 1] - ys[j]
                 pressure = pressures[panel] / 144.0
                 for node in nodes:
                     nodal_loads[node] = nodal_loads.get(node, 0.0) + pressure * dx * dy / 4.0
@@ -300,30 +303,30 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
             ops.geomTransf("Linear", 1, 0, 0, 1)
             segment = ex * ey
             for line in range(ny + 1):
-                row = line * mesh
+                row = line * my
                 iy = beam["line_inertia"]["x_edge" if line in (0, ny) else "x_interior"]["iy_in4"]
                 for i in range(ex):
                     segment += 1
                     ops.element("elasticBeamColumn", segment, tag(i, row), tag(i + 1, row),
                                 beam["area_in2"], beam["ec_ksi"], beam["g_ksi"], beam["j_in4"],
                                 iy, beam["iz_in4"], 1)
-                    beam_segments.append((segment, "x", line, i // mesh, i % mesh, tag(i, row), tag(i + 1, row)))
+                    beam_segments.append((segment, "x", line, i // mx, i % mx, tag(i, row), tag(i + 1, row)))
             for line in range(nx + 1):
-                col = line * mesh
+                col = line * mx
                 iy = beam["line_inertia"]["y_edge" if line in (0, nx) else "y_interior"]["iy_in4"]
                 for j in range(ey):
                     segment += 1
                     ops.element("elasticBeamColumn", segment, tag(col, j), tag(col, j + 1),
                                 beam["area_in2"], beam["ec_ksi"], beam["g_ksi"], beam["j_in4"],
                                 iy, beam["iz_in4"], 1)
-                    beam_segments.append((segment, "y", line, j // mesh, j % mesh, tag(col, j), tag(col, j + 1)))
+                    beam_segments.append((segment, "y", line, j // my, j % my, tag(col, j), tag(col, j + 1)))
         ops.timeSeries("Linear", 1)
         ops.pattern("Plain", 1, 1)
         for node, load in nodal_loads.items():
             ops.load(node, 0, 0, -load, 0, 0, 0)
         ops.constraints("Plain")
         ops.numberer("RCM")
-        ops.system("BandGeneral")
+        ops.system(grid["solver"])
         ops.test("NormDispIncr", 1e-12, 20)
         ops.algorithm("Linear")
         ops.integrator("LoadControl", 1.0)
@@ -339,9 +342,9 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
             rz = float(ops.nodeReaction(node, 3))
             if not math.isfinite(rz):
                 raise RuntimeError("Nonfinite floor support reaction.")
-            reactions.append({"node": node, "x_in": i * dx, "y_in": j * dy,
+            reactions.append({"node": node, "x_in": xs[i], "y_in": ys[j],
                               "upward_reaction_kip": rz,
-                              "support_kind": "intersection" if i % mesh == 0 and j % mesh == 0 else "beam_line"})
+                              "support_kind": "intersection" if i % mx == 0 and j % my == 0 else "beam_line"})
         applied = sum(nodal_loads.values())
         reaction_sum = sum(r["upward_reaction_kip"] for r in reactions)
         applied_x = sum(p * node_positions[n][0] for n, p in nodal_loads.items())
@@ -363,15 +366,16 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
         reaction_by_node = {r["node"]: r["upward_reaction_kip"] for r in reactions}
         if flexible:
             _extract_beam_transfer(result, beam_segments, reaction_by_node, mesh,
-                                   nx, ny, lx, ly, applied, pressures, beam["column_footprint_in2"])
+                                   nx, ny, lx, ly, applied, pressures, beam["column_footprint_in2"],
+                                   grid=grid)
         else:
             line_reactions = []
             for axis in ("x", "y"):
                 lines, spans = (ny + 1, nx) if axis == "x" else (nx + 1, ny)
                 for line in range(lines):
                     for span in range(spans):
-                        nodes = [tag(span * mesh + k, line * mesh) if axis == "x"
-                                 else tag(line * mesh, span * mesh + k) for k in range(1, mesh)]
+                        nodes = [tag(span * mx + k, line * my) if axis == "x"
+                                 else tag(line * mx, span * my + k) for k in range(1, mx if axis == "x" else my)]
                         line_reactions.append({"axis": axis, "line_index": line, "span_index": span,
                                                "node_tags_excluding_intersections": nodes,
                                                "downward_load_to_line_kip": sum(reaction_by_node[n] for n in nodes),
@@ -387,6 +391,7 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
         gauss = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
         max_membrane = 0.0
         for element, i, j, panel in element_grid:
+            dx, dy = xs[i + 1] - xs[i], ys[j + 1] - ys[j]
             values = list(ops.eleResponse(element, "stresses"))
             if len(values) != 32 or not all(math.isfinite(v) for v in values):
                 raise RuntimeError("ShellMITC4 response is not four finite 8-resultant Gauss blocks.")
@@ -394,8 +399,8 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
                 raw = values[8 * k:8 * k + 8]
                 max_membrane = max(max_membrane, abs(raw[0]), abs(raw[1]), abs(raw[2]))
                 panel_points[panel].append({"element": element, "gauss_point": k + 1,
-                    "x_in": (i + .5 + gx / (2 * math.sqrt(3))) * dx,
-                    "y_in": (j + .5 + gy / (2 * math.sqrt(3))) * dy,
+                    "x_in": xs[i] + (.5 + gx / (2 * math.sqrt(3))) * dx,
+                    "y_in": ys[j] + (.5 + gy / (2 * math.sqrt(3))) * dy,
                     "mx": -raw[3], "my": -raw[4], "mxy_raw": raw[5],
                     "qx_raw": raw[6], "qy_raw": raw[7]})
         panels = []
@@ -426,7 +431,7 @@ def analyze_floor(slab_record, geometry, sections, loadcase, mesh_per_bay=4,
 
 
 def _extract_beam_transfer(result, beam_segments, reaction_by_node, mesh, nx, ny, lx, ly,
-                           applied, pressures, footprint_in2):
+                           applied, pressures, footprint_in2, *, grid=None):
     """Exact slab-to-frame interface: node forces AND couples, from the solved segments.
 
     localForce components are the forces the nodes exert on the element. At an
@@ -448,6 +453,8 @@ def _extract_beam_transfer(result, beam_segments, reaction_by_node, mesh, nx, ny
     Gravity_Loads applies the couples to the bare frame as statically
     equivalent nodal moments at the beam ends.
     """
+    grid = grid or floor_mesh(nx, ny, lx, ly, mesh)
+    mesh_x, mesh_y = grid["subdivisions_x_per_bay"], grid["subdivisions_y_per_bay"]
     forces = {}
     by_span = {}
     for segment, axis, line, span, k, node_i, node_j in beam_segments:
@@ -468,10 +475,11 @@ def _extract_beam_transfer(result, beam_segments, reaction_by_node, mesh, nx, ny
         segments.sort()
         length = lx if axis == "x" else ly
         node_loads, node_couples = [], []
-        for k in range(1, mesh):
+        offsets = grid["x_offsets_in" if axis == "x" else "y_offsets_in"]
+        for k in range(1, len(offsets) - 1):
             left, right = forces[segments[k - 1][1]], forces[segments[k][1]]
-            node_loads.append({"x_fraction": k / mesh, "load_kip": -(left[8] + right[2])})
-            node_couples.append({"x_fraction": k / mesh,
+            node_loads.append({"x_fraction": offsets[k] / length, "load_kip": -(left[8] + right[2])})
+            node_couples.append({"x_fraction": offsets[k] / length,
                                  "local_x_kip_in": left[9] + right[3],      # torsion about the beam axis
                                  "local_y_kip_in": left[10] + right[4]})    # bending about local y
         first, last = forces[segments[0][1]], forces[segments[-1][1]]
@@ -490,11 +498,11 @@ def _extract_beam_transfer(result, beam_segments, reaction_by_node, mesh, nx, ny
             "end_shears_kip": [first[2], last[8]],
             "end_moments_kip_in_informational": [first[4], last[10]],
         })
-    ex = nx * mesh
+    ex = nx * mesh_x
     column_direct = []
     for node, reaction in reaction_by_node.items():
         index = node - 1
-        gi, gj = (index % (ex + 1)) // mesh, (index // (ex + 1)) // mesh
+        gi, gj = (index % (ex + 1)) // mesh_x, (index // (ex + 1)) // mesh_y
         quadrant = (footprint_in2 or 0.0) / 4.0
         share = sum(pressures[(pi, pj)] / 144.0 * quadrant
                     for pi in (gi - 1, gi) for pj in (gj - 1, gj) if (pi, pj) in pressures)
