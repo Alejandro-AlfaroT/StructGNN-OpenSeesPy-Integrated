@@ -248,6 +248,13 @@ def _update_slab_reinforcement(cfg, slab):
         sp.SLAB_REINFORCEMENT = None
         sp.SLAB_ACTIONS = None
         return None
+    plan = cfg.floor_analysis.slab_refinement
+    if plan is None and cfg.slab_actions.all_asserted():
+        # Say what is missing before any solve: single-mesh demands are never
+        # verified, so an asserted design could not select reinforcement.
+        raise ValueError("Asserted slab actions require FloorAnalysisConfig.slab_refinement (an explicit mesh "
+                         "plan or a named recipe such as Design.Config.PROBE_SLAB_REFINEMENT): single-mesh slab "
+                         "demands cannot be verified, so no slab reinforcement could be selected.")
     from Design.SMRF_Slab_Actions import build_slab_action_evidence
     from Design.SMRF_Slab_Refinement import build_refined_slab_action_evidence
     from Design.SMRF_Slab_Reinforcement import design_slab_reinforcement
@@ -255,18 +262,36 @@ def _update_slab_reinforcement(cfg, slab):
     ops.wipe()
     sections = {"b_beam_in": sp.B_BEAM, "h_beam_in": sp.H_BEAM, "fc_beam_ksi": sp.FC_BEAM_KSI,
                 "b_col_in": sp.B_COL, "h_col_in": sp.H_COL}
-    if cfg.floor_analysis.slab_refinement is None:
+    if plan is None:
         evidence = build_slab_action_evidence(
             slab, _slab_geometry(), sections, sp.FLOOR_LIVE_LOAD_KSF, inputs,
             mesh_per_bay=cfg.floor_analysis.transfer_mesh_per_bay, assertions=asdict(cfg.slab_actions))
     else:
+        # Resolved here, for these sections: a beam rung change re-resolves the recipe.
         evidence = build_refined_slab_action_evidence(
             slab, _slab_geometry(), sections, sp.FLOOR_LIVE_LOAD_KSF, inputs,
-            cfg.floor_analysis.slab_refinement, assertions=asdict(cfg.slab_actions))
+            plan, assertions=asdict(cfg.slab_actions))
     sp.SLAB_ACTIONS = evidence
     record = design_slab_reinforcement(inputs, evidence, None, _slab_completion_context(slab, cfg))
     if record["layout"] is None and cfg.slab_actions.all_asserted():
-        raise RuntimeError("Slab reinforcement not selected: " + "; ".join(
+        refinement = evidence.get("refinement") or {}
+        status = refinement.get("status", "not_requested")
+        detail = refinement.get("status_detail") or ""
+        if refinement.get("comparisons"):
+            # The evidence is not saved when the design refuses, so the
+            # comparison that refused it is summarized in the message.
+            last = refinement["comparisons"][-1]
+            rows = last.get("comparisons") or []
+            failed = [r for r in rows if not r.get("within_tolerance")]
+            worst = {metric: max((r.get("relative_change") or 0.0) for r in rows if r.get("metric") == metric)
+                     for metric in ("mu_kip_in_per_ft", "vu_kip_per_ft") if any(r.get("metric") == metric for r in rows)}
+            levels = [lvl.get("requested_mesh", {}).get("subdivisions_per_bay") for lvl in refinement.get("levels", [])]
+            detail = (f"final pair of levels {levels[-2:]} cells per bay: {len(failed)} of {len(rows)} strip "
+                      f"comparisons outside tolerance, largest relative change "
+                      + ", ".join(f"{k} {v:.4f}" for k, v in worst.items())
+                      + (f"; {detail}" if detail else ""))
+        raise RuntimeError(f"Slab reinforcement not selected (slab refinement {status}"
+                           + (f": {detail}" if detail else "") + "): " + "; ".join(
             c["details"].get("reason", c["id"]) for c in record["checks"] if c["status"] != "pass"))
     sp.SLAB_REINFORCEMENT = record
     return record

@@ -408,7 +408,10 @@ class IntegrationTests(unittest.TestCase):
                 twisting_moment_resolution_verified=True, zero_membrane_force_verified=True,
                 verified=True, two_way_shear_path_assessed=True,
                 asserted_by="test", assertion_date="2026-09-13", assertion_basis="unit test fixture"))
-            with self.assertRaisesRegex(RuntimeError, "Slab reinforcement not selected"):
+            # Asserted flags without a refinement plan are refused before any
+            # solve, naming the missing field (the single-mesh evidence from
+            # the unasserted run above stays unverified).
+            with self.assertRaisesRegex(ValueError, "FloorAnalysisConfig.slab_refinement"):
                 driver._update_slab_reinforcement(asserted, result["slab"])
             self.assertFalse(sp.SLAB_ACTIONS["verified"])
             # A numerical comparison is required even for this signed fixture.

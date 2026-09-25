@@ -412,10 +412,32 @@ class FloorAnalysisConfig:
     refinement_mesh_per_bay: int = 8
     transfer_to_frame: bool = True
     transfer_mesh_per_bay: Optional[int] = None
-    # Explicit bounded slab-demand refinement; meshes, tolerances and basis
-    # are recorded in the request identity. None keeps single-mesh demands
-    # unverified. This does not change frame-transfer stiffness/kinematics.
+    # Bounded slab-demand refinement, recorded in the request identity: an
+    # explicit plan ({meshes, moment_tolerance, shear_tolerance,
+    # tolerance_basis}) or a named recipe ({recipe, levels, max_shells, the
+    # same three}) that Design/SMRF_Floor_Mesh resolves for the current bay
+    # dimensions and beam face at every section iteration, so the policy
+    # stays geometry-independent and the resolved coordinates travel with
+    # the evidence. None keeps single-mesh demands unverified, so asserted
+    # slab actions cannot select reinforcement without a plan. This does not
+    # change frame-transfer stiffness/kinematics.
     slab_refinement: Optional[dict] = None
+
+
+# The one PROBE refinement plan both probe factories (Design/Verify_Designs
+# and Design/Evidence_Summary) carry. A recipe, not coordinates, so the
+# methodology hash agrees across geometries; the 5% is the inherited
+# investigation screen of the 2026-09-24 fixed-candidate benchmark, not an
+# ACI acceptance limit, and the recipe is not validated for every geometry:
+# a floor whose affordable levels are fewer than two is an explicit
+# unresolved result, and a genuine convergence rejection stays a rejection.
+PROBE_SLAB_REFINEMENT = {
+    "recipe": "graded_face_v1", "levels": 4, "max_shells": 45000,
+    "moment_tolerance": 0.05, "shear_tolerance": 0.05,
+    "tolerance_basis": "PROBE -- inherited 5% all-strip investigation screen of the 2026-09-24 "
+                       "fixed-candidate benchmark (graded face meshes 12/24/48/60 per bay); not an ACI "
+                       "acceptance limit, not a validated recipe for every geometry",
+}
 
 
 @dataclass

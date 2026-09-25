@@ -67,6 +67,96 @@ def floor_mesh(nx, ny, lx, ly, mesh_per_bay, *, mesh_spec=None, uniform_shell_li
             "shell_budget": budget, "solver": solver}
 
 
+# Graded face recipe, version 1. Half-bay node pattern from the column line
+# to midspan, mirrored: two nodes between the column line and the beam face
+# at 2/7 and 4/7 of the face offset, the face itself, then nine nodes over
+# the clear half-span at these fractions of it (113 = 120 - 7, the clear
+# half-span of the 240-in / 14-in benchmark this reproduces exactly). Level
+# 0 keeps every other interior node (12 cells per bay), level 1 is the full
+# pattern (24), level 2 adds every midpoint (48), level 3 adds the midpoints
+# of the cells between the second near-face node and the second node beyond
+# the face (60 on the benchmark). Every level retains the previous nodes.
+GRADED_FACE_V1 = {
+    "near_face_fractions_of_face": (2.0 / 7.0, 4.0 / 7.0),
+    "beyond_face_units_of_113": (3, 8, 15, 25, 38, 53, 73, 93, 113),
+    "coarse_half_indices": (0, 3, 5, 7, 9, 11, 12),
+    "fine_band_half_indices": (2, 5),
+    "basis": "2026-09-24 fixed-candidate benchmark graded meshes (24/48/60 per 240-in bay, 14-in beam), "
+             "resolved for the current bay length and beam face; not a validated recipe for every geometry",
+}
+RECIPES = {"graded_face_v1": GRADED_FACE_V1}
+RECIPE_LEVELS = 4
+
+
+def graded_face_levels(bay_length_in, beam_width_in, levels=RECIPE_LEVELS, recipe=GRADED_FACE_V1):
+    """Nested bay offset lists of the graded face recipe, coarsest first."""
+    if isinstance(levels, bool) or not isinstance(levels, int) or not 2 <= levels <= RECIPE_LEVELS:
+        raise ValueError(f"A recipe plan needs 2 to {RECIPE_LEVELS} levels")
+    for name, value in (("bay length", bay_length_in), ("beam width", beam_width_in)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Recipe {name} must be a finite positive number")
+    face = beam_width_in / 2.0
+    half_span = bay_length_in / 2.0
+    if face >= half_span / 2.0:
+        raise ValueError("Beam face must lie in the first quarter of the bay for the graded face recipe")
+    clear = half_span - face
+    half = [0.0] + [face * f for f in recipe["near_face_fractions_of_face"]] + [face] + [
+        face + u * (clear / recipe["beyond_face_units_of_113"][-1]) for u in recipe["beyond_face_units_of_113"]]
+    half[-1] = half_span
+
+    def mirror(values):
+        return sorted(set(values) | {bay_length_in - v for v in values})
+
+    def midpoints(values, lo=None, hi=None):
+        extra = [(a + b) / 2.0 for a, b in zip(values, values[1:])
+                 if lo is None or lo <= (a + b) / 2.0 <= hi or bay_length_in - hi <= (a + b) / 2.0 <= bay_length_in - lo]
+        return sorted(set(values) | set(extra))
+
+    base = mirror(half)
+    coarse = mirror([half[i] for i in recipe["coarse_half_indices"]])
+    fine = midpoints(base)
+    lo, hi = (half[i] for i in recipe["fine_band_half_indices"])
+    finest = midpoints(fine, lo, hi)
+    return [coarse, base, fine, finest][:levels]
+
+
+def resolve_recipe_plan(geometry, sections, policy):
+    """Resolve a named recipe for this geometry and beam width against the shell budget.
+
+    Levels are nested and increasing, so the affordable ones form a prefix.
+    Fewer than two affordable levels is an explicit ``unresolved_budget``
+    result: nothing is coarsened and nothing passes.
+    """
+    name = policy["recipe"]
+    if name not in RECIPES:
+        raise ValueError(f"Unknown slab refinement recipe {name!r}")
+    budget = policy["max_shells"]
+    if isinstance(budget, bool) or not isinstance(budget, int) or not 4 <= budget <= MAX_EXPLICIT_SHELLS:
+        raise ValueError(f"Recipe max_shells must be an integer from 4 to {MAX_EXPLICIT_SHELLS}")
+    nx, ny = int(geometry["num_bay_x"]), int(geometry["num_bay_y"])
+    lx, ly = float(geometry["bay_x_in"]), float(geometry["bay_y_in"])
+    width = float(sections["b_beam_in"])
+    if nx < 1 or ny < 1:
+        raise ValueError("Recipe geometry needs at least one bay in each direction")
+    xs = graded_face_levels(lx, width, policy["levels"], RECIPES[name])
+    ys = graded_face_levels(ly, width, policy["levels"], RECIPES[name])
+    resolved, dropped = [], []
+    for level, (ox, oy) in enumerate(zip(xs, ys)):
+        count = nx * ny * (len(ox) - 1) * (len(oy) - 1)
+        entry = {"level": level, "shell_count": count, "cells_per_bay": [len(ox) - 1, len(oy) - 1]}
+        if count <= budget and not dropped:
+            resolved.append(dict(entry, mesh={"x_offsets_in": ox, "y_offsets_in": oy, "max_shells": budget}))
+        else:
+            dropped.append(dict(entry, reason=f"{count} shells exceed the declared budget {budget}"))
+    return {"recipe": name, "recipe_definition": RECIPES[name],
+            "inputs": {"num_bay_x": nx, "num_bay_y": ny, "bay_x_in": lx, "bay_y_in": ly, "beam_width_in": width,
+                       "levels": policy["levels"], "max_shells": budget},
+            "meshes": [r["mesh"] for r in resolved], "resolved_levels": resolved, "dropped_levels": dropped,
+            "status": "resolved" if len(resolved) >= 2 else "unresolved_budget",
+            "detail": (f"{len(resolved)} of {len(xs)} levels fit the {budget}-shell budget"
+                       + ("" if len(resolved) >= 2 else "; a refinement comparison needs two"))}
+
+
 def nested_refinement(coarse, fine):
     """Require retained nodes and a genuinely finer grid in at least one axis."""
     increased = False

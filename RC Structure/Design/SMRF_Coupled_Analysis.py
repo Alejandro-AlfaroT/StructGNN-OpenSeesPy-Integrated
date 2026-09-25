@@ -12,13 +12,30 @@ creep/cracking iteration, solid joint region or independent engineering
 qualification are claimed. The existing project's Iy+Iz torsion proxy is
 retained explicitly for sensitivity work, not asserted as Saint-Venant J.
 
+In-plane restraint is a declared assembly option (``inplane_restraint``):
+``finite_membrane`` (the default; nothing constrained), ``rigid_joints``
+(one rigidDiaphragm per floor over the column-joint slab nodes, the
+production frame's assumption placed in this assembly) or ``rigid_floor``
+(every slab node of the floor tied, the rigid-membrane limit). A diaphragm
+constrains slab nodes that retain web nodes, a constraint chain the
+Transformation handler does not support, so those variants require the
+``Lagrange`` (exact) or ``Penalty`` handler; the handler is a declared
+option too, so a finite-membrane run under Lagrange can be compared with
+the Transformation baseline before a restrained run is read. The constraint
+forces the diaphragm exerts on the slab nodes are recovered from node
+equilibrium and exported as ``diaphragm_constraint_actions`` so whole-floor
+free bodies still close. None of this is a design or NTHA model choice.
+
 No files or global Structure_Parameters are changed. The caller must provide
 an empty OpenSees domain. The diagnostic clears only its own scratch domain.
 
-References: OpenSees ShellMITC4, elasticBeamColumn, rigidLink and Transformation:
+References: OpenSees ShellMITC4, elasticBeamColumn, rigidLink, rigidDiaphragm
+and the constraint handlers:
 https://opensees.berkeley.edu/OpenSees/manuals/usermanual/640.htm
 https://opensees.github.io/OpenSeesDocumentation/user/manual/model/mp_constraint/rigidLink.html
+https://opensees.github.io/OpenSeesDocumentation/user/manual/model/mp_constraint/rigidDiaphragm.html
 https://opensees.github.io/OpenSeesDocumentation/user/manual/analysis/constraint/TransformationMethod.html
+https://opensees.github.io/OpenSeesDocumentation/user/manual/analysis/constraint/LagrangeMultipliers.html
 """
 from __future__ import annotations
 
@@ -29,7 +46,10 @@ import openseespy.opensees as ops
 
 from Design.SMRF_Floor_Analysis import _inputs, _integer, _number, MAX_SHELLS
 
-METHOD_VERSION = "smrf_monolithic_eccentric_shell_web_column_gravity_v2_section_actions"
+METHOD_VERSION = "smrf_monolithic_eccentric_shell_web_column_gravity_v3_inplane_restraint_options"
+SECTION_ACTION_SCHEMA = "native_global_actions_applied_loads_and_constraint_actions_v2"
+INPLANE_RESTRAINTS = ("finite_membrane", "rigid_joints", "rigid_floor")
+CONSTRAINT_HANDLERS = ("Transformation", "Lagrange", "Penalty")
 
 
 def _rectangle(b, h, fc, modifier, nu):
@@ -53,8 +73,39 @@ def _vector(values, length, label):
     return values
 
 
+def _transport(force_moment, position, reference):
+    """Same wrench at ``reference``: M_ref = M + (p - ref) x F."""
+    f = force_moment
+    r = [a-b for a, b in zip(position, reference)]
+    return [f[0], f[1], f[2],
+            f[3] + r[1]*f[2] - r[2]*f[1],
+            f[4] + r[2]*f[0] - r[0]*f[2],
+            f[5] + r[0]*f[1] - r[1]*f[0]]
+
+
+def _assembly_options(inplane_restraint, constraint_handler, penalty_alpha):
+    if inplane_restraint not in INPLANE_RESTRAINTS:
+        raise ValueError(f"inplane_restraint must be one of {INPLANE_RESTRAINTS}.")
+    if constraint_handler not in CONSTRAINT_HANDLERS:
+        raise ValueError(f"constraint_handler must be one of {CONSTRAINT_HANDLERS}.")
+    if inplane_restraint != "finite_membrane" and constraint_handler == "Transformation":
+        raise ValueError("A rigid diaphragm constrains slab nodes that retain web nodes; the Transformation "
+                         "handler does not support that constraint chain. Use Lagrange or Penalty.")
+    if constraint_handler == "Penalty":
+        if (isinstance(penalty_alpha, bool) or not isinstance(penalty_alpha, (int, float))
+                or not math.isfinite(penalty_alpha) or penalty_alpha <= 0):
+            raise ValueError("Penalty handler requires a finite positive penalty_alpha.")
+        penalty_alpha = float(penalty_alpha)
+    else:
+        penalty_alpha = None
+    return {"inplane_restraint": inplane_restraint, "constraint_handler": constraint_handler,
+            "penalty_alpha": penalty_alpha}
+
+
 def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
-                            mesh_per_bay=4, include_member_weight=True):
+                            mesh_per_bay=4, include_member_weight=True, *,
+                            inplane_restraint="finite_membrane",
+                            constraint_handler="Transformation", penalty_alpha=1.0e9):
     """Solve one explicit gravity combination on all floors simultaneously.
 
     ``floor_loadcases`` is a list of length num_floor in ascending floor order,
@@ -63,7 +114,12 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
     ``include_member_weight=False`` is a bounded diagnostic comparison only.
     Optional beam/column_stiffness_modifier default to 1 (gross); these scale
     bending/torsion, not axial stiffness. Maximum 8192 shells across ALL floors.
+
+    ``inplane_restraint`` and ``constraint_handler`` are declared assembly
+    options (module docstring); they are recorded in ``inputs`` and
+    ``assembly``. The defaults reproduce the previous method exactly.
     """
+    options = _assembly_options(inplane_restraint, constraint_handler, penalty_alpha)
     nf = _integer(geometry.get("num_floor"), "num_floor")
     sh = _number(geometry.get("story_h_in"), "story_h_in")
     if not isinstance(include_member_weight, bool):
@@ -94,14 +150,28 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
     ex, ey, dx, dy = nx*mesh, ny*mesh, lx/mesh, ly/mesh
     floor_nodes, web_nodes, base_nodes = {}, {}, {}
     positions, applied_nodes, shells, beams, columns, links = {}, {}, [], [], [], []
+    masters, constrained = {}, {}
     weight_ledger = {"slab_area_load_kip": 0., "beam_drop_weight_kip": 0., "column_weight_kip": 0.}
     # Global applied force and moment about (0,0,0); all gravity forces vertical.
     applied_force = [0., 0., 0.]
     applied_moment = [0., 0., 0.]
+    restraint_basis = {
+        "finite_membrane": "No in-plane constraint; the ElasticMembranePlateSection membrane carries in-plane action.",
+        "rigid_joints": "One rigidDiaphragm per floor over the column-joint slab nodes only (ux, uy, rz tied to an "
+                        "unloaded master at the plan centroid), the production frame's diaphragm placed in this assembly; "
+                        "slab nodes between joints keep the finite membrane.",
+        "rigid_floor": "One rigidDiaphragm per floor over every slab node (rigid-membrane limit); the slab carries "
+                       "no in-plane strain."}
     result = {"method_version": METHOD_VERSION, "verified": False, "applied_to_design": False,
               "status": "not_analyzed", "inputs": {"slab": copy.deepcopy(slab_record),
               "geometry": copy.deepcopy(geometry), "sections": copy.deepcopy(sections),
-              "floor_loadcases": copy.deepcopy(floor_loadcases), "include_member_weight": include_member_weight},
+              "floor_loadcases": copy.deepcopy(floor_loadcases), "include_member_weight": include_member_weight,
+              **options},
+              "assembly": {**options, "basis": restraint_basis[inplane_restraint],
+                           "diaphragm_masters": [], "constrained_node_count_per_floor": 0,
+                           "constraint_action_convention": "Force and couple the diaphragm constraint exerts ON the "
+                           "slab node, from node equilibrium (element resisting forces of the node and its rigid-linked "
+                           "web node, transported, minus the applied load); zero without a diaphragm."},
               "mesh_per_bay": mesh, "web_section": web, "column_section": column,
               "shell_response_convention": {"gauss_order": ["p11", "p22", "p12", "m11", "m22", "m12", "q1", "q2"],
                                             "axes": "local 1=X, local 2=Y, normal=+Z; CCW node ordering",
@@ -110,12 +180,14 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
                                             "location": "four Gauss points per cell; no face extrapolation"},
               "web_centroid_offset_from_slab_midplane_in": offset,
               "limitations": ["Static linear gravity diagnostic only, not an approved SMRF design or NTHA.",
-                              "Finite elastic membrane in this auxiliary model; production rigid diaphragm unchanged.",
+                              "Finite elastic membrane in this auxiliary model unless a rigid in-plane restraint is declared; "
+                              "production rigid diaphragm unchanged.",
                               "Gross shell stiffness; optional web/column modifiers are sensitivity assumptions, not a verified composite cracking model.",
                               "Beam web excludes slab flange, but centerline joint stiffness overlaps remain unmodeled in 3D solid detail.",
                               "Member weight uses clear beam spans and slab-excluded column volumes, smeared on centerlines.",
                               "Iy+Iz torsion proxy retained; verify actual torsional stiffness, joint-face actions, cracking, creep and support-face resultants.",
-                              "Web segment moments alone are NOT composite beam/slab design moments."]}
+                              "Web segment moments alone are NOT composite beam/slab design moments.",
+                              "A declared rigid in-plane restraint is a comparison assumption, not a validated floor model."]}
 
     def node(x, y, z):
         tag = len(positions)+1
@@ -151,6 +223,25 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
                         # the web node is constrained only, in one rigid link.
                         ops.rigidLink("beam", n, nw)
                         links.append((n, nw))
+        if inplane_restraint != "finite_membrane":
+            for k in range(1, nf+1):
+                # Unloaded bookkeeping master at the plan centroid; its out-of-plane
+                # DOFs are fixed because nothing else gives them stiffness. Declaring
+                # it after the links makes the chain explicit: the constrained slab
+                # nodes here are the retained nodes of the web links above.
+                master = node(nx*lx/2., ny*ly/2., k*sh)
+                ops.fix(master, 0, 0, 1, 1, 1, 0)
+                if inplane_restraint == "rigid_joints":
+                    tied = [floor_nodes[k, i*mesh, j*mesh] for j in range(ny+1) for i in range(nx+1)]
+                else:
+                    tied = [floor_nodes[k, i, j] for j in range(ey+1) for i in range(ex+1)]
+                ops.rigidDiaphragm(3, master, *tied)
+                masters[k] = master
+                constrained[k] = tied
+                result["assembly"]["diaphragm_masters"].append(
+                    {"floor": k, "node": master, "position_in": positions[master],
+                     "constrained_nodes": len(tied)})
+            result["assembly"]["constrained_node_count_per_floor"] = len(constrained[1])
         tag = 0
         for k in range(1, nf+1):
             for j in range(ey):
@@ -207,7 +298,10 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
                 ni, nj = item["nodes"]
                 weight_ledger["beam_drop_weight_kip"] += p
                 gravity_resultant(p, (positions[ni][0]+positions[nj][0])/2., (positions[ni][1]+positions[nj][1])/2.)
-        ops.constraints("Transformation")
+        if constraint_handler == "Penalty":
+            ops.constraints("Penalty", options["penalty_alpha"], options["penalty_alpha"])
+        else:
+            ops.constraints(constraint_handler)
         ops.numberer("RCM")
         ops.system("UmfPack")
         ops.algorithm("Linear")
@@ -235,10 +329,21 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
         moment_error = max(abs(a+b) for a, b in zip(rm, applied_moment))/moment_scale
         disps = {n: _vector(ops.nodeDisp(n), 6, "node displacement") for n in positions}
         link_error = 0.
-        for retained, constrained in links:
+        for retained, constrained_node in links:
             u = disps[retained]
             expected = [u[0]+offset*u[4], u[1]-offset*u[3], u[2], *u[3:]]
-            link_error = max(link_error, *(abs(a-b) for a, b in zip(disps[constrained], expected)))
+            link_error = max(link_error, *(abs(a-b) for a, b in zip(disps[constrained_node], expected)))
+        # Diaphragm kinematics: every tied node moves with its master's rigid
+        # in-plane field. Exact under Lagrange; a Penalty run reports its slip.
+        diaphragm_error = 0.
+        for k, master in masters.items():
+            um, (cx, cy, _) = disps[master], positions[master]
+            for n in constrained[k]:
+                x, y, _ = positions[n]
+                u = disps[n]
+                expected = [um[0]-um[5]*(y-cy), um[1]+um[5]*(x-cx), um[5]]
+                diaphragm_error = max(diaphragm_error, abs(u[0]-expected[0]), abs(u[1]-expected[1]),
+                                      abs(u[5]-expected[2]))
         # Shell -> frame actions at retained shell coordinates, all six DOFs.
         # These are an equilibrium partition at THIS coupled displacement,
         # not reusable fixed loads for a different bare frame stiffness.
@@ -259,8 +364,70 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
                            "node_positions_in": [positions[n] for n in item["nodes"]],
                            "global_nodal_force_kip_kip_in": f,
                            "applied_nodal_force_kip_kip_in": [0., 0., -q*dx*dy/4., 0., 0., 0.]*4})
+        for group in (beams, columns):
+            for item in group:
+                item["local_force_kip_kip_in"] = _vector(ops.eleResponse(item["tag"], "localForce"), 12, "member local force")
+                item["global_force_kip_kip_in"] = _vector(ops.eleForce(item["tag"]), 12, "member global force")
+                item["node_positions_in"] = [positions[n] for n in item["nodes"]]
+                if group is beams:
+                    item["body_load_position_in"] = [(a+b)/2. for a,b in zip(*item["node_positions_in"])]
+        # Element resisting forces gathered per node, with each web node's
+        # forces transported to the slab node its rigid link retains. The rigid
+        # link's own force pair cancels in that sum (equal and opposite wrench),
+        # so what remains against the applied load is the diaphragm force.
+        element_at_node = {n: list(shell_forces[n]) for n in floor_nodes.values()}
+        for col in columns:
+            for end, n in enumerate(col["nodes"]):
+                if n in element_at_node:
+                    for d in range(6):
+                        element_at_node[n][d] += col["global_force_kip_kip_in"][6*end+d]
+        shell_of_web = {nw: n for n, nw in links}
+        for beam in beams:
+            for end, nw in enumerate(beam["nodes"]):
+                n = shell_of_web[nw]
+                transported = _transport(beam["global_force_kip_kip_in"][6*end:6*end+6], positions[nw], positions[n])
+                for d in range(6):
+                    element_at_node[n][d] += transported[d]
+        constraint_actions, free_node_residual = [], 0.
+        constrained_set = {n for tied in constrained.values() for n in tied}
+        grid_of = {n: (i//mesh, j//mesh) if i % mesh == 0 and j % mesh == 0 else None
+                   for (k, i, j), n in floor_nodes.items()}
+        floor_of = {n: k for (k, i, j), n in floor_nodes.items()}
+        for n, f in element_at_node.items():
+            action = [f[0], f[1], f[2]+applied_nodes.get(n, 0.), f[3], f[4], f[5]]
+            if n in constrained_set:
+                grid = grid_of[n]
+                constraint_actions.append({"floor": floor_of[n], "node": n, "position_in": positions[n],
+                                           "grid_i": None if grid is None else grid[0],
+                                           "grid_j": None if grid is None else grid[1],
+                                           "force_moment": action})
+            else:
+                free_node_residual = max(free_node_residual, *(abs(v) for v in action))
+        diaphragm_balance = []
+        for k, master in masters.items():
+            total = [0.]*6
+            for item in constraint_actions:
+                if item["floor"] == k:
+                    w = _transport(item["force_moment"], item["position_in"], positions[master])
+                    for d in range(6):
+                        total[d] += w[d]
+            out_of_plane = max(abs(item["force_moment"][d]) for item in constraint_actions
+                               if item["floor"] == k for d in (2, 3, 4))
+            diaphragm_balance.append({"floor": k, "sum_about_master": total,
+                                      "force_relative_error": max(abs(v) for v in total[:3])/force_scale,
+                                      "moment_relative_error": max(abs(v) for v in total[3:])/moment_scale,
+                                      "max_out_of_plane_component": out_of_plane})
+        constraint_errors = [free_node_residual/force_scale] + [
+            max(item["force_relative_error"], item["moment_relative_error"],
+                item["max_out_of_plane_component"]/force_scale) for item in diaphragm_balance]
         interface = []
-        for retained, _ in links:
+        interface_nodes = [retained for retained, _ in links]
+        if inplane_restraint == "rigid_floor":
+            # Interior slab nodes carry in-plane diaphragm forces too; the
+            # global shell-to-frame balance has to see them.
+            line_nodes = set(interface_nodes)
+            interface_nodes += [n for n in floor_nodes.values() if n not in line_nodes]
+        for retained in interface_nodes:
             loads = [-v for v in shell_forces[retained]]
             loads[2] -= applied_nodes.get(retained, 0.)
             interface.append({"node": retained, "position_in": positions[retained], "force_moment": loads})
@@ -274,13 +441,6 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
             interface_moment[2] += f[5]+x*f[1]-y*f[0]
         interface_f_error = max(abs(a-b) for a, b in zip(interface_force, slab_force))/force_scale
         interface_m_error = max(abs(a-b) for a, b in zip(interface_moment, slab_moment))/moment_scale
-        for group in (beams, columns):
-            for item in group:
-                item["local_force_kip_kip_in"] = _vector(ops.eleResponse(item["tag"], "localForce"), 12, "member local force")
-                item["global_force_kip_kip_in"] = _vector(ops.eleForce(item["tag"]), 12, "member global force")
-                item["node_positions_in"] = [positions[n] for n in item["nodes"]]
-                if group is beams:
-                    item["body_load_position_in"] = [(a+b)/2. for a,b in zip(*item["node_positions_in"])]
         floor_boundary_actions = []
         for col in columns:
             # Column actions ON the floor are opposite the column's native
@@ -296,27 +456,35 @@ def analyze_coupled_gravity(slab_record, geometry, sections, floor_loadcases,
             floors.append({"floor": k, "maximum_downward_displacement_in": max(0., -min(disps[n][2] for n in nodes)),
                            "column_joint_displacements": [{"grid_i": i, "grid_j": j,
                                 "displacement_rotation": disps[floor_nodes[k, i*mesh, j*mesh]]}
-                                for j in range(ny+1) for i in range(nx+1)]})
+                                for j in range(ny+1) for i in range(nx+1)],
+                           "diaphragm_master_displacement_rotation": disps[masters[k]] if k in masters else None})
         result.update({"weight_ledger": weight_ledger, "base_reactions": reactions,
                        "equilibrium": {"applied_force_kip": applied_force, "applied_moment_kip_in": applied_moment,
                                        "base_force_kip": rf, "base_moment_kip_in": rm,
                                        "force_relative_error": force_error, "moment_relative_error": moment_error,
                                        "numerical_balance_passed": max(force_error, moment_error) < 1e-8},
-                       "rigid_offset_max_residual": link_error, "shell_count": len(shells),
+                       "rigid_offset_max_residual": link_error, "diaphragm_max_residual": diaphragm_error,
+                       "constraint_action_check": {"free_node_max_residual_kip": free_node_residual,
+                                                   "per_floor_diaphragm_balance": diaphragm_balance,
+                                                   "numerical_balance_passed": max(constraint_errors) < 1e-8},
+                       "shell_count": len(shells),
                        "beam_segment_count": len(beams), "column_count": len(columns),
                        "node_count": len(positions), "floors": floors, "shell_resultants": panels,
                        "web_segment_actions": beams, "column_actions": columns,
                        "floor_boundary_actions": floor_boundary_actions,
-                       "section_action_schema": "native_global_actions_and_applied_loads_v1",
+                       "diaphragm_constraint_actions": constraint_actions,
+                       "section_action_schema": SECTION_ACTION_SCHEMA,
                        "shell_to_frame_nodal_actions": interface,
                        "shell_to_frame_equilibrium": {
                            "interface_force_kip": interface_force, "interface_moment_kip_in": interface_moment,
                            "slab_applied_force_kip": slab_force, "slab_applied_moment_kip_in": slab_moment,
                            "force_relative_error": interface_f_error, "moment_relative_error": interface_m_error,
                            "numerical_balance_passed": max(interface_f_error, interface_m_error) < 1e-8,
-                           "basis": "All six interface actions at retained slab-node coordinates; member self-weight excluded."}})
-        result["status"] = ("diagnostic_complete" if max(force_error, moment_error, interface_f_error, interface_m_error) < 1e-8
-                            and link_error < 1e-8 else "equilibrium_failed")
+                           "basis": "All six interface actions at retained slab-node coordinates (plus interior slab "
+                                    "nodes under a rigid floor); member self-weight excluded."}})
+        result["status"] = ("diagnostic_complete"
+                            if max(force_error, moment_error, interface_f_error, interface_m_error, *constraint_errors) < 1e-8
+                            and link_error < 1e-8 and diaphragm_error < 1e-8 else "equilibrium_failed")
         return result
     finally:
         ops.wipe()

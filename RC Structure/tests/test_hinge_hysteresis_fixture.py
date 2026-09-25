@@ -51,6 +51,12 @@ class CyclicMeasurementFixture(unittest.TestCase):
         from Design.Verify_Designs import probe_config
         try:
             record = driver.design_structure(cfg=probe_config("2026-09-21"), max_section_iter=1, max_steel_iter=1, verbose=False)
+        except BaseException:
+            # A failed fixture must not leave the patched geometry behind for
+            # every later test module (it did: 2x1x2 leaked into the slab-load,
+            # energy-mapping and integration tests of the same discover run).
+            cls.stack.close()
+            raise
         finally:
             ops.wipe()
         cls.record = json.loads(json.dumps(record, allow_nan=False))

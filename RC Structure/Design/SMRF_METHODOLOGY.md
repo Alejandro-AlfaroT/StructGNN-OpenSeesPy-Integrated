@@ -205,6 +205,34 @@ cases the gap is 0.1-0.2% of the governing moment. The compatibility
 question is not closed by these numbers; they are what closing it will be
 argued from.
 
+The in-plane restraint behind that gap was isolated on 2026-09-24
+(`docs/handoffs/2026-09-24-coupled-inplane-restraint.md`): the coupled
+diagnostic now takes a declared `inplane_restraint` (`finite_membrane`,
+`rigid_joints`, `rigid_floor`) and `constraint_handler` (Transformation,
+Lagrange, Penalty; a diaphragm over slab nodes that retain web nodes is a
+constraint chain, so the restrained variants run under Lagrange, which
+reproduces the Transformation baseline exactly), recovers the diaphragm
+constraint forces from node equilibrium and exports them so the whole-floor
+cuts still close. On the fixed 2x6x6 candidate, tying the column joints in
+the coupled assembly — the production frame's own diaphragm — moves the
+roof-story exterior column ends by up to 14.9% of their governing demand
+and takes the worst frame/coupled gap from 18.5% to 11.5% (all panels) and
+16.8% to 9.7% (alternate X), the mean from 3.7% to 1.4%, and the ends
+further than 5% from the frame from 52 to 6 of 252; the rigid-membrane
+limit moves away from the frame (19.4% max) and is not a proxy for it. The
+ties carry about 140 kip of in-plane force per interior cut that the
+finite membrane carries as web axial force at its eccentricity, so the
+composite floor section changes too (-7% whole-floor bending at the lower
+floors). The residual with the diaphragm matched is a beam/joint
+representation term concentrated on the interior-edge line of the 2-bay
+direction. The handoff's recommendation — decompose the compatibility
+evidence into a diaphragm term and a representation term in
+`SMRF_Coupled_Comparison`, decide the frame's gravity restraint on its
+physical basis, close the representation term with a matched
+beam-representation comparison, and recover member forces from the cuts by
+a disjoint interval partition — is a proposal awaiting the engineer's
+decision; nothing in the production demand basis changed.
+
 The two demand gaps named above are closed in the same way: beam interior
 gravity extrema are recovered from the actual element loads
 (`SMRF_Beam_Actions`, `beam.interior_flexure_envelope`), and slab support-face
@@ -875,8 +903,29 @@ verification failure reason, without selecting a layout. The qualification
 report keeps `floor.independent_hand_verification` open regardless.
 
 The bounded refinement path is configured through
-`FloorAnalysisConfig.slab_refinement`: a sequence of 2-8 explicit meshes,
-`moment_tolerance`, `shear_tolerance`, and a nonempty `tolerance_basis`.
+`FloorAnalysisConfig.slab_refinement`: either a sequence of 2-8 explicit
+meshes, `moment_tolerance`, `shear_tolerance`, and a nonempty
+`tolerance_basis`, or (2026-09-24, PROBE integration repair) a named
+recipe -- `recipe`, `levels`, `max_shells` and the same three -- that
+`SMRF_Floor_Mesh.resolve_recipe_plan` resolves for the current bay
+dimensions and beam face at every section iteration. `graded_face_v1`
+reproduces the fixed-candidate benchmark meshes exactly (24/48/60 cells
+per 240-in bay with a 14-in beam, plus a nested 12-cell level) with the
+beam face and the graded near-support nodes placed from the actual beam
+width; the policy in the request identity therefore carries no
+coordinates and the methodology hash agrees across geometries, while every
+resolved coordinate set, its hash and the recipe inputs (bay dimensions,
+beam width, budget) travel with the evidence and are re-resolved and
+compared at qualification. The nested levels are increasing, so the
+affordable ones under `max_shells` are a prefix; fewer than two is an
+explicit `unresolved_budget` result -- no solve, no coarsening, no pass --
+and the design refuses with that status named. On the plan's largest 6x6
+floors only the 12- and 24-cell levels fit the 45,000-shell budget, so
+their screen is coarser than the benchmark's and a genuine convergence
+rejection there is a result, not a malfunction. Both PROBE factories
+(`Verify_Designs.probe_config`, `Evidence_Summary.probe_config`) carry the
+one shared `Design.Config.PROBE_SLAB_REFINEMENT`; an asserted design
+without any plan is refused before solving, naming the missing field.
 Each mesh contains `x_offsets_in` and `y_offsets_in` spanning one bay,
 and an explicit `max_shells` budget (at most 45,000 for one floor).
 Coordinates repeat at every bay; later meshes retain all previous nodes.

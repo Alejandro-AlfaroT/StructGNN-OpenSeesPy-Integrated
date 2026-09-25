@@ -37,7 +37,10 @@ needed for this run.
 & "<python>" -B "<repo>\RC Structure\Design\Verify_Designs.py" --count 150 --plan-only
 ```
 
-Expected: `Plan SHA256: 0ECF5651E131F8A1A7F1F58F4637E3222F411AEE89407D2C56926370F9F1B890`
+Expected: `Plan SHA256: CD813D4D66A4958B51069F67F9010EE243E6544D02E7ACB51E916EEA7653B94E`
+(plan of 2026-09-24, story heights 12-16 ft; the dv150 roots v7-v10 were
+designed under the 10-14 ft plan `0ECF5651...` and cannot be resumed or
+extended under this one -- start a new root)
 
 Mismatch = stop. Causes in order: `git pull` not run, stray edit in `RANGES`
 or `SEISMIC_SITES`, wrong `--count`. The launcher also refuses to add cases to

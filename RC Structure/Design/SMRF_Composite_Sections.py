@@ -164,9 +164,19 @@ def recover_planar_cut(shells, webs, external_actions, *, axis, position_in, ref
                 scope='Whole assembly width; not a beam effective-flange allocation or member design demand')
 
 
+ACCEPTED_SCHEMAS = ('native_global_actions_and_applied_loads_v1',
+                    'native_global_actions_applied_loads_and_constraint_actions_v2')
+
+
 def recover_floor_cut(result, floor, axis, position_in, *, reference_in=None, numerical_tolerance=1e-8):
-    """Recover one whole-floor section from a coupled native-action record."""
-    if result.get('status') != 'diagnostic_complete' or result.get('section_action_schema') != 'native_global_actions_and_applied_loads_v1':
+    """Recover one whole-floor section from a coupled native-action record.
+
+    A record made under a declared rigid in-plane restraint carries the
+    diaphragm constraint forces on its slab nodes (schema v2); they enter the
+    free bodies as external actions, and a cut through a constrained node is
+    rejected because a point action on the cut belongs to neither side.
+    """
+    if result.get('status') != 'diagnostic_complete' or result.get('section_action_schema') not in ACCEPTED_SCHEMAS:
         raise ValueError('A completed coupled solve with native section-action records is required')
     geometry, mesh = result['inputs']['geometry'], result['mesh_per_bay']
     if isinstance(floor, bool) or not isinstance(floor,int) or not 1<=floor<=geometry['num_floor']:
@@ -192,6 +202,15 @@ def recover_floor_cut(result, floor, axis, position_in, *, reference_in=None, nu
     expected_count = (geometry['num_bay_x']+1)*(geometry['num_bay_y']+1)*(1 if floor==geometry['num_floor'] else 2)
     if len(external)!=expected_count or len({(a['source_column'],a['end']) for a in external})!=expected_count:
         raise ValueError('Incomplete or duplicate column boundary-action inventory')
+    if result['section_action_schema'] != 'native_global_actions_and_applied_loads_v1':
+        assembly = result.get('assembly') or {}
+        expected_tied = assembly.get('constrained_node_count_per_floor')
+        tied = [a for a in result.get('diaphragm_constraint_actions', []) if a['floor']==floor]
+        if (not isinstance(expected_tied,int) or isinstance(expected_tied,bool) or len(tied)!=expected_tied
+                or len({a['node'] for a in tied})!=expected_tied
+                or (expected_tied>0) != (assembly.get('inplane_restraint') in ('rigid_joints','rigid_floor'))):
+            raise ValueError('Incomplete or duplicate diaphragm constraint-action inventory')
+        external = external+[dict(a, source='diaphragm_constraint') for a in tied]
     if reference_in is None:
         reference_in = [geometry['num_bay_x']*geometry['bay_x_in']/2,
                         geometry['num_bay_y']*geometry['bay_y_in']/2, floor*geometry['story_h_in']]

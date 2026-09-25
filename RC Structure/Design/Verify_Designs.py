@@ -140,7 +140,8 @@ def tail_request_identity(design_path, tail_bytes=1 << 20):
 
 
 def probe_config(probe_date=None):
-    from Design.Config import DesignConfig, SlabActionAssertions, DemandPolicy, IndependentVerification
+    from Design.Config import (DesignConfig, SlabActionAssertions, DemandPolicy, IndependentVerification,
+                               FloorAnalysisConfig, PROBE_SLAB_REFINEMENT)
     slab_flags = ("analysis_applicability_verified", "all_floors_enveloped", "load_pattern_envelope_verified",
                   "spatial_envelope_per_unit_width", "twisting_moment_resolution_verified",
                   "zero_membrane_force_verified", "verified", "two_way_shear_path_assessed")
@@ -153,7 +154,10 @@ def probe_config(probe_date=None):
     return DesignConfig(
         slab_actions=SlabActionAssertions(**{k: True for k in slab_flags}, **stamp),
         demands=DemandPolicy(declared_by=PROBE, declaration_date=probe_date, declaration_basis=PROBE),
-        verification=IndependentVerification(**{k: True for k in verify_flags}, **stamp))
+        verification=IndependentVerification(**{k: True for k in verify_flags}, **stamp),
+        # Asserted slab actions need a refinement plan to select reinforcement;
+        # the shared PROBE recipe keeps the methodology hash geometry-independent.
+        floor_analysis=FloorAnalysisConfig(slab_refinement=dict(PROBE_SLAB_REFINEMENT)))
 
 
 def search_summary(record):

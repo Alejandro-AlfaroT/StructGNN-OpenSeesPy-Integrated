@@ -2,6 +2,14 @@
 
 Agreement is a numerical screen. It does not resolve the support model,
 floor/frame compatibility, membrane reinforcement, or engineering assertions.
+
+A plan is either explicit (``meshes`` with offsets per bay) or a named
+recipe (``recipe`` + ``levels`` + ``max_shells``) resolved for the current
+bay dimensions and beam face at every call, so the policy in the request
+identity is geometry-independent while the resolved coordinates and their
+hashes travel with the evidence. A recipe whose affordable levels are fewer
+than two yields an explicit ``unresolved_budget`` result: no solve, no
+coarsening, no pass.
 """
 from __future__ import annotations
 
@@ -9,29 +17,65 @@ import copy
 import math
 import time
 
-from Design.SMRF_Floor_Mesh import floor_mesh, nested_refinement
+from Design.SMRF_Floor_Mesh import floor_mesh, nested_refinement, resolve_recipe_plan
+
+EXPLICIT_KEYS = {"meshes", "moment_tolerance", "shear_tolerance", "tolerance_basis"}
+RECIPE_KEYS = {"recipe", "levels", "max_shells", "moment_tolerance", "shear_tolerance", "tolerance_basis"}
 
 
-def _plan(geometry, policy):
-    required = {"meshes", "moment_tolerance", "shear_tolerance", "tolerance_basis"}
-    if not isinstance(policy, dict) or set(policy) != required:
-        raise ValueError(f"Slab refinement requires exactly {sorted(required)}")
+def _validate_policy(policy):
+    if not isinstance(policy, dict):
+        raise ValueError("Slab refinement policy must be a dictionary")
+    keys = set(policy)
+    if keys == EXPLICIT_KEYS:
+        kind = "explicit"
+    elif keys == RECIPE_KEYS:
+        kind = "recipe"
+    elif "meshes" in keys and "recipe" in keys:
+        raise ValueError("Slab refinement takes an explicit mesh plan or a named recipe, not both")
+    else:
+        raise ValueError(f"Slab refinement requires exactly {sorted(EXPLICIT_KEYS)} or {sorted(RECIPE_KEYS)}")
     for key in ("moment_tolerance", "shear_tolerance"):
         v = policy[key]
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 < v < 1:
             raise ValueError("Refinement tolerances must be explicit finite numbers between zero and one")
     if not isinstance(policy["tolerance_basis"], str) or not policy["tolerance_basis"].strip():
         raise ValueError("Refinement requires an explicit tolerance_basis")
-    specs = policy["meshes"]
-    if not isinstance(specs, (list, tuple)) or not 2 <= len(specs) <= 8:
-        raise ValueError("Bounded refinement requires between two and eight explicit meshes")
+    return kind
+
+
+def _plan(geometry, policy, *, sections=None, recipe_inputs=None):
+    """Grids of the plan, plus the recipe resolution (None for an explicit plan).
+
+    A recipe resolves from the live ``sections`` (beam width) or, when
+    checking a saved record, from the ``recipe_inputs`` it recorded.
+    """
+    kind = _validate_policy(policy)
     from Design.SMRF_Floor_Analysis import _integer, _number
     nx, ny = (_integer(geometry[k], k) for k in ("num_bay_x", "num_bay_y"))
     lx, ly = (_number(geometry[k], k) for k in ("bay_x_in", "bay_y_in"))
+    resolution = None
+    if kind == "explicit":
+        specs = policy["meshes"]
+        if not isinstance(specs, (list, tuple)) or not 2 <= len(specs) <= 8:
+            raise ValueError("Bounded refinement requires between two and eight explicit meshes")
+    else:
+        if recipe_inputs is not None:
+            source = {"b_beam_in": recipe_inputs["beam_width_in"]}
+            if (recipe_inputs.get("num_bay_x"), recipe_inputs.get("num_bay_y"), recipe_inputs.get("bay_x_in"),
+                    recipe_inputs.get("bay_y_in")) != (nx, ny, lx, ly):
+                raise ValueError("Recorded recipe inputs disagree with the geometry")
+        elif sections is not None:
+            source = sections
+        else:
+            raise ValueError("A recipe plan needs the beam section to resolve")
+        resolution = resolve_recipe_plan({"num_bay_x": nx, "num_bay_y": ny, "bay_x_in": lx, "bay_y_in": ly},
+                                         source, policy)
+        specs = resolution["meshes"]
     grids = [floor_mesh(nx, ny, lx, ly, 4, mesh_spec=spec) for spec in specs]
     for a, b in zip(grids, grids[1:]):
         nested_refinement(a, b)
-    return grids
+    return grids, resolution
 
 
 def refinement_verified(evidence):
@@ -41,7 +85,12 @@ def refinement_verified(evidence):
         report = evidence["refinement"]
         if report["status"] != "passed" or report["all_within_tolerance"] is not True:
             return False
-        grids = _plan(report["geometry"], report["policy"])
+        grids, resolution = _plan(report["geometry"], report["policy"], recipe_inputs=report.get("recipe_inputs"))
+        if (resolution is None) != (report.get("resolution") is None):
+            return False
+        if resolution is not None and (resolution["status"] != "resolved"
+                                       or resolution["meshes"] != report["resolved_meshes"]):
+            return False
         levels = report["levels"]
         if len(levels) != len(grids) or any(level["status"] != "completed" for level in levels):
             return False
@@ -75,18 +124,28 @@ def build_refined_slab_action_evidence(slab_record, geometry, sections, live_loa
     solutions immediately. The returned record always retains attempted
     case summaries, successful demand records and failure reasons. Failed
     fine solves cannot qualify a previous coarse result. Invalid plans are
-    rejected before creating any OpenSees domain.
+    rejected before creating any OpenSees domain; a recipe that does not
+    resolve to two affordable levels returns unverified evidence without
+    solving anything.
     """
     from Design.SMRF_Slab_Actions import build_slab_action_evidence, compare_slab_action_refinement, _FLAGS
-    grids = _plan(geometry, policy)
-    report = {"required": True, "method": "bounded_explicit_slab_refinement_v1",
+    grids, resolution = _plan(geometry, policy, sections=sections)
+    report = {"required": True, "method": "bounded_explicit_slab_refinement_v2_recipes",
               "status": "running", "all_within_tolerance": False, "engineering_verified": False,
               "geometry": copy.deepcopy(geometry), "policy": copy.deepcopy(policy),
-              "tolerance_basis": policy["tolerance_basis"], "levels": [], "comparisons": []}
+              "tolerance_basis": policy["tolerance_basis"], "levels": [], "comparisons": [],
+              "resolution": copy.deepcopy(resolution),
+              "recipe_inputs": None if resolution is None else copy.deepcopy(resolution["inputs"]),
+              "resolved_meshes": None if resolution is None else copy.deepcopy(resolution["meshes"])}
     latest = {flag: False for flag in _FLAGS}
     latest.update(strips=[], cases=[], equilibrium=[], numerical_preconditions={},
                   numerical_basis={}, engineering_assertions=copy.deepcopy(assertions or {}))
-    for index, (spec, grid) in enumerate(zip(policy["meshes"], grids)):
+    specs = policy["meshes"] if resolution is None else resolution["meshes"]
+    if resolution is not None and resolution["status"] != "resolved":
+        report["status"] = resolution["status"]
+        report["status_detail"] = resolution["detail"]
+        specs, grids = [], []
+    for index, (spec, grid) in enumerate(zip(specs, grids)):
         level = {"index": index, "requested_mesh": grid, "status": "started", "attempted_cases": []}
         report["levels"].append(level)
         start = time.perf_counter()
@@ -117,7 +176,7 @@ def build_refined_slab_action_evidence(slab_record, geometry, sections, live_loa
             break
         finally:
             level["elapsed_seconds"] = time.perf_counter() - start
-    if report["status"] != "analysis_failed":
+    if report["status"] == "running":
         report["all_within_tolerance"] = report["comparisons"][-1]["all_within_tolerance"]
         report["status"] = "passed" if report["all_within_tolerance"] else "comparison_failed"
     evidence = copy.deepcopy(latest)

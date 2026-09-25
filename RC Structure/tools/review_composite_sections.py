@@ -168,7 +168,14 @@ def run_review(design, references, output):
                     raise RuntimeError(result['status'])
                 ref_path = references/f"{case['id']}_coupled_m{mesh}.json.gz"
                 original = json.loads(gzip.decompress(ref_path.read_bytes()))
-                if result['inputs'] != original['inputs']:
+                # The saved references predate the declared assembly options;
+                # they were solved finite-membrane under Transformation by
+                # construction, which is what this review requests.
+                assembly_keys = ('inplane_restraint', 'constraint_handler', 'penalty_alpha')
+                if result['inputs']['inplane_restraint'] != 'finite_membrane' or result['inputs']['constraint_handler'] != 'Transformation':
+                    raise ValueError('Reference comparison requires the finite-membrane Transformation assembly')
+                if {k: v for k, v in result['inputs'].items() if k not in assembly_keys} != {
+                        k: v for k, v in original['inputs'].items() if k not in assembly_keys}:
                     raise ValueError('Saved coupled reference input mismatch')
                 old = {c['tag']:c['local_force_kip_kip_in'] for c in original['column_actions']}
                 if set(old) != {c['tag'] for c in result['column_actions']}:

@@ -30,7 +30,8 @@ RC_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RC_DIR))
 import Structure_Parameters as sp  # noqa: E402
 import Design.Design_Driver as dd  # noqa: E402
-from Design.Config import DesignConfig, SlabActionAssertions, DemandPolicy, IndependentVerification  # noqa: E402
+from Design.Config import (DesignConfig, SlabActionAssertions, DemandPolicy, IndependentVerification,  # noqa: E402
+                           FloorAnalysisConfig, PROBE_SLAB_REFINEMENT)
 
 PROBE = "PROBE -- evidence review only, not a certification"
 REVIEW_CASE = {"NUM_BAY_X": 3, "NUM_BAY_Y": 3, "NUM_FLOOR": 8, "BAY_X": 120.0, "BAY_Y": 120.0, "STORY_H": 120.0}
@@ -48,6 +49,9 @@ def probe_config(date=None):
                                           asserted_by=PROBE, assertion_date=date, assertion_basis=PROBE),
         demands=DemandPolicy(declared_by=PROBE, declaration_date=date, declaration_basis=PROBE),
         verification=IndependentVerification(asserted_by="", assertion_basis=""),
+        # Same shared PROBE recipe as Verify_Designs.probe_config; the
+        # verification block above stays deliberately empty.
+        floor_analysis=FloorAnalysisConfig(slab_refinement=dict(PROBE_SLAB_REFINEMENT)),
     )
 
 
