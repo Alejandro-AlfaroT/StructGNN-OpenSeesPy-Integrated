@@ -254,8 +254,12 @@ def hinge_inventory(inventory):
             continue
         kind = entry["member_type"]
         length = entry["length_in"]
-        ke_y = imk_hinge_stiffness(kind, "rot_y", length)
-        ke_z = imk_hinge_stiffness(kind, "rot_z", length)
+        # The installed spring stiffness is recorded at build time from the
+        # member's own properties (its line's T-section, its axial state); a
+        # recomputation here without them would disagree for edge beams.
+        # Older registries without the entry fall back to the recomputation.
+        ke_y = entry.get("ke_y_kip_in_per_rad") or imk_hinge_stiffness(kind, "rot_y", length)
+        ke_z = entry.get("ke_z_kip_in_per_rad") or imk_hinge_stiffness(kind, "rot_z", length)
         for end_id, end in ((1, "i"), (2, "j")):
             if kind == "column":
                 fy_pos = fy_neg = entry["yield_moment_y_kip_in"]

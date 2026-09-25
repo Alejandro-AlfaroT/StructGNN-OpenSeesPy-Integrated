@@ -45,6 +45,20 @@ class CyclicMeasurementFixture(unittest.TestCase):
         sp.NUM_BAY_X, sp.NUM_BAY_Y = 2, 1
         sp.NUM_FLOOR = 2
         sp.NUM_MODES = 3 * sp.NUM_FLOOR
+        # This fixture measures installed strengths with the diagnostic's exact
+        # Bilin tangent-based yield and plastic-rotation accounting; under
+        # IMKPeakOriented (the production member material since 2026-09-24)
+        # the diagnostic reports virgin-envelope exceedance only, with no
+        # accumulated plastic rotation, so the both-sign plateau checks below
+        # are not defined for it. The material is pinned here; a
+        # PeakOriented cyclic measurement fixture is separate, open work.
+        # Likewise the deterioration mode: the plateau checks compare the
+        # first-excursion strength with the installed Fy, and the Haselton
+        # capacities (Lambda ~ 0.6 rad) already take a few tenths of a percent
+        # off a spring that yields only after the reversal. The translation
+        # itself is tested in tests/test_imk_deterioration_mapping.py.
+        cls.stack.enter_context(mock.patch.object(sp, "IMK_MATERIAL_TYPE", "IMKBilin"))
+        cls.stack.enter_context(mock.patch.object(sp, "IMK_DETERIORATION_MODE", "direct"))
         # The PROBE configuration asserts the slab-action evidence, so the design establishes a slab
         # reinforcement layout and the beam hinges carry the composite, per-end asymmetric strengths
         # of a qualified record (hogging with the slab mats, sagging with the flange, lower exterior ends).

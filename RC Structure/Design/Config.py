@@ -45,7 +45,8 @@ class RebarConfig:
     col_n_top_range / beam_n_range
         Inclusive (min, max) bar count search bounds.
         Column: n_top == n_bot enforced (symmetric section).
-        Beam: n_top and n_bot solved independently.
+        Beam: equal top/bottom counts by default; set beam_symmetric=False
+        explicitly to reproduce the independent-layer design search.
 
     col_n_side_options
         Candidate side-bar counts per face (total side = 2 × value).
@@ -90,6 +91,7 @@ class RebarConfig:
         default_factory=lambda: [0, 1, 2, 3, 4]    # bars per face
     )
     beam_n_range: Tuple[int, int] = (2, 7)         # inclusive, per layer
+    beam_symmetric: bool = True                  # same bar size and count on both faces
 
     rho_col_min: float = 0.01
     rho_col_max: float = 0.06

@@ -155,8 +155,9 @@ def define_rotational_imk(material_type, mat_tag, ke, positive, negative, cyclic
     args = (material_type, int(mat_tag), ke, *positive.arguments(), *negative.arguments(),
             *cyclic.arguments(material_type))
     for branch in (positive, negative):
-        if branch.du <= branch.fy / ke:
-            raise ValueError("Ultimate rotation must exceed the spring's own elastic yield rotation")
+        if branch.du <= branch.fy / ke + branch.dp:
+            raise ValueError("Ultimate rotation must exceed the capping rotation "
+                             "(the spring's own elastic yield rotation plus the plastic rotation)")
     identity = {"schema_version": SCHEMA_VERSION, "material_type": material_type,
                 "units": {"moment": "kip-in", "rotation": "rad", "stiffness": "kip-in/rad", "lamda": "rad"},
                 "ke": ke, "positive": asdict(positive), "negative": asdict(negative),

@@ -250,12 +250,10 @@ BEAM_Y_TRANSF_TAG = 3
 #   "imk"   = elastic interior members with IMKPeakOriented rotational hinges
 ELEMENT_FORMULATION = "imk"
 
-# Columns previously fell through to distributed-plasticity fiber sections
-# while beams used concentrated IMK springs. That mixed formulation gave the
-# columns no cyclic strength degradation -- Concrete02 fibers yield but never
-# soften -- so collapse-relevant column behaviour could not be represented at
-# any intensity. Both member types now use the same concentrated-plasticity
-# formulation, with per-member backbones from Model/IMK_Calibration.py.
+# Both member types use concentrated hinges. Concrete02 fiber models have
+# envelope softening and unloading degradation, but do not represent every
+# mechanism of repeated-cycle strength loss. That is a separate formulation.
+# Per-member backbones come from Model/IMK_Calibration.py.
 IMK_APPLY_TO_COLUMNS = True
 IMK_APPLY_TO_BEAMS = True
 
@@ -278,9 +276,26 @@ IMK_HINGE_ELEMENT_TAG_BASE = 4000000
 # can degrade faster than any other and soft-story mechanisms cannot form.
 IMK_USE_CALIBRATED_BACKBONE = True
 
-IMK_MATERIAL_TYPE = "IMKBilin"
-# Baseline remains selectable during the material transition. PeakOriented
-# requires explicit A-mode inputs below; joint Pinching uses a separate adapter.
+# RC member flexure uses peak-oriented reloading (the intended split:
+# IMKPeakOriented for flexure, IMKPinching for joint shear/slip through its
+# own adapter and topology, Model/Joint_Panel). IMKBilin remains selectable
+# for reproducing legacy runs, with its own argument signature.
+IMK_MATERIAL_TYPE = "IMKPeakOriented"
+
+# Cyclic deterioration capacities handed to the member materials.
+#   "haselton_2008": Eq. 3.20 of PEER 2007/03, lambda = 170.7 (0.27)^nu
+#           (0.10)^(s/d), times the nominal MEMBER yield rotation below, which
+#           converts Haselton's Et = lambda My theta_y to the modern OpenSees
+#           Et = Lambda My (Model/IMK_Calibration.deterioration_for_member).
+#           The fitted capacity applies to the strength modes S and C only;
+#           Haselton's calibration excluded A and K, which receive a
+#           documented large-capacity approximation to zero deterioration.
+#           Peak-oriented reloading is unchanged. The nominal 0.005/0.004 rad
+#           yield rotations remain modeling assumptions, and extending a
+#           column regression to beams is a research calibration, so the
+#           calibration status stays provisional.
+#   "direct": pass IMK_LAMBDA_* below unchanged (legacy energy convention).
+IMK_DETERIORATION_MODE = "haselton_2008"
 IMK_ENERGY_CONVENTION = "opensees_ref_energy_equals_lamda_times_fy"
 IMK_CYCLIC_CALIBRATION_ID = "legacy_member_cyclic_defaults_v1"
 IMK_CYCLIC_CALIBRATION_STATUS = "provisional_not_experimentally_calibrated"
@@ -299,7 +314,7 @@ IMK_MEMBER_ENERGY_CALIBRATIONS = {}
 #
 # Use "member_stiffness_factor" for concentrated-plasticity springs so the
 # elastic beam-column element carries member flexibility and the zeroLength
-# hinge remains stiff until its IMKBilin backbone reaches yield strength.
+# hinge remains stiff until its backbone reaches yield strength.
 IMK_HINGE_STIFFNESS_MODE = "member_stiffness_factor"
 IMK_HINGE_STIFFNESS_FACTOR = 20.0
 IMK_BEAM_THETA_Y = 0.005
@@ -616,7 +631,7 @@ NTHA_RESULT_ID = 1
 NTHA_RECORD_ID_X = None
 NTHA_RECORD_ID_Y = None
 NTHA_X_ONLY = False
-NTHA_SCALE_FACTOR = None
+NTHA_SCALE_FACTOR = 2.25  # requested total amplitude multiplier; apply once
 NTHA_DAMPING_RATIO = 0.05
 NTHA_RAYLEIGH_MODE_I = 0
 NTHA_RAYLEIGH_MODE_J = 2

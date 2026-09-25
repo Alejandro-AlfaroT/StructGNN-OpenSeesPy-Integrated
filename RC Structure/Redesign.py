@@ -328,6 +328,12 @@ def _beam_candidates(As_top_lo, As_top_hi, As_bot_lo, As_bot_hi, cfg=None):
     """
     cfg        = cfg or DesignConfig()
     candidates = []
+    if cfg.rebar.beam_symmetric:
+        # The larger directional demand governs both faces. The upper
+        # bounds are soft economy targets: a lightly loaded face must not
+        # prevent the equal steel needed by the more heavily loaded face.
+        As_top_lo = As_bot_lo = max(As_top_lo, As_bot_lo)
+        As_top_hi = As_bot_hi = max(As_top_hi, As_bot_hi)
     # ACI 318-19 18.8.2.3: a beam bar passing through a joint needs a joint
     # depth of 20 db (normalweight). Uniform bars pass through every interior
     # joint, so in each direction with two or more bays the column dimension
@@ -357,6 +363,8 @@ def _beam_candidates(As_top_lo, As_top_hi, As_bot_lo, As_bot_hi, cfg=None):
             if not (max(As_top_lo, code_min) <= As_top <= As_top_hi):
                 continue
             for n_bot in cfg.rebar.beam_n_iter():
+                if cfg.rebar.beam_symmetric and n_bot != n_top:
+                    continue
                 As_bot = n_bot * Ab
                 if n_bot < 2 or As_bot > 0.025 * sp.B_BEAM * d:
                     continue
@@ -594,9 +602,11 @@ def redesign_steel(design_results: dict, cfg: Optional[DesignConfig] = None):
         and all(DCR_MIN <= d <= cfg.dcr.dcr_band_hi for d in flexural_dcrs)
     )
     shear_converged = all(d <= DCR_MAX for d in shear_dcrs)
-    converged = flexural_converged and shear_converged
+    beam_symmetry_met = (not beams or not cfg.rebar.beam_symmetric
+                         or sp.BEAM_TOP_BARS == sp.BEAM_BOT_BARS)
+    converged = flexural_converged and shear_converged and beam_symmetry_met
 
-    if flexural_converged and not shear_converged:
+    if flexural_converged and not shear_converged and beam_symmetry_met:
         col_spacing = _spacing_update(
             cfg.rebar.stirrup_spacing_col_in,
             col_shear_dcr,
@@ -719,7 +729,15 @@ def redesign_steel(design_results: dict, cfg: Optional[DesignConfig] = None):
 
         candidates = _beam_candidates(As_top_lo, As_top_hi, As_bot_lo, As_bot_hi, cfg)
 
-        if not candidates:
+        if not candidates and cfg.rebar.beam_symmetric:
+            penalty_log.append(
+                "Beam: no symmetric candidate in the soft As band; "
+                "relaxing the economy upper bound while retaining both demand minima."
+            )
+            candidates = _beam_candidates(
+                As_top_lo, math.inf, As_bot_lo, math.inf, cfg,
+            )
+        elif not candidates:
             step = sp.rebar_area(cfg.rebar.bar_sizes_beam[0])
             penalty_log.append(
                 f"Beam: no candidate in As bands "
@@ -761,8 +779,10 @@ def redesign_steel(design_results: dict, cfg: Optional[DesignConfig] = None):
 
     if beam_spacing is not None:
         if beam_update is None:
-            beam_update = _current_beam_update()
-        beam_update["stirrup_spacing"] = beam_spacing
+            if beam_symmetry_met:
+                beam_update = _current_beam_update()
+        if beam_update is not None:
+            beam_update["stirrup_spacing"] = beam_spacing
 
     return col_update, beam_update, converged, penalty_log
 

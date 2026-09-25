@@ -13,7 +13,7 @@ from Model.IMK_Calibration import (
     column_pm_nominal,
 )
 from Model.IMK_Materials import (
-    MAPPING_VERSION, CyclicParameters, RotationalBackbone, define_rotational_imk,
+    MAPPING_VERSION, CyclicParameters, RotationalBackbone, active_energy_modes, define_rotational_imk,
     define_mapped_rotational_imk, validate_energy_calibration,
 )
 
@@ -236,8 +236,11 @@ def _hinge_yield_data(props, rot_dir):
     raise ValueError(f"Unknown IMK hinge rotation direction: {rot_dir}")
 
 
-def imk_hinge_stiffness_components(member_type, rot_dir, length):
-    props = _member_properties(member_type)
+def imk_hinge_stiffness_components(member_type, rot_dir, length, *, props=None, family=None, axial_kip=0.0):
+    """Spring stiffness for a member; pass the member's own ``props`` (or its
+    family/axial load) so an edge beam's spring uses its line's I and a
+    column's its axial state, the same properties its elastic element gets."""
+    props = props if props is not None else _member_properties(member_type, axial_kip=axial_kip, family=family)
     yield_moment, inertia = _hinge_yield_data(props, rot_dir)
 
     if props["theta_y"] <= 0.0:
@@ -274,16 +277,15 @@ def imk_hinge_stiffness_components(member_type, rot_dir, length):
     }
 
 
-def imk_hinge_stiffness(member_type, rot_dir, length):
+def imk_hinge_stiffness(member_type, rot_dir, length, *, props=None, family=None, axial_kip=0.0):
     return imk_hinge_stiffness_components(
-        member_type,
-        rot_dir,
-        length,
+        member_type, rot_dir, length, props=props, family=family, axial_kip=axial_kip,
     )["selected_stiffness"]
 
 
-def imk_hinge_thresholds(member_type, rot_dir, length):
-    components = imk_hinge_stiffness_components(member_type, rot_dir, length)
+def imk_hinge_thresholds(member_type, rot_dir, length, *, props=None, family=None, axial_kip=0.0):
+    components = imk_hinge_stiffness_components(member_type, rot_dir, length, props=props, family=family,
+                                                axial_kip=axial_kip)
     theta_y = components["actual_theta_y"]
     theta_p = max(sp.IMK_THETA_P_POS, sp.IMK_THETA_P_NEG)
 
@@ -358,18 +360,38 @@ def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment, backbone
         return RotationalBackbone(rotation("theta_p"), rotation("theta_pc"), rotation("theta_u"), strength,
                                   getattr(sp, f"IMK_FMAXFY_{sign}"), getattr(sp, f"IMK_FRESFY_{sign}"))
 
+    # Deterioration capacities: the member backbone carries them when
+    # IMK_DETERIORATION_MODE translated Haselton's lambda into the OpenSees
+    # convention (Lamda = lambda * theta_y,member, S and C only; A and K
+    # suppressed by a large finite capacity); otherwise the IMK_LAMBDA_*
+    # constants are passed unchanged. Either way Lamda is a command-level
+    # value here (E_ref = Lamda * My), never multiplied by a rotation again.
+    modes = active_energy_modes(material_type)
+    by_mode = (backbone or {}).get("lambda_opensees_by_mode_rad")
+    if by_mode is not None:
+        lamda = {mode: by_mode[mode] for mode in modes}
+        deterioration_source = backbone["deterioration_source"]
+        calibration_id = backbone["deterioration_source"] + "_v1"
+    else:
+        lamda = {mode: getattr(sp, f"IMK_LAMBDA_{mode}") for mode in modes}
+        deterioration_source = (backbone or {}).get("deterioration_source", "direct_opensees")
+        calibration_id = sp.IMK_CYCLIC_CALIBRATION_ID
     cyclic = CyclicParameters(
-        lamda_s=sp.IMK_LAMBDA_S, lamda_c=sp.IMK_LAMBDA_C, lamda_k=sp.IMK_LAMBDA_K,
+        lamda_s=lamda["S"], lamda_c=lamda["C"], lamda_k=lamda["K"],
         c_s=sp.IMK_C_S, c_c=sp.IMK_C_C, c_k=sp.IMK_C_K, d_pos=sp.IMK_D_POS, d_neg=sp.IMK_D_NEG,
-        lamda_a=sp.IMK_LAMBDA_A if material_type == "IMKPeakOriented" else None,
-        c_a=sp.IMK_C_A if material_type == "IMKPeakOriented" else None,
+        lamda_a=lamda.get("A"), c_a=sp.IMK_C_A if "A" in modes else None,
         energy_convention=sp.IMK_ENERGY_CONVENTION,
     )
-    provenance = {"calibration_id": sp.IMK_CYCLIC_CALIBRATION_ID,
+    provenance = {"calibration_id": calibration_id,
                     "status": sp.IMK_CYCLIC_CALIBRATION_STATUS,
+                    "deterioration_source": deterioration_source,
                     "backbone_source": (backbone or {}).get("source", "fixed"),
                     "deformation_scope": "member_end_spring; joint_slip_partition_not_validated",
                     "bond_slip_indicator": BOND_SLIP_INDICATOR}
+    if by_mode is not None:
+        provenance["deterioration"] = {key: backbone[key] for key in backbone
+                                       if key.startswith("deterioration_") or key.startswith("lambda_")
+                                       or key == "energy_reference_member_theta_y_rad"}
     if spring_context is not None:
         provenance["spring_context"] = spring_context
     args = (material_type, mat_tag, elastic_stiffness, branch("POS", yield_moment),
@@ -391,13 +413,12 @@ def _create_end_hinge(
     *, energy_profiles=None, reverse_physical=False, verification_only=False
 ):
     orient, tied_dofs = _orientation(member_type)
-    for dof in tied_dofs:
-        ops.equalDOF(retained_node, hinge_node, dof)
+    ops.equalDOF(retained_node, hinge_node, *tied_dofs)
 
     mat_y = imk_material_tag(ele_tag, end_id, 5)
     mat_z = imk_material_tag(ele_tag, end_id, 6)
-    ke_y = imk_hinge_stiffness(member_type, "rot_y", length)
-    ke_z = imk_hinge_stiffness(member_type, "rot_z", length)
+    ke_y = imk_hinge_stiffness(member_type, "rot_y", length, props=props)
+    ke_z = imk_hinge_stiffness(member_type, "rot_z", length, props=props)
     global_axes = {"column": ((1, 0, 0), (0, 1, 0)),
                    "beam_x": ((0, 1, 0), (0, 0, 1)),
                    "beam_y": ((-1, 0, 0), (0, 0, 1))}[member_type]
@@ -520,10 +541,14 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag, *, _verificati
         energy_profiles=None if energy_profiles is None else energy_profiles["j"],
         reverse_physical=not reverse_connectivity, verification_only=_verification_calibrations is not None)
 
+    ke_y = imk_hinge_stiffness(member_type, "rot_y", length, props=props)
+    ke_z = imk_hinge_stiffness(member_type, "rot_z", length, props=props)
     _HINGE_REGISTRY[int(ele_tag)] = {
         "ele_tag": int(ele_tag),
         "member_type": member_type,
         "material_type": sp.IMK_MATERIAL_TYPE,
+        "ke_y_kip_in_per_rad": ke_y,
+        "ke_z_kip_in_per_rad": ke_z,
         "energy_mapping_mode": getattr(sp, "IMK_ENERGY_MAPPING_MODE", "legacy_unmapped"),
         "verification_only": _verification_calibrations is not None,
         "installed_materials": {"i": materials_i, "j": materials_j},
@@ -558,31 +583,26 @@ def create_imk_member(ele_tag, n_i, n_j, member_type, transf_tag, *, _verificati
         # weaker (sagging) direction; that is the rotation the yielded flag
         # must be measured against.
         "theta_y_spring_y": (
-            min(props.get("my_hogging", props["my"]), props.get("my_sagging", props["my"]))
-            / imk_hinge_stiffness(member_type, "rot_y", length)
-            if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
+            min(props.get("my_hogging", props["my"]), props.get("my_sagging", props["my"])) / ke_y
+            if ke_y > 0 else 0.0
         ),
         # Per end, where the ends differ (exterior ends without developed
         # slab bars): the spring at that end yields in its weaker direction.
         "theta_y_spring_y_i": (
             min(props.get("my_hogging_i", props.get("my_hogging", props["my"])),
-                props.get("my_sagging_i", props.get("my_sagging", props["my"])))
-            / imk_hinge_stiffness(member_type, "rot_y", length)
-            if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
+                props.get("my_sagging_i", props.get("my_sagging", props["my"]))) / ke_y
+            if ke_y > 0 else 0.0
         ),
         "theta_y_spring_y_j": (
             min(props.get("my_hogging_j", props.get("my_hogging", props["my"])),
-                props.get("my_sagging_j", props.get("my_sagging", props["my"])))
-            / imk_hinge_stiffness(member_type, "rot_y", length)
-            if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
+                props.get("my_sagging_j", props.get("my_sagging", props["my"]))) / ke_y
+            if ke_y > 0 else 0.0
         ),
         "theta_y_spring_y_hogging": (
-            props.get("my_hogging", props["my"]) / imk_hinge_stiffness(member_type, "rot_y", length)
-            if imk_hinge_stiffness(member_type, "rot_y", length) > 0 else 0.0
+            props.get("my_hogging", props["my"]) / ke_y if ke_y > 0 else 0.0
         ),
         "theta_y_spring_z": (
-            props["mz"] / imk_hinge_stiffness(member_type, "rot_z", length)
-            if imk_hinge_stiffness(member_type, "rot_z", length) > 0 else 0.0
+            props["mz"] / ke_z if ke_z > 0 else 0.0
         ),
         "stiffness_modifier": props["stiffness_modifier"],
         **backbone,

@@ -196,10 +196,10 @@ def verify_installed_design(record):
                                                 "record stores no independent copy (production hinge_backbone.csv is written from this same registry), so "
                                                 "these are recorded, not verified"},
         "stiffness_mode": getattr(sp, "IMK_HINGE_STIFFNESS_MODE", None), "stiffness_factor": sp.IMK_HINGE_STIFFNESS_FACTOR,
-        "beam_spring_ke_family_note": ("the installed beam spring Ke is computed by imk_hinge_stiffness(member_type, rot, length) with the "
-                                       "INTERIOR line's T-section I for every family (Model.IMK_Hinges._create_end_hinge passes no family), while "
-                                       "the elastic spine uses the member's own family section; edge-line springs are therefore stiffer than "
-                                       "n x 6EI/L of their own member (model inconsistency recorded, not corrected here)"),
+        "beam_spring_ke_family_note": ("the installed spring Ke is computed from the member's own properties (its line's T-section I, "
+                                       "a column's axial state) since 2026-09-24 (Model.IMK_Hinges._create_end_hinge passes props) and is "
+                                       "recorded per member as ke_y/ke_z_kip_in_per_rad; before that the INTERIOR line's I served every "
+                                       "family and edge-line springs were stiffer than n x 6EI/L of their own member"),
     }
     return {"consistent": not differences, "checks": checks, "differences": differences, "registry": registry_summary,
             "design_evidence_gaps": evidence_gaps,
@@ -746,9 +746,6 @@ def run_audit():
     hinges = hinge_inventory(inventory)
     audit = model_audit(inventory, hinges)
     audit["not_represented"] = list(audit["not_represented"]) + [
-        "beam spring elastic stiffness Ke calibrated on the interior line's T-section I for every family (IMK_Hinges._create_end_hinge "
-        "passes no family to imk_hinge_stiffness) while the elastic spine carries the member's own family section: edge-line "
-        "spring-element-spring assemblies do not reproduce n x 6EI/L of their member",
         "the same nominal column hinge strength serves bending about both axes (my = mz)",
     ]
     return audit, inventory, hinges

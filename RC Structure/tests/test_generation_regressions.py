@@ -869,7 +869,7 @@ class GenerationRegressionTests(unittest.TestCase):
         # OpenSees IMKBilin argument order (a nonexistent "A" deterioration
         # mode standing in for the FmaxFy/FresFy strength ratios). Pin the
         # exact positional order the current IMKBilin signature requires.
-        with mock.patch.object(IMK_Hinges.ops, "uniaxialMaterial") as uniaxial_material:
+        with mock.patch.object(sp, "IMK_MATERIAL_TYPE", "IMKBilin"), mock.patch.object(IMK_Hinges.ops, "uniaxialMaterial") as uniaxial_material:
             IMK_Hinges._define_imk_peak_material(
                 mat_tag=101,
                 elastic_stiffness=5000.0,
@@ -882,7 +882,7 @@ class GenerationRegressionTests(unittest.TestCase):
         self.assertEqual(
             args,
             (
-                sp.IMK_MATERIAL_TYPE,
+                "IMKBilin",
                 101,
                 5000.0,
                 sp.IMK_THETA_P_POS,

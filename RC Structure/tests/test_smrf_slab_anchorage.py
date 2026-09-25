@@ -157,7 +157,7 @@ class ExteriorEndCreditTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 IMK_Hinges.create_imk_member(901, 1, 2, "beam_x", 1)
             entry = IMK_Hinges.hinge_registry()[901]
-            ke = IMK_Hinges.imk_hinge_stiffness("beam_x", "rot_y", 120.0)
+            ke = IMK_Hinges.imk_hinge_stiffness("beam_x", "rot_y", 120.0, family=IMK_Hinges.beam_line_family("beam_x", 1))
             ops.wipe()
         self.assertAlmostEqual(entry["yield_moment_y_hogging_i_kip_in"], basis["hogging_i_kip_in"])
         self.assertAlmostEqual(entry["yield_moment_y_sagging_i_kip_in"], basis["sagging_i_kip_in"])
@@ -230,3 +230,4 @@ class LadderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -254,7 +254,7 @@ def _stability_index(member_type):
 def haselton_theta_p(member_type, nu):
     """Plastic rotation capacity to the capping point.
 
-    Haselton et al. (2008), PEER 2007/03, equation 4.3 (calibrated form):
+    Haselton et al. (2008), PEER 2007/03, equation 3.10 (full form):
 
         theta_p = 0.12 (1 + 0.55 a_sl) (0.16)^nu (0.02 + 40 rho_sh)^0.43
                   (0.54)^(0.01 f'c_MPa) (0.66)^(0.1 s_n) (2.27)^(10 rho)
@@ -282,7 +282,7 @@ def haselton_theta_p(member_type, nu):
 def haselton_theta_pc(member_type, nu):
     """Post-capping rotation capacity.
 
-    Haselton et al. (2008), equation 4.4:
+    Haselton et al. (2008), equation 3.16:
 
         theta_pc = 0.76 (0.031)^nu (0.02 + 40 rho_sh)^1.02,  capped at 0.10
 
@@ -294,6 +294,46 @@ def haselton_theta_pc(member_type, nu):
     rho_sh = _clamp(transverse_steel_ratio(member_type), RHO_SH_MIN, RHO_SH_MAX)
     theta_pc = 0.76 * (0.031 ** nu) * ((0.02 + 40.0 * rho_sh) ** 1.02)
     return max(THETA_PC_FLOOR, min(THETA_PC_CAP, theta_pc))
+
+
+def deterioration_for_member(member_type, nu):
+    """Explicit OpenSees energy convention; PEER 2007/03 Eq. 3.20.
+
+    Eq. 3.20 is a column regression, extended here to zero-axial beams.
+    The member yield rotation is a declared nominal assumption, NOT the
+    artificially small My/Ke of a stiff numerical zeroLength spring.
+    Conversion: Lambda_OpenSees = lambda_Haselton * theta_y_member.
+    """
+    mode = getattr(sp, "IMK_DETERIORATION_MODE", "direct")
+    if mode == "direct":
+        return {"deterioration_source": "direct_opensees"}
+    if mode != "haselton_2008":
+        raise ValueError(f"Unknown IMK_DETERIORATION_MODE: {mode!r}")
+    spacing = sp.COL_STIRRUP_SPACING if member_type == "column" else sp.BEAM_STIRRUP_SPACING
+    depth = sp.H_COL if member_type == "column" else sp.H_BEAM
+    theta_y = sp.IMK_COLUMN_THETA_Y if member_type == "column" else sp.IMK_BEAM_THETA_Y
+    if not all(math.isfinite(v) and v > 0 for v in (spacing, depth, theta_y)):
+        raise ValueError("Deterioration calibration requires positive spacing, depth and member yield rotation")
+    nu_used = _clamp(nu, NU_MIN, NU_MAX)
+    lam = 170.7 * 0.27**nu_used * 0.10**(spacing/depth)
+    return {"deterioration_source": "haselton_2008_eq3_20_nominal_member_theta_y",
+            "lambda_haselton_dimensionless": lam,
+            "energy_reference_member_theta_y_rad": theta_y,
+            "lambda_opensees_rad": lam*theta_y,
+            # PEER 2007/03, Sec. 2.1.2.1 (p. 9): the fitted lambda applies
+            # to S and C. A and K were excluded from that calibration.
+            # Current IMKPeakOriented requires positive parameters: a large
+            # finite capacity approximates disabled A/K, without 0 or inf.
+            "lambda_opensees_by_mode_rad": {
+                "S": lam*theta_y, "C": lam*theta_y, "A": 1.0e12, "K": 1.0e12,
+            },
+            "deterioration_mode_basis": "haselton_2008_section_2_1_2_1_strength_only",
+            "deterioration_suppressed_modes": ["A", "K"],
+            "deterioration_suppression_lambda_rad": 1.0e12,
+            "deterioration_spacing_depth_ratio": spacing/depth,
+            "deterioration_axial_ratio_used": nu_used,
+            "deterioration_axial_ratio_clamped": nu_used != nu,
+            "deterioration_beam_extrapolation": member_type != "column"}
 
 
 def backbone_for_member(member_type, axial_kip=0.0, pm_diagram=None):
@@ -316,6 +356,10 @@ def backbone_for_member(member_type, axial_kip=0.0, pm_diagram=None):
             "theta_pc": sp.IMK_THETA_PC_POS,
             "theta_u": sp.IMK_THETA_U_POS,
             "source": "fixed",
+            "theta_p_neg": sp.IMK_THETA_P_NEG,
+            "theta_pc_neg": sp.IMK_THETA_PC_NEG,
+            "theta_u_neg": sp.IMK_THETA_U_NEG,
+            **deterioration_for_member(member_type, nu),
         }
 
     theta_p = haselton_theta_p(member_type, nu)
@@ -325,6 +369,7 @@ def backbone_for_member(member_type, axial_kip=0.0, pm_diagram=None):
         "axial_ratio": nu,
         "theta_p": theta_p,
         "theta_pc": theta_pc,
-        "theta_u": theta_p + theta_pc + sp.IMK_BEAM_THETA_Y,
+        "theta_u": theta_p + theta_pc + (sp.IMK_COLUMN_THETA_Y if member_type == "column" else sp.IMK_BEAM_THETA_Y),
         "source": "haselton_2008",
+        **deterioration_for_member(member_type, nu),
     }

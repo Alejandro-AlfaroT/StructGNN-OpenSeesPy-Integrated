@@ -105,6 +105,12 @@ def _imk_hinge_member_rows(element_rows):
                 )
                 if installed:
                     thresholds = dict(thresholds)
+                    # The spring's own elastic limit and stiffness as installed
+                    # (the member's own family/axial properties), when recorded.
+                    axis = "y" if rot_dir == "rot_y" else "z"
+                    if installed.get(f"ke_{axis}_kip_in_per_rad"):
+                        thresholds["selected_stiffness"] = installed[f"ke_{axis}_kip_in_per_rad"]
+                        thresholds["theta_y"] = installed[f"theta_y_spring_{axis}"]
                     theta_y = thresholds["theta_y"]
                     thresholds["theta_cap"] = theta_y + installed["theta_p"]
                     thresholds["theta_u"] = installed["theta_u"]
