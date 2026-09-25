@@ -63,6 +63,20 @@ properties now read the installed value: `Pushover_Diagnostic.hinge_inventory`
 `Record_Hinge_Hysteresis.backbone_reference` keeps its documented
 zero-axial fallback.
 
+Two desktop tests that were untracked there and first surfaced in the
+desktop's stash (`desktop-imk-edits-before-9a587d6c`) are carried too:
+`tests/test_haselton_deterioration_modes.py` (translated Lamda in the
+command slots of both materials, the direct mode passing the constants,
+strength loss with a constant unloading slope on a cycled material) and
+`tests/test_imk_rc_corrections.py` (the PeakOriented signature with a
+negative-side backbone, the theta_y factor and its independence from the
+spring stiffness factor, the installed edge-beam spring against its own
+line's I under Transformation constraints, cyclic strength loss with the
+legacy material still available). They exercise the desktop's uniform
+`lambda_opensees_rad` backbone form and a deterioration-only backbone, so
+the adapter accepts both: a uniform value applies to every mode, and a
+backbone without rotations falls back to the global constants.
+
 ## Not taken
 
 `.idea/StructGNN.iml`; the untracked `OpPy_environment.yml` at the repository

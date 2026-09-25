@@ -354,9 +354,12 @@ def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment, backbone
 
     def branch(sign, strength):
         def rotation(key):
+            # Per-sign value, else the backbone's symmetric value, else the
+            # global constant (a deterioration-only backbone carries no rotations).
+            default = getattr(sp, f"IMK_{key.upper()}_{sign}")
             if backbone:
-                return backbone.get(f"{key}_{sign.lower()}", backbone[key])
-            return getattr(sp, f"IMK_{key.upper()}_{sign}")
+                return backbone.get(f"{key}_{sign.lower()}", backbone.get(key, default))
+            return default
         return RotationalBackbone(rotation("theta_p"), rotation("theta_pc"), rotation("theta_u"), strength,
                                   getattr(sp, f"IMK_FMAXFY_{sign}"), getattr(sp, f"IMK_FRESFY_{sign}"))
 
@@ -368,10 +371,13 @@ def _define_imk_peak_material(mat_tag, elastic_stiffness, yield_moment, backbone
     # value here (E_ref = Lamda * My), never multiplied by a rotation again.
     modes = active_energy_modes(material_type)
     by_mode = (backbone or {}).get("lambda_opensees_by_mode_rad")
+    if by_mode is None and (backbone or {}).get("lambda_opensees_rad") is not None:
+        # One translated value for every mode (the desktop's uniform form).
+        by_mode = {mode: backbone["lambda_opensees_rad"] for mode in modes}
     if by_mode is not None:
         lamda = {mode: by_mode[mode] for mode in modes}
-        deterioration_source = backbone["deterioration_source"]
-        calibration_id = backbone["deterioration_source"] + "_v1"
+        deterioration_source = backbone.get("deterioration_source", "backbone_uniform_lambda")
+        calibration_id = deterioration_source + "_v1"
     else:
         lamda = {mode: getattr(sp, f"IMK_LAMBDA_{mode}") for mode in modes}
         deterioration_source = (backbone or {}).get("deterioration_source", "direct_opensees")
